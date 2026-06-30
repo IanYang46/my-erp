@@ -10,9 +10,9 @@ st.set_page_config(page_title="強盛集團 ERP", layout="wide", initial_sidebar
 
 # --- 2. 穩定的資料庫連線 ---
 def get_db():
-    # 這是你的雲端資料庫網址 (建議將密碼替換為你實際設定的密碼)
-    DATABASE_URL = "postgresql://postgres:cihhib-wuvjog-0gaQfu@db.qmrqwmvboetgdthwgesw.supabase.co:5432/postgres"
-
+    # 加上 timeout=30 延長高並發時的等待時間，check_same_thread=False 允許 Streamlit 多執行緒安全存取
+    return sqlite3.connect("powerful_group.db", timeout=30, check_same_thread=False)
+    
     # 判斷是否在雲端環境執行 (Render 會自動設定環境變數)
     if os.environ.get("RENDER"):
         return create_engine(DATABASE_URL).connect()
@@ -22,7 +22,10 @@ def get_db():
         return sqlite3.connect("powerful_group.db")
 
 # --- 3. 初始化資料庫與預設權限 ---
-def init_db():
+# 🌟 關鍵修正：加入此裝飾器，確保整個 App 生命週期中，初始化函數只執行「唯一一次」
+# 徹底根除因網頁重複整理、點擊按鈕導致的資料庫寫入死鎖問題
+@st.cache_resource
+def init_db_v2():
     with get_db() as conn:
         cursor = conn.cursor()
         
@@ -68,7 +71,7 @@ def init_db():
                     cursor.execute("INSERT INTO permissions VALUES (?,?,?,?,?,?)", (r, m, v, e, u, d))
         
         conn.commit()
-init_db()
+init_db_v2()
 
 # --- 4. 權限檢查工具 ---
 def check_perm(role, module, action):
