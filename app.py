@@ -19,10 +19,17 @@ def get_engine():
 
 # --- 3. 初始化資料庫與預設權限 ---
 def init_db():
-    engine = get_engine()
-    is_pg = engine.dialect.name == "postgresql"
-    # 解決 SQLite 與 Postgres 的自動遞增語法衝突
-    auto_inc = "SERIAL PRIMARY KEY" if is_pg else "INTEGER PRIMARY KEY AUTOINCREMENT"
+    try:
+        engine = get_engine()
+        with engine.connect() as conn:
+            st.write("✅ 資料庫連線成功！")
+            # ... (原本 init_db 裡面的建立表格邏輯) ...
+            # 將原本 init_db 的邏輯縮排進這裡
+            # 如果這段程式碼太長，請先只留 `st.write("連線成功")` 來測試連線
+    except Exception as e:
+        # 只印出錯誤類型，絕對安全
+        st.error(f"❌ 連線失敗，錯誤類型: {type(e).__name__}")
+        st.error(f"請檢查錯誤碼 (如: 'OperationalError', 'InterfaceError')")
     
     with engine.connect() as conn:
         # 統一使用 text() 建立表格，確保雲端與本地皆相容
