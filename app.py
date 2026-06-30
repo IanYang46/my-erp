@@ -23,6 +23,10 @@ def get_db():
 
 # --- 3. 初始化資料庫與預設權限 ---
 def init_db():
+    # 從 st.secrets 讀取帳號密碼
+    admin_user = st.secrets.get("ADMIN_USERNAME", "admin")
+    admin_pw = st.secrets.get("ADMIN_PASSWORD", "123456")
+    
     with get_db() as conn:
         cursor = conn.cursor()
         
@@ -55,7 +59,7 @@ def init_db():
         cursor.execute("INSERT OR IGNORE INTO settings VALUES ('exchange_rate', 4.5)")
         
         # 5. 建立預設 Admin 帳號
-        cursor.execute("INSERT OR IGNORE INTO users VALUES ('admin', '123456', 'Admin')")
+        cursor.execute("INSERT OR IGNORE INTO users VALUES (?, ?, 'Admin')", (admin_user, admin_pw))
         
         # 6. 初始化全新權限矩陣 (對應您新增的模組)
         cursor.execute("SELECT count(*) FROM permissions")
