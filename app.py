@@ -518,5 +518,6 @@ elif menu == "權限管理":
                         del_conn.commit()
                         st.success(f"已刪除 {del_user}")
                         st.rerun()
+                        
 init_db() 
 st.success("✅ 資料庫連線與初始化成功！")                        
