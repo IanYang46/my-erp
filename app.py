@@ -3,10 +3,19 @@ import sqlite3
 import pandas as pd
 import os
 import time
-import hashlib
+import base64  # 🌟 改用 base64，這是可逆的編碼套件
 
-def hash_pw(pw):
-    return hashlib.sha256(pw.encode()).hexdigest()
+# --- 密碼編解碼工具 ---
+def encode_pw(pw):
+    """將密碼編碼隱藏 (存入資料庫時使用)"""
+    return base64.b64encode(pw.encode('utf-8')).decode('utf-8')
+
+def decode_pw(pw_encoded):
+    """將密碼解碼回明文 (顯示在後台畫面上時使用)"""
+    try:
+        return base64.b64decode(pw_encoded.encode('utf-8')).decode('utf-8')
+    except:
+        return pw_encoded  # 萬一解碼失敗，就顯示原字串
 
 # --- 1. 基礎設定與整地 ---
 if not os.path.exists("product_images"): os.makedirs("product_images")
@@ -14,7 +23,6 @@ st.set_page_config(page_title="強盛集團 ERP", layout="wide", initial_sidebar
 
 # --- 2. 穩定的資料庫連線 ---
 def get_db():
-    # 這裡面絕對不能有其他的 if else 或是 import sqlite3，只要這短短一行就好
     return sqlite3.connect("powerful_group.db", timeout=30, check_same_thread=False)
     
 # --- 3. 初始化資料庫與預設權限 ---
@@ -23,14 +31,14 @@ def init_db_v2():
     with get_db() as conn:
         cursor = conn.cursor()
         
-        # 🧨 殺手鐧：強制刪除舊的錯誤表格 (這會清空目前所有錯誤帳號，徹底修復無限繁殖)
+        # 🧨 強制刪除舊的錯誤表格 (這會清空舊的 hashlib 亂碼，並重置正確的表)
         cursor.execute("DROP TABLE IF EXISTS users")
         
         # 1. 建立系統核心表格
         cursor.execute('''CREATE TABLE IF NOT EXISTS users (username TEXT PRIMARY KEY, password TEXT, role TEXT)''')
         cursor.execute('''CREATE TABLE IF NOT EXISTS permissions (role TEXT, module TEXT, can_view BOOLEAN, can_edit BOOLEAN, can_upload BOOLEAN, can_download BOOLEAN)''')
         
-        # 2. 商品資料表 (已包含類別、品牌等 6 個欄位)
+        # 2. 商品資料表
         cursor.execute('''CREATE TABLE IF NOT EXISTS products (
                             編碼 TEXT PRIMARY KEY, 
                             類別 TEXT, 
@@ -39,7 +47,7 @@ def init_db_v2():
                             備註 TEXT, 
                             圖片路徑 TEXT)''')
         
-        # 3. 【新增】：庫存管理表
+        # 3. 庫存管理表
         cursor.execute('''CREATE TABLE IF NOT EXISTS inventory (
                             id INTEGER PRIMARY KEY AUTOINCREMENT,
                             編碼 TEXT,
@@ -50,14 +58,14 @@ def init_db_v2():
                             採購金額_RMB REAL,
                             進貨日期 DATE)''')
         
-        # 4. 【新增】：匯率設定表
+        # 4. 匯率設定表
         cursor.execute('''CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value REAL)''')
         cursor.execute("INSERT OR IGNORE INTO settings VALUES ('exchange_rate', 4.5)")
         
-        # 5. 建立預設 Admin 帳號
-        cursor.execute("INSERT OR IGNORE INTO users VALUES ('admin', '123456', 'Admin')")
+        # 5. 建立預設 Admin 帳號 (🌟 改用 encode_pw)
+        cursor.execute("INSERT OR IGNORE INTO users VALUES ('admin', ?, 'Admin')", (encode_pw('123456'),))
         
-        # 6. 初始化全新權限矩陣 (對應您新增的模組)
+        # 6. 初始化全新權限矩陣
         cursor.execute("SELECT count(*) FROM permissions")
         if cursor.fetchone()[0] == 0:
             modules = ["商品訊息", "商品庫存", "採購管理", "訂單明細", "財務報表"]
@@ -73,17 +81,14 @@ init_db_v2()
 
 # --- 4. 權限檢查工具 ---
 def check_perm(role_string, module, action=None):
-    # 如果是系統預設的 Admin，直接放行所有權限
     if str(role_string) == "Admin":
         return True
-    # 檢查該模組是否有包含在該使用者的權限字串中
     return module in str(role_string)
 
 # --- 5. 系統登入 ---
 if 'logged_in' not in st.session_state:
     st.title("📦 強盛集團 | ERP 系統")
     
-    # 切換模式：登入或註冊
     mode = st.radio("請選擇模式", ["登入", "註冊"], horizontal=True)
     
     if mode == "登入":
@@ -93,8 +98,8 @@ if 'logged_in' not in st.session_state:
             if st.form_submit_button("登入"):
                 with get_db() as conn:
                     cursor = conn.cursor()
-                    # 🔑 關鍵修正：把輸入的 pw 套上 hash_pw()，才能跟資料庫內的加密密碼比對！
-                    cursor.execute("SELECT role FROM users WHERE username=? AND password=?", (user, hash_pw(pw)))
+                    # 🌟 比對時，將輸入的密碼 encode 後去跟資料庫比對
+                    cursor.execute("SELECT role FROM users WHERE username=? AND password=?", (user, encode_pw(pw)))
                     res = cursor.fetchone()
                     if res:
                         st.session_state.update({'logged_in': True, 'role': res[0], 'user': user})
@@ -102,7 +107,7 @@ if 'logged_in' not in st.session_state:
                     else:
                         st.error("帳號或密碼錯誤！")
                         
-    else: # 註冊模式
+    else: 
         with st.form("register_form"):
             new_user = st.text_input("設定新帳號")
             new_pw = st.text_input("設定新密碼", type="password")
@@ -117,9 +122,9 @@ if 'logged_in' not in st.session_state:
                     try:
                         with get_db() as conn:
                             cursor = conn.cursor()
-                            # 註冊時密碼已經有加密了，這部分原本就是對的
+                            # 🌟 註冊時，將新密碼 encode 後存入
                             cursor.execute("INSERT INTO users (username, password, role) VALUES (?, ?, ?)", 
-                                           (new_user, hash_pw(new_pw), 'CS'))
+                                           (new_user, encode_pw(new_pw), 'CS'))
                             conn.commit()
                             st.success(f"註冊成功！帳號【{new_user}】已建立，請切換至登入模式登入。")
                     except sqlite3.IntegrityError:
@@ -136,7 +141,6 @@ if st.sidebar.button("登出系統", use_container_width=True):
 
 st.sidebar.divider()
 
-# 定義選單 (加入 key 避免快取消失)
 menu = st.sidebar.radio(
     "請選擇功能模組：", 
     ["首頁", "商品訊息", "商品庫存", "採購管理", "訂單明細", "財務報表", "權限管理"],
@@ -161,15 +165,12 @@ elif menu == "商品訊息":
     if check_perm(role, "商品訊息", "can_view"):
         tab1, tab2, tab3 = st.tabs(["📋 列表瀏覽與編輯", "➕ 新增商品", "📁 批次作業"])
         
-        # --- 1. 列表瀏覽與獨立編輯頁面 ---
         with tab1:
             if 'edit_item_code' not in st.session_state:
                 st.session_state['edit_item_code'] = None
                 
             if st.session_state['edit_item_code'] is None:
-                # 畫面 A：顯示商品列表
                 with get_db() as conn:
-                    # 🌟 關鍵修改：加入 ORDER BY 編碼 ASC 讓列表自動按編碼排序
                     df = pd.read_sql("SELECT * FROM products ORDER BY 編碼 ASC", conn)
                 
                 if df.empty:
@@ -227,7 +228,6 @@ elif menu == "商品訊息":
                                             time.sleep(1)
                                             st.rerun()
             else:
-                # 畫面 B：獨立編輯介面
                 edit_code = st.session_state['edit_item_code']
                 
                 if st.button("🔙 放棄修改並返回列表"):
@@ -267,7 +267,6 @@ elif menu == "商品訊息":
                             time.sleep(1.5)
                             st.rerun()
                 
-        # --- 2. 新增商品 ---
         with tab2:
             if check_perm(role, "商品訊息", "can_edit"):
                 st.subheader("➕ 新增單筆商品")
@@ -302,14 +301,12 @@ elif menu == "商品訊息":
             else:
                 st.error("🚫 您沒有編輯商品的權限")
 
-        # --- 3. 批次作業 ---
         with tab3:
             st.subheader("📥 批量下載完整商品表")
             if check_perm(role, "商品訊息", "can_download"):
                 with get_db() as conn:
                     df_all = pd.read_sql("SELECT 編碼, 類別, 品牌, 名稱, 備註 FROM products ORDER BY 編碼 ASC", conn)
                 
-                # 修正後的 Excel 匯出邏輯
                 from io import BytesIO
                 output = BytesIO()
                 with pd.ExcelWriter(output, engine='openpyxl') as writer:
@@ -326,7 +323,6 @@ elif menu == "商品訊息":
             st.divider()
             st.subheader("📤 批量上傳商品資料")
             if check_perm(role, "商品訊息", "can_upload"):
-                # 這裡的邏輯原本就是對的，保持不動即可
                 uploaded_file = st.file_uploader("選擇上傳檔案 (支援 CSV 或 Excel)", type=["csv", "xlsx"])
                 if uploaded_file and st.button("🚀 執行批量匯入", type="primary"):
                     try:
@@ -356,11 +352,9 @@ elif menu == "商品訊息":
 elif menu == "商品庫存":
     st.title("🏭 商品庫存管理")
 
-    # 取得最新匯率
     with get_db() as conn:
         rate = conn.execute("SELECT value FROM settings WHERE key='exchange_rate'").fetchone()[0]
     
-    # 匯率手動調整
     new_rate = st.sidebar.number_input("當前人民幣匯率 (RMB to TWD)", value=rate, step=0.01)
     if st.sidebar.button("更新匯率"):
         with get_db() as conn:
@@ -369,7 +363,6 @@ elif menu == "商品庫存":
         st.rerun()
 
     if check_perm(role, "商品庫存", "can_view"):
-        # 1. 讀取數據並計算
         with get_db() as conn:
             query = """
             SELECT p.編碼, p.名稱, p.類別, p.品牌, 
@@ -382,12 +375,10 @@ elif menu == "商品庫存":
             """
             df = pd.read_sql(query, conn)
         
-        # 2. 計算欄位
         df["總庫存金額_RMB"] = df["總採購金額_RMB"]
         df["總庫存金額_TWD"] = df["總庫存金額_RMB"] * new_rate
         df["平均成本_TWD"] = df["平均成本_RMB"] * new_rate
         
-        # 3. 篩選與顯示
         show_type = st.radio("篩選庫存狀態", ["顯示所有", "僅顯示有庫存", "僅顯示缺貨"], horizontal=True)
         filtered_df = df.copy()
         if show_type == "僅顯示有庫存": filtered_df = filtered_df[filtered_df["總庫存"] > 0]
@@ -395,7 +386,6 @@ elif menu == "商品庫存":
         
         st.dataframe(filtered_df, use_container_width=True)
         
-        # 4. 新增：批量下載功能
         from io import BytesIO
         output = BytesIO()
         with pd.ExcelWriter(output, engine='openpyxl') as writer:
@@ -408,7 +398,6 @@ elif menu == "商品庫存":
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
         
-        # 5. 批次進貨 (匯入)
         with st.expander("📥 批次進貨匯入 (Excel/CSV)"):
             st.write("請上傳包含：編碼, 倉庫位置, 數量, 單支成本_RMB, 採購廠商, 進貨日期 的檔案")
             uploaded_file = st.file_uploader("上傳進貨單", type=["csv", "xlsx"])
@@ -453,46 +442,42 @@ elif menu == "財務報表":
 elif menu == "權限管理":
     st.title("🔐 系統權限與帳號管理")
     
-    # 雙重確認：只有 admin 帳號或角色是 Admin 的人可以進入
     if st.session_state.get('user') != 'admin' and role != "Admin": 
         st.error("🚫 僅限總管理員訪問此頁面")
         st.stop()
         
     st.info("💡 **操作說明**：\n"
             "1. **新增帳號**：滑到表格最底下，點擊空白列即可新增。\n"
-            "2. **修改密碼**：直接將密碼欄位的亂碼刪除，輸入新密碼，儲存後會自動加密。\n"
+            "2. **修改密碼**：直接將密碼刪除並輸入新密碼即可。\n"
             "3. **刪除帳號**：點選表格左側的核取方塊，按下鍵盤 `Delete` 鍵即可刪除該列。\n"
             "4. 修改完成後，請務必點擊下方的 **「儲存所有變更」** 按鈕。")
     
     modules = ["商品訊息", "商品庫存", "採購管理", "訂單明細", "財務報表"]
     
     with get_db() as conn:
-        # 1. 讀取所有帳號資料
         df_users = pd.read_sql("SELECT username, password, role FROM users", conn)
         
-        # 2. 將資料庫的字串，轉換為畫面上好看的 Checkbox 打勾狀態
+        # 🌟 讀取資料庫時，馬上把密碼解碼回明文，讓你在畫面上能直接看見！
+        df_users['password'] = df_users['password'].apply(decode_pw)
+        
         for m in modules:
             df_users[m] = df_users['role'].apply(lambda x: True if x == 'Admin' else (m in str(x)))
             
-        # 整理要顯示在畫面的表格
         df_display = df_users[['username', 'password'] + modules].copy()
         df_display.rename(columns={'username': '帳號', 'password': '密碼'}, inplace=True)
         
-        # 3. 顯示可動態增刪改的互動表格
         edited_df = st.data_editor(
             df_display, 
-            num_rows="dynamic", # 🌟 允許動態新增與刪除列的關鍵
+            num_rows="dynamic", 
             use_container_width=True,
             column_config={
                 "帳號": st.column_config.TextColumn("👤 帳號 (必填不可重複)"),
-                "密碼": st.column_config.TextColumn("🔑 密碼 (修改時請直接輸入新密碼)")
+                "密碼": st.column_config.TextColumn("🔑 密碼 (此處顯示為明文)")
             }
         )
         
-        # 4. 儲存按鈕與邏輯
         if st.button("💾 確認儲存所有變更", type="primary", use_container_width=True):
             try:
-                # 取得畫面上還留著的帳號名單 (用來抓出哪些被你刪除了)
                 current_users = edited_df['帳號'].dropna().astype(str).tolist()
                 current_users = [u.strip() for u in current_users if u.strip() != '']
                 
@@ -503,36 +488,29 @@ elif menu == "權限管理":
                 else:
                     cursor = conn.cursor()
                     
-                    # A. 執行刪除：把已經不在畫面上的帳號從資料庫剔除
                     placeholders = ','.join(['?'] * len(current_users))
                     cursor.execute(f"DELETE FROM users WHERE username NOT IN ({placeholders})", current_users)
                     
-                    # B. 執行新增與修改
                     for _, row in edited_df.iterrows():
                         u_name = str(row['帳號']).strip()
                         u_pwd = str(row['密碼']).strip()
                         
-                        # 略過空白的無效行
                         if not u_name or u_name == 'nan': 
                             continue 
                         
-                        # 判斷是否需要重新加密 (雜湊值固定是 64 個字元，若不是代表是你剛輸入的明文)
-                        if len(u_pwd) != 64 and u_pwd != 'nan' and u_pwd != '':
-                            u_pwd = hash_pw(u_pwd)
+                        # 🌟 寫回資料庫前，將你在畫面上看到的明文密碼再次隱藏編碼
+                        u_pwd_encoded = encode_pw(u_pwd)
                             
-                        # 把打勾的模組收集起來，變回字串存進資料庫
                         assigned_modules = [m for m in modules if row[m] == True]
                         new_role_str = ",".join(assigned_modules)
                         
-                        # 保護最高管理員身分
                         if u_name == 'admin':
                             new_role_str = 'Admin'
                             
-                        # 寫入資料庫
                         cursor.execute("""
                             INSERT OR REPLACE INTO users (username, password, role) 
                             VALUES (?, ?, ?)
-                        """, (u_name, u_pwd, new_role_str))
+                        """, (u_name, u_pwd_encoded, new_role_str))
                         
                     conn.commit()
                     st.success("✅ 帳號與所有權限配置已成功更新！")
