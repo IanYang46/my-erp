@@ -24,8 +24,8 @@ def get_db():
 # --- 3. 初始化資料庫與預設權限 ---
 def init_db():
     # 從 st.secrets 讀取帳號密碼
-    admin_user = st.secrets.get("ADMIN_USERNAME", "admin")
-    admin_pw = st.secrets.get("ADMIN_PASSWORD", "123456")
+    admin_user = st.secrets["ADMIN_USERNAME"]
+    admin_pw = st.secrets["ADMIN_PASSWORD"]
     
     with get_db() as conn:
         cursor = conn.cursor()
