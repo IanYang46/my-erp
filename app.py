@@ -86,20 +86,46 @@ def check_perm(role, module, action):
 
 # --- 5. 系統登入 ---
 if 'logged_in' not in st.session_state:
-    st.title("📦 強盛集團 | ERP 系統登入")
-    with st.form("login_form"):
-        user = st.text_input("帳號")
-        pw = st.text_input("密碼", type="password")
-        if st.form_submit_button("登入"):
-            with get_db() as conn:
-                cursor = conn.cursor()
-                cursor.execute("SELECT role FROM users WHERE username=? AND password=?", (user, pw))
-                res = cursor.fetchone()
-                if res:
-                    st.session_state.update({'logged_in': True, 'role': res[0], 'user': user})
-                    st.rerun()
+    st.title("📦 強盛集團 | ERP 系統")
+    choice = st.radio("請選擇操作：", ["登入", "註冊新帳號"])
+
+    if choice == "登入":
+        with st.form("login_form"):
+            user = st.text_input("帳號")
+            pw = st.text_input("密碼", type="password")
+            if st.form_submit_button("登入"):
+                with get_db() as conn:
+                    cursor = conn.cursor()
+                    # 查詢使用者密碼雜湊值
+                    cursor.execute("SELECT role, password FROM users WHERE username=?", (user,))
+                    res = cursor.fetchone()
+                    # 比對雜湊後的密碼
+                    if res and res[1] == hash_pw(pw):
+                        st.session_state.update({'logged_in': True, 'role': res[0], 'user': user})
+                        st.rerun()
+                    else:
+                        st.error("帳號或密碼錯誤！")
+
+    elif choice == "註冊新帳號":
+        with st.form("register_form"):
+            new_user = st.text_input("新帳號")
+            new_pw = st.text_input("新密碼", type="password")
+            confirm_pw = st.text_input("確認密碼", type="password")
+            if st.form_submit_button("註冊"):
+                if new_pw != confirm_pw:
+                    st.error("密碼不一致！")
+                elif not new_user or not new_pw:
+                    st.warning("請輸入帳號與密碼")
                 else:
-                    st.error("帳號或密碼錯誤！")
+                    with get_db() as conn:
+                        cursor = conn.cursor()
+                        try:
+                            # 儲存加密後的密碼，預設給予 'CS' 權限 (客服角色)
+                            cursor.execute("INSERT INTO users VALUES (?, ?, ?)", (new_user, hash_pw(new_pw), "CS"))
+                            conn.commit()
+                            st.success("✅ 註冊成功，請切換至「登入」頁面進行登入。")
+                        except Exception as e:
+                            st.error(f"❌ 註冊失敗 (帳號可能已被使用): {e}")
     st.stop()
 
 # --- 6. 側邊欄設計 ---
