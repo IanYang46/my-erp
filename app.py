@@ -59,10 +59,7 @@ def init_db():
         cursor.execute('''CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value REAL)''')
         cursor.execute("INSERT OR IGNORE INTO settings VALUES ('exchange_rate', 4.5)")
         
-        # 5. 建立預設 Admin 帳號
-        cursor.execute("INSERT OR IGNORE INTO users VALUES ('admin', '123456', 'Admin')")
-        
-        # 6. 初始化全新權限矩陣 (對應您新增的模組)
+        # 5. 初始化全新權限矩陣 (對應您新增的模組)
         cursor.execute("SELECT count(*) FROM permissions")
         if cursor.fetchone()[0] == 0:
             modules = ["商品訊息", "商品庫存", "採購管理", "訂單明細", "財務報表"]
