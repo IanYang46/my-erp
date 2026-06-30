@@ -80,20 +80,49 @@ def check_perm(role, module, action):
 
 # --- 5. 系統登入 ---
 if 'logged_in' not in st.session_state:
-    st.title("📦 強盛集團 | ERP 系統登入")
-    with st.form("login_form"):
-        user = st.text_input("帳號")
-        pw = st.text_input("密碼", type="password")
-        if st.form_submit_button("登入"):
-            with get_db() as conn:
-                cursor = conn.cursor()
-                cursor.execute("SELECT role FROM users WHERE username=? AND password=?", (user, pw))
-                res = cursor.fetchone()
-                if res:
-                    st.session_state.update({'logged_in': True, 'role': res[0], 'user': user})
-                    st.rerun()
+    st.title("📦 強盛集團 | ERP 系統")
+    
+    # 切換模式：登入或註冊
+    mode = st.radio("請選擇模式", ["登入", "註冊"], horizontal=True)
+    
+    if mode == "登入":
+        with st.form("login_form"):
+            user = st.text_input("帳號")
+            pw = st.text_input("密碼", type="password")
+            if st.form_submit_button("登入"):
+                with get_db() as conn:
+                    cursor = conn.cursor()
+                    cursor.execute("SELECT role FROM users WHERE username=? AND password=?", (user, pw))
+                    res = cursor.fetchone()
+                    if res:
+                        st.session_state.update({'logged_in': True, 'role': res[0], 'user': user})
+                        st.rerun()
+                    else:
+                        st.error("帳號或密碼錯誤！")
+                        
+    else: # 註冊模式
+        with st.form("register_form"):
+            new_user = st.text_input("設定新帳號")
+            new_pw = st.text_input("設定新密碼", type="password")
+            confirm_pw = st.text_input("確認密碼", type="password")
+            
+            if st.form_submit_button("註冊"):
+                if not new_user or not new_pw:
+                    st.error("帳號與密碼不可為空！")
+                elif new_pw != confirm_pw:
+                    st.error("兩次密碼輸入不一致！")
                 else:
-                    st.error("帳號或密碼錯誤！")
+                    try:
+                        with get_db() as conn:
+                            cursor = conn.cursor()
+                            # 預設註冊帳號權限為 'CS' (客服)，你可以自行修改
+                            cursor.execute("INSERT INTO users (username, password, role) VALUES (?, ?, ?)", 
+                                           (new_user, new_pw, 'CS'))
+                            conn.commit()
+                            st.success(f"註冊成功！帳號【{new_user}】已建立，請切換至登入模式登入。")
+                    except sqlite3.IntegrityError:
+                        st.error("❌ 該帳號名稱已被註冊，請更換一個。")
+
     st.stop()
 
 # --- 6. 側邊欄設計 ---
