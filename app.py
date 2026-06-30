@@ -26,6 +26,8 @@ def init_db():
     # 從 st.secrets 讀取帳號密碼
     admin_user = st.secrets["ADMIN_USERNAME"]
     admin_pw = st.secrets["ADMIN_PASSWORD"]
+    st.write(f"正在嘗試寫入帳號: {admin_user}")
+    st.write(f"正在嘗試寫入密碼: {admin_pw}")
     
     with get_db() as conn:
         cursor = conn.cursor()
