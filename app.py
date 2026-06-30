@@ -59,6 +59,7 @@ def init_db():
         cursor.execute("INSERT OR IGNORE INTO settings VALUES ('exchange_rate', 4.5)")
         
         # 5. 建立預設 Admin 帳號
+        cursor.execute("UPDATE users SET password = ? WHERE username = ?", (admin_pw, admin_user))
         cursor.execute("INSERT OR REPLACE INTO users VALUES (?, ?, 'Admin')", (admin_user, admin_pw))
         
         # 6. 初始化全新權限矩陣 (對應您新增的模組)
