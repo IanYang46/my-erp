@@ -498,28 +498,29 @@ elif menu == "權限管理":
 
         # 2. 編輯與刪除
         with get_db() as conn:
-            df_users = pd.read_sql("SELECT username, role FROM users", conn) # 只選出帳號與角色，保護密碼
-            
-            st.subheader("✏️ 編輯使用者角色")
-            st.info("可以直接在表格內修改角色(Role)，修改後按下儲存。")
-            edited_users = st.data_editor(df_users, hide_index=True, use_container_width=True)
-            
-            if st.button("💾 更新角色設定"):
-                with get_db() as conn:
-                    for index, row in edited_users.iterrows():
-                        # 這是安全的寫法：只針對該帳號更新角色，不會動到密碼欄位
-                        conn.execute("UPDATE users SET role=? WHERE username=?", (row['role'], row['username']))
-                    conn.commit()
-                st.success("✅ 角色更新完成！")
-
-            st.divider()
-            
-            st.subheader("🗑️ 刪除帳號")
-            del_user = st.selectbox("選擇要刪除的帳號", df_users["username"].tolist())
-            if st.button("🧨 確認刪除該帳號", type="primary"):
-                with get_db() as conn:
-                    cursor = conn.cursor()
-                    cursor.execute("DELETE FROM users WHERE username=?", (del_user,))
-                    conn.commit()
-                    st.success(f"已刪除 {del_user}")
+                df_users = pd.read_sql("SELECT username, role FROM users", conn)
+                
+                st.subheader("✏️ 編輯使用者角色")
+                st.info("可以直接在表格內修改角色(Role)，修改後按下儲存。")
+                edited_users = st.data_editor(df_users, hide_index=True, use_container_width=True)
+                
+                # --- 注意這裡的縮排，一定要對齊 ---
+                if st.button("💾 更新角色設定", type="primary"):
+                    with get_db() as update_conn:
+                        for index, row in edited_users.iterrows():
+                            update_conn.execute("UPDATE users SET role=? WHERE username=?", (row['role'], row['username']))
+                        update_conn.commit()
+                    st.success("✅ 角色更新完成！")
                     st.rerun()
+
+                st.divider()
+                
+                st.subheader("🗑️ 刪除帳號")
+                del_user = st.selectbox("選擇要刪除的帳號", df_users["username"].tolist())
+                if st.button("🧨 確認刪除該帳號", type="primary"):
+                    with get_db() as del_conn:
+                        cursor = del_conn.cursor()
+                        cursor.execute("DELETE FROM users WHERE username=?", (del_user,))
+                        del_conn.commit()
+                        st.success(f"已刪除 {del_user}")
+                        st.rerun()
