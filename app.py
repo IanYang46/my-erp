@@ -93,7 +93,8 @@ if 'logged_in' not in st.session_state:
             if st.form_submit_button("登入"):
                 with get_db() as conn:
                     cursor = conn.cursor()
-                    cursor.execute("SELECT role FROM users WHERE username=? AND password=?", (user, pw))
+                    # 🔑 關鍵修正：把輸入的 pw 套上 hash_pw()，才能跟資料庫內的加密密碼比對！
+                    cursor.execute("SELECT role FROM users WHERE username=? AND password=?", (user, hash_pw(pw)))
                     res = cursor.fetchone()
                     if res:
                         st.session_state.update({'logged_in': True, 'role': res[0], 'user': user})
@@ -116,9 +117,9 @@ if 'logged_in' not in st.session_state:
                     try:
                         with get_db() as conn:
                             cursor = conn.cursor()
-                            # 預設註冊帳號權限為 'CS' (客服)，你可以自行修改
+                            # 註冊時密碼已經有加密了，這部分原本就是對的
                             cursor.execute("INSERT INTO users (username, password, role) VALUES (?, ?, ?)", 
-                                           (new_user, new_pw, 'CS'))
+                                           (new_user, hash_pw(new_pw), 'CS'))
                             conn.commit()
                             st.success(f"註冊成功！帳號【{new_user}】已建立，請切換至登入模式登入。")
                     except sqlite3.IntegrityError:
