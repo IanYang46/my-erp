@@ -449,16 +449,82 @@ elif menu == "財務報表":
     else: st.error("🚫 您無權限訪問此模組")
 
 elif menu == "權限管理":
-    st.title("🔐 系統權限矩陣")
-    if role != "Admin": 
-        st.error("🚫 僅限總管理員訪問此頁面")
+    st.title("🔐 系統帳號與權限管理")
+    if role != "Admin":
+        st.error("🚫 僅限總管理員訪問")
         st.stop()
-    
-    st.write("請直接勾選下方表格來開關各角色的模組權限：")
-    with get_db() as conn:
-        df_perm = pd.read_sql("SELECT * FROM permissions", conn)
-        edited_perm = st.data_editor(df_perm, hide_index=True, use_container_width=True)
-        if st.button("💾 儲存權限設定", type="primary"):
-            edited_perm.to_sql('permissions', conn, if_exists='replace', index=False)
-            st.success("✅ 權限已成功更新！")
-            st.rerun()
+
+    tab1, tab2 = st.tabs(["👤 帳號維護", "📊 個別模組權限"])
+
+    # --- Tab 1: 帳號新增/刪除/編輯 ---
+    with tab1:
+        st.subheader("➕ 新增使用者")
+        with st.form("add_user"):
+            new_u = st.text_input("帳號")
+            new_p = st.text_input("重設密碼", type="password")
+            new_r = st.selectbox("職位", ["Admin", "Finance", "Shareholder", "CS"])
+            if st.form_submit_button("建立帳號"):
+                try:
+                    with get_db() as conn:
+                        # 記得匯入 hashlib 並使用 hash_pw(new_p) 儲存
+                        conn.execute("INSERT INTO users VALUES (?, ?, ?)", (new_u, hash_pw(new_p), new_r))
+                        conn.commit()
+                        st.success(f"✅ 帳號 {new_u} 新增成功！")
+                except Exception as e:
+                    st.error(f"❌ 新增失敗: {e}")
+
+        st.divider()
+        st.subheader("✏️ 管理現有帳號")
+        with get_db() as conn:
+            users_df = pd.read_sql("SELECT username, role FROM users", conn)
+            # 刪除與編輯表格
+            for _, row in users_df.iterrows():
+                cols = st.columns([2, 2, 1, 1])
+                cols[0].write(row['username'])
+                cols[1].write(row['role'])
+                if cols[2].button("🔑 改密碼", key=f"pw_{row['username']}"):
+                    st.session_state['reset_user'] = row['username']
+                if cols[3].button("🗑️ 刪除", key=f"del_{row['username']}", type="primary"):
+                    conn.execute("DELETE FROM users WHERE username=?", (row['username'],))
+                    conn.commit()
+                    st.rerun()
+
+        if 'reset_user' in st.session_state:
+            with st.container(border=True):
+                st.write(f"正在重設 {st.session_state['reset_user']} 的密碼")
+                reset_p = st.text_input("新密碼", type="password")
+                if st.button("確認修改"):
+                    with get_db() as conn:
+                        conn.execute("UPDATE users SET password=? WHERE username=?", (hash_pw(reset_p), st.session_state['reset_user']))
+                        conn.commit()
+                    del st.session_state['reset_user']
+                    st.success("密碼已更新")
+                    st.rerun()
+
+    # --- Tab 2: 個別模組權限 (勾選矩陣) ---
+    with tab2:
+        st.subheader("勾選該帳號可使用的模組")
+        with get_db() as conn:
+            users = pd.read_sql("SELECT username FROM users", conn)["username"].tolist()
+            selected_user = st.selectbox("選擇要設定的帳號", users)
+            
+            modules = ["商品訊息", "商品庫存", "採購管理", "訂單明細", "財務報表"]
+            
+            # 讀取該用戶權限
+            curr_perms = pd.read_sql(f"SELECT module, can_view FROM user_permissions WHERE username='{selected_user}'", conn)
+            
+            # 顯示勾選介面
+            updated_perms = {}
+            for mod in modules:
+                # 檢查該模組是否已勾選
+                is_checked = (curr_perms[curr_perms['module']==mod]['can_view'].values[0] if mod in curr_perms['module'].values else False)
+                updated_perms[mod] = st.checkbox(mod, value=is_checked)
+            
+            if st.button("💾 儲存該用戶權限"):
+                with get_db() as conn:
+                    # 先清空再重新寫入
+                    conn.execute("DELETE FROM user_permissions WHERE username=?", (selected_user,))
+                    for mod, val in updated_perms.items():
+                        conn.execute("INSERT INTO user_permissions VALUES (?, ?, ?)", (selected_user, mod, val))
+                    conn.commit()
+                st.success(f"✅ {selected_user} 的權限已更新！")
