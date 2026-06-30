@@ -14,17 +14,9 @@ st.set_page_config(page_title="強盛集團 ERP", layout="wide", initial_sidebar
 
 # --- 2. 穩定的資料庫連線 ---
 def get_db():
-    # 加上 timeout=30 延長高並發時的等待時間，check_same_thread=False 允許 Streamlit 多執行緒安全存取
+    # 這裡面絕對不能有其他的 if else 或是 import sqlite3，只要這短短一行就好
     return sqlite3.connect("powerful_group.db", timeout=30, check_same_thread=False)
     
-    # 判斷是否在雲端環境執行 (Render 會自動設定環境變數)
-    if os.environ.get("RENDER"):
-        return create_engine(DATABASE_URL).connect()
-    else:
-        # 如果是本地端，還是用你原本的 SQLite 檔案，方便你測試
-        import sqlite3
-        return sqlite3.connect("powerful_group.db")
-
 # --- 3. 初始化資料庫與預設權限 ---
 # 🌟 關鍵修正：加入此裝飾器，確保整個 App 生命週期中，初始化函數只執行「唯一一次」
 # 徹底根除因網頁重複整理、點擊按鈕導致的資料庫寫入死鎖問題
