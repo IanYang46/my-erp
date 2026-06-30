@@ -1,90 +1,62 @@
 import streamlit as st
 from sqlalchemy import create_engine, text
-import sqlite3
 import pandas as pd
 import os
 import time
-import streamlit as st
 
 # --- 1. 基礎設定與整地 ---
 if not os.path.exists("product_images"): os.makedirs("product_images")
 st.set_page_config(page_title="強盛集團 ERP", layout="wide", initial_sidebar_state="expanded")
 
-# --- 2. 穩定的資料庫連線 ---
-def get_db():
-    # 優先讀取 Streamlit Cloud 的 Secrets，如果沒有，才用本地 SQLite
+# --- 2. 穩定的資料庫連線 (完美雙用版) ---
+@st.cache_resource
+def get_engine():
     if "DATABASE_URL" in st.secrets:
-        return create_engine(st.secrets["DATABASE_URL"]).connect()
+        return create_engine(st.secrets["DATABASE_URL"])
     else:
-        return sqlite3.connect("powerful_group.db", check_same_thread=False)
+        # 本地端也統一用 SQLAlchemy 引擎
+        return create_engine("sqlite:///powerful_group.db")
 
 # --- 3. 初始化資料庫與預設權限 ---
 def init_db():
-    conn = get_db()
-    # 判斷是否為 PostgreSQL (雲端)
-    is_postgres = "postgresql" in str(type(conn))
+    engine = get_engine()
+    is_pg = engine.dialect.name == "postgresql"
+    # 解決 SQLite 與 Postgres 的自動遞增語法衝突
+    auto_inc = "SERIAL PRIMARY KEY" if is_pg else "INTEGER PRIMARY KEY AUTOINCREMENT"
     
-    # 建立表格的函數 (兼容 SQLite 與 PostgreSQL)
-    def execute_sql(query, params=None):
-        if is_postgres:
-            conn.execute(text(query), params or {})
-            conn.commit()
-        else:
-            cursor = conn.cursor()
-            cursor.execute(query, params or [])
-            conn.commit()
+    with engine.connect() as conn:
+        # 統一使用 text() 建立表格，確保雲端與本地皆相容
+        conn.execute(text('''CREATE TABLE IF NOT EXISTS users (username TEXT PRIMARY KEY, password TEXT, role TEXT)'''))
+        conn.execute(text('''CREATE TABLE IF NOT EXISTS permissions (role TEXT, module TEXT, can_view BOOLEAN, can_edit BOOLEAN, can_upload BOOLEAN, can_download BOOLEAN)'''))
+        conn.execute(text('''CREATE TABLE IF NOT EXISTS products (編碼 TEXT PRIMARY KEY, 類別 TEXT, 品牌 TEXT, 名稱 TEXT, 備註 TEXT, 圖片路徑 TEXT)'''))
+        conn.execute(text(f'''CREATE TABLE IF NOT EXISTS inventory (id {auto_inc}, 編碼 TEXT, 倉庫位置 TEXT, 數量 INTEGER, 單支成本_RMB REAL, 採購廠商 TEXT, 採購金額_RMB REAL, 進貨日期 DATE)'''))
+        conn.execute(text('''CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value REAL)'''))
         
-        # 1. 建立系統核心表格
-        cursor.execute('''CREATE TABLE IF NOT EXISTS users (username TEXT PRIMARY KEY, password TEXT, role TEXT)''')
-        cursor.execute('''CREATE TABLE IF NOT EXISTS permissions (role TEXT, module TEXT, can_view BOOLEAN, can_edit BOOLEAN, can_upload BOOLEAN, can_download BOOLEAN)''')
+        # 初始化預設帳號與匯率 (先檢查是否存在)
+        if not conn.execute(text("SELECT 1 FROM users WHERE username='admin'")).fetchone():
+            conn.execute(text("INSERT INTO users (username, password, role) VALUES ('admin', '123456', 'Admin')"))
         
-        # 2. 商品資料表 (已包含類別、品牌等 6 個欄位)
-        cursor.execute('''CREATE TABLE IF NOT EXISTS products (
-                            編碼 TEXT PRIMARY KEY, 
-                            類別 TEXT, 
-                            品牌 TEXT, 
-                            名稱 TEXT, 
-                            備註 TEXT, 
-                            圖片路徑 TEXT)''')
-        
-        # 3. 【新增】：庫存管理表
-        cursor.execute('''CREATE TABLE IF NOT EXISTS inventory (
-                            id INTEGER PRIMARY KEY AUTOINCREMENT,
-                            編碼 TEXT,
-                            倉庫位置 TEXT,
-                            數量 INTEGER,
-                            單支成本_RMB REAL,
-                            採購廠商 TEXT,
-                            採購金額_RMB REAL,
-                            進貨日期 DATE)''')
-        
-        # 4. 【新增】：匯率設定表
-        cursor.execute('''CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value REAL)''')
-        cursor.execute("INSERT OR IGNORE INTO settings VALUES ('exchange_rate', 4.5)")
-        
-        # 5. 建立預設 Admin 帳號
-        cursor.execute("INSERT OR IGNORE INTO users VALUES ('admin', '123456', 'Admin')")
-        
-        # 6. 初始化全新權限矩陣 (對應您新增的模組)
-        cursor.execute("SELECT count(*) FROM permissions")
-        if cursor.fetchone()[0] == 0:
+        if not conn.execute(text("SELECT 1 FROM settings WHERE key='exchange_rate'")).fetchone():
+            conn.execute(text("INSERT INTO settings (key, value) VALUES ('exchange_rate', 4.5)"))
+            
+        # 初始化全新權限矩陣
+        if conn.execute(text("SELECT count(*) FROM permissions")).scalar() == 0:
             modules = ["商品訊息", "商品庫存", "採購管理", "訂單明細", "財務報表"]
             roles = ["Admin", "Finance", "Shareholder", "CS"]
             for r in roles:
                 v, e, u, d = (1, 1, 1, 1) if r == "Admin" else (0, 0, 0, 0)
                 for m in modules:
-                    cursor.execute("INSERT INTO permissions VALUES (?,?,?,?,?,?)", (r, m, v, e, u, d))
-        
+                    conn.execute(text("INSERT INTO permissions (role, module, can_view, can_edit, can_upload, can_download) VALUES (:r, :m, :v, :e, :u, :d)"), 
+                                 {"r":r, "m":m, "v":v, "e":e, "u":u, "d":d})
         conn.commit()
+
 init_db()
 
 # --- 4. 權限檢查工具 ---
 def check_perm(role, module, action):
-    with get_db() as conn:
-        cursor = conn.cursor()
-        cursor.execute(f"SELECT {action} FROM permissions WHERE role=? AND module=?", (role, module))
-        res = cursor.fetchone()
-        return bool(res[0]) if res else False
+    with get_engine().connect() as conn:
+        df = pd.read_sql(f"SELECT {action} FROM permissions WHERE role='{role}' AND module='{module}'", conn)
+        return bool(df.iloc[0][0]) if not df.empty else False
 
 # --- 5. 系統登入 ---
 if 'logged_in' not in st.session_state:
