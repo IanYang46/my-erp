@@ -86,21 +86,46 @@ def check_perm(role, module, action):
 
 # --- 5. 系統登入 ---
 if 'logged_in' not in st.session_state:
-    st.title("📦 強盛集團 | ERP 系統登入")
-    with st.form("login_form"):
-        user = st.text_input("帳號")
-        pw = st.text_input("密碼", type="password")
-        if st.form_submit_button("登入"):
-            with get_db() as conn:
-                cursor = conn.cursor()
-                cursor.execute("SELECT role FROM users WHERE username=? AND password=?", (user, pw))
-                res = cursor.fetchone()
-                if res:
-                    st.session_state.update({'logged_in': True, 'role': res[0], 'user': user})
-                    st.rerun()
+    st.title("📦 強盛集團 | ERP 系統")
+    choice = st.radio("請選擇操作：", ["登入", "註冊新帳號"])
+
+    if choice == "登入":
+        with st.form("login_form"):
+            user = st.text_input("帳號")
+            pw = st.text_input("密碼", type="password")
+            if st.form_submit_button("登入"):
+                with get_db() as conn:
+                    cursor = conn.cursor()
+                    cursor.execute("SELECT role, password FROM users WHERE username=?", (user,))
+                    res = cursor.fetchone()
+                    # 比對雜湊後的密碼
+                    if res and res[1] == hash_pw(pw):
+                        st.session_state.update({'logged_in': True, 'role': res[0], 'user': user})
+                        st.rerun()
+                    else:
+                        st.error("帳號或密碼錯誤！")
+
+    elif choice == "註冊新帳號":
+        with st.form("register_form"):
+            new_user = st.text_input("新帳號")
+            new_pw = st.text_input("新密碼", type="password")
+            confirm_pw = st.text_input("確認密碼", type="password")
+            if st.form_submit_button("註冊"):
+                if new_pw != confirm_pw:
+                    st.error("密碼不一致！")
+                elif not new_user or not new_pw:
+                    st.warning("請輸入帳號與密碼")
                 else:
-                    st.error("帳號或密碼錯誤！")
-st.stop()
+                    with get_db() as conn:
+                        cursor = conn.cursor()
+                        try:
+                            # 儲存加密後的密碼
+                            cursor.execute("INSERT INTO users VALUES (?, ?, ?)", (new_user, hash_pw(new_pw), "CS"))
+                            conn.commit()
+                            st.success("✅ 註冊成功，請返回登入頁面！")
+                        except Exception as e:
+                            st.error(f"❌ 註冊失敗 (帳號可能已被使用): {e}")
+    st.stop()
 
 # --- 6. 側邊欄設計 ---
 st.sidebar.title("🏢 強盛集團 ERP")
@@ -431,10 +456,9 @@ elif menu == "權限管理":
         st.error("🚫 僅限總管理員訪問此頁面")
         st.stop()
 
-    # 使用 Tab 分頁，讓介面乾淨一點
     tab1, tab2 = st.tabs(["📊 權限矩陣", "👤 帳號管理"])
 
-    # --- Tab 1: 原本的權限設定 ---
+    # --- Tab 1: 權限矩陣 ---
     with tab1:
         st.write("請直接勾選下方表格來開關各角色的模組權限：")
         with get_db() as conn:
@@ -442,29 +466,58 @@ elif menu == "權限管理":
             edited_perm = st.data_editor(df_perm, hide_index=True, use_container_width=True)
             if st.button("💾 儲存權限設定", type="primary"):
                 edited_perm.to_sql('permissions', conn, if_exists='replace', index=False)
-                st.success("✅ 權限已成功更新！")
+                st.success("✅ 權限已更新！")
                 st.rerun()
 
-    # --- Tab 2: 新增帳號管理 (刪除功能在這裡) ---
+    # --- Tab 2: 帳號管理 ---
     with tab2:
-        st.subheader("🗑️ 刪除帳號")
-        st.warning("⚠️ 警告：刪除後無法復原，請謹慎操作。")
+        # 1. 新增帳號
+        st.subheader("➕ 新增使用者")
+        with st.expander("展開新增表單"):
+            with st.form("add_user_form"):
+                new_user = st.text_input("帳號名稱")
+                new_pw = st.text_input("密碼", type="password")
+                new_role = st.selectbox("角色權限", ["Admin", "Finance", "Shareholder", "CS"])
+                if st.form_submit_button("🚀 建立帳號"):
+                    if new_user and new_pw:
+                        with get_db() as conn:
+                            cursor = conn.cursor()
+                            try:
+                                # 使用 hash_pw 加密 (確保最上方有定義該函式)
+                                cursor.execute("INSERT INTO users VALUES (?, ?, ?)", (new_user, hash_pw(new_pw), new_role))
+                                conn.commit()
+                                st.success(f"✅ 帳號 {new_user} 已建立！")
+                                st.rerun()
+                            except Exception as e:
+                                st.error(f"❌ 建立失敗 (帳號可能已存在): {e}")
         
+        st.divider()
+
+        # 2. 編輯與刪除
         with get_db() as conn:
-            # 讀取目前所有使用者
-            df_users = pd.read_sql("SELECT username, role FROM users", conn)
-            st.table(df_users)
+            df_users = pd.read_sql("SELECT username, role FROM users", conn) # 只選出帳號與角色，保護密碼
             
-            # 下拉選單選擇要刪除的帳號
-            del_user = st.selectbox("請選擇要刪除的帳號：", df_users["username"].tolist())
+            st.subheader("✏️ 編輯使用者角色")
+            st.info("可以直接在表格內修改角色(Role)，修改後按下儲存。")
+            edited_users = st.data_editor(df_users, hide_index=True, use_container_width=True)
             
-            if st.button("🧨 確認刪除此帳號", type="primary"):
-                cursor = conn.cursor()
-                try:
-                    # 執行刪除指令
-                    cursor.execute("DELETE FROM users WHERE username = ?", (del_user,))
+            if st.button("💾 更新角色設定"):
+                # 將改動同步回資料庫 (這裡只更新角色)
+                with get_db() as conn:
+                    for index, row in edited_users.iterrows():
+                        conn.execute("UPDATE users SET role=? WHERE username=?", (row['role'], row['username']))
                     conn.commit()
-                    st.success(f"✅ 帳號 {del_user} 已成功刪除！")
-                    st.rerun() # 刪除後重新整理畫面
-                except Exception as e:
-                    st.error(f"❌ 發生錯誤: {e}")
+                st.success("✅ 角色更新完成！")
+                st.rerun()
+
+            st.divider()
+            
+            st.subheader("🗑️ 刪除帳號")
+            del_user = st.selectbox("選擇要刪除的帳號", df_users["username"].tolist())
+            if st.button("🧨 確認刪除該帳號", type="primary"):
+                with get_db() as conn:
+                    cursor = conn.cursor()
+                    cursor.execute("DELETE FROM users WHERE username=?", (del_user,))
+                    conn.commit()
+                    st.success(f"已刪除 {del_user}")
+                    st.rerun()
