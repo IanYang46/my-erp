@@ -18,12 +18,13 @@ def get_db():
     return sqlite3.connect("powerful_group.db", timeout=30, check_same_thread=False)
     
 # --- 3. 初始化資料庫與預設權限 ---
-# 🌟 關鍵修正：加入此裝飾器，確保整個 App 生命週期中，初始化函數只執行「唯一一次」
-# 徹底根除因網頁重複整理、點擊按鈕導致的資料庫寫入死鎖問題
 @st.cache_resource
 def init_db_v2():
     with get_db() as conn:
         cursor = conn.cursor()
+        
+        # 🧨 殺手鐧：強制刪除舊的錯誤表格 (這會清空目前所有錯誤帳號，徹底修復無限繁殖)
+        cursor.execute("DROP TABLE IF EXISTS users")
         
         # 1. 建立系統核心表格
         cursor.execute('''CREATE TABLE IF NOT EXISTS users (username TEXT PRIMARY KEY, password TEXT, role TEXT)''')
