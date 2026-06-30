@@ -71,6 +71,7 @@ def init_db_v2():
                     cursor.execute("INSERT INTO permissions VALUES (?,?,?,?,?,?)", (r, m, v, e, u, d))
         
         conn.commit()
+        
 init_db_v2()
 
 # --- 4. 權限檢查工具 ---
