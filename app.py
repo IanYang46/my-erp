@@ -449,97 +449,16 @@ elif menu == "財務報表":
     else: st.error("🚫 您無權限訪問此模組")
 
 elif menu == "權限管理":
-    st.title("🔐 系統權限與帳號管理")
+    st.title("🔐 系統權限矩陣")
     if role != "Admin": 
         st.error("🚫 僅限總管理員訪問此頁面")
         st.stop()
-
-    tab1, tab2 = st.tabs(["📊 權限矩陣", "👤 帳號管理"])
-
-    # --- Tab 1: 權限矩陣 ---
-    with tab1:
-        st.write("請直接勾選下方表格來開關各角色的模組權限：")
-        with get_db() as conn:
-            df_perm = pd.read_sql("SELECT * FROM permissions", conn)
-            edited_perm = st.data_editor(df_perm, hide_index=True, use_container_width=True)
-            if st.button("💾 儲存權限矩陣設定", type="primary"):
-                try:
-                    edited_perm.to_sql('permissions', conn, if_exists='replace', index=False)
-                    st.success("✅ 權限矩陣已更新！")
-                    st.rerun()
-                except Exception as e:
-                    st.error(f"❌ 更新失敗: {e}")
-
-    # --- Tab 2: 帳號管理 (新增/刪除/編輯) ---
-    with tab2:
-        # 1. 新增帳號區域
-        with st.expander("➕ 新增使用者"):
-            with st.form("add_user_form"):
-                new_user = st.text_input("帳號名稱")
-                new_pw = st.text_input("設定密碼", type="password")
-                new_role = st.selectbox("分配角色", ["Admin", "Finance", "Shareholder", "CS"])
-                if st.form_submit_button("🚀 建立帳號"):
-                    if new_user and new_pw:
-                        try:
-                            with get_db() as conn:
-                                conn.execute("INSERT INTO users (username, password, role) VALUES (?, ?, ?)", 
-                                             (new_user, hash_pw(new_pw), new_role))
-                                conn.commit()
-                            st.success(f"✅ 帳號 {new_user} 已建立！")
-                            st.rerun()
-                        except Exception as e:
-                            st.error(f"❌ 建立失敗 (帳號可能已存在): {e}")
-                    else:
-                        st.warning("請完整填寫帳號與密碼")
-
-        # 2. 帳號列表與管理
-        st.subheader("👥 現有帳號清單")
-        with get_db() as conn:
-            df_users = pd.read_sql("SELECT username, role FROM users", conn)
-            
-            # 使用 data_editor 進行角色編輯
-            st.info("💡 編輯角色後請點擊下方儲存按鈕")
-            edited_users = st.data_editor(df_users, hide_index=True, use_container_width=True)
-            
-            if st.button("💾 儲存角色變更", type="primary"):
-                try:
-                    with get_db() as update_conn:
-                        for index, row in edited_users.iterrows():
-                            update_conn.execute("UPDATE users SET role=? WHERE username=?", (row['role'], row['username']))
-                        update_conn.commit()
-                    st.success("✅ 角色更新成功！")
-                    st.rerun()
-                except Exception as e:
-                    st.error(f"❌ 角色更新失敗: {e}")
-
-            st.divider()
-            
-            # 3. 刪除與密碼重設
-            col1, col2 = st.columns(2)
-            with col1:
-                st.subheader("🗑️ 刪除帳號")
-                del_user = st.selectbox("選擇要刪除的帳號", df_users["username"].tolist(), key="del_select")
-                if st.button("🧨 確認刪除", type="primary"):
-                    try:
-                        with get_db() as del_conn:
-                            del_conn.execute("DELETE FROM users WHERE username=?", (del_user,))
-                            del_conn.commit()
-                        st.success(f"已刪除 {del_user}")
-                        st.rerun()
-                    except Exception as e:
-                        st.error(f"❌ 刪除失敗: {e}")
-            
-            with col2:
-                st.subheader("🔑 重設密碼")
-                reset_user = st.selectbox("選擇要重設密碼的帳號", df_users["username"].tolist(), key="reset_select")
-                new_pw_reset = st.text_input("輸入新密碼", type="password", key="new_pw_reset")
-                if st.button("🔄 更新密碼"):
-                    if new_pw_reset:
-                        try:
-                            with get_db() as pw_conn:
-                                pw_conn.execute("UPDATE users SET password=? WHERE username=?", 
-                                                (hash_pw(new_pw_reset), reset_user))
-                                pw_conn.commit()
-                            st.success(f"✅ {reset_user} 的密碼已更新")
-                        except Exception as e:
-                            st.error(f"❌ 密碼重設失敗: {e}")
+    
+    st.write("請直接勾選下方表格來開關各角色的模組權限：")
+    with get_db() as conn:
+        df_perm = pd.read_sql("SELECT * FROM permissions", conn)
+        edited_perm = st.data_editor(df_perm, hide_index=True, use_container_width=True)
+        if st.button("💾 儲存權限設定", type="primary"):
+            edited_perm.to_sql('permissions', conn, if_exists='replace', index=False)
+            st.success("✅ 權限已成功更新！")
+            st.rerun()
