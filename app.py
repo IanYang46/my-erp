@@ -3,7 +3,12 @@ import sqlite3
 import pandas as pd
 import os
 import time
+import hashlib
 
+# 密碼加密函式 (請放在檔案最上方)
+def hash_pw(pw):
+    return hashlib.sha256(pw.encode()).hexdigest()
+    
 # --- 1. 基礎設定與整地 ---
 if not os.path.exists("product_images"): os.makedirs("product_images")
 st.set_page_config(page_title="強盛集團 ERP", layout="wide", initial_sidebar_state="expanded")
@@ -449,16 +454,73 @@ elif menu == "財務報表":
     else: st.error("🚫 您無權限訪問此模組")
 
 elif menu == "權限管理":
-    st.title("🔐 系統權限矩陣")
+    st.title("🔐 系統權限與帳號管理")
     if role != "Admin": 
         st.error("🚫 僅限總管理員訪問此頁面")
         st.stop()
-    
-    st.write("請直接勾選下方表格來開關各角色的模組權限：")
-    with get_db() as conn:
-        df_perm = pd.read_sql("SELECT * FROM permissions", conn)
-        edited_perm = st.data_editor(df_perm, hide_index=True, use_container_width=True)
-        if st.button("💾 儲存權限設定", type="primary"):
-            edited_perm.to_sql('permissions', conn, if_exists='replace', index=False)
-            st.success("✅ 權限已成功更新！")
-            st.rerun()
+
+    # 使用 Tab 分頁，讓介面乾淨一點
+    tab1, tab2 = st.tabs(["📊 權限矩陣", "👤 帳號管理"])
+
+    # --- Tab 1: 權限矩陣 ---
+    with tab1:
+        st.write("請直接勾選下方表格來開關各角色的模組權限：")
+        with get_db() as conn:
+            df_perm = pd.read_sql("SELECT * FROM permissions", conn)
+            edited_perm = st.data_editor(df_perm, hide_index=True, use_container_width=True)
+            if st.button("💾 儲存權限設定", type="primary"):
+                edited_perm.to_sql('permissions', conn, if_exists='replace', index=False)
+                st.success("✅ 權限已成功更新！")
+                st.rerun()
+
+    # --- Tab 2: 帳號管理 ---
+    with tab2:
+        # 1. 新增帳號
+        st.subheader("➕ 新增使用者")
+        with st.expander("展開新增表單"):
+            with st.form("add_user_form"):
+                new_user = st.text_input("帳號名稱")
+                new_pw = st.text_input("密碼", type="password")
+                new_role = st.selectbox("角色權限", ["Admin", "Finance", "Shareholder", "CS"])
+                if st.form_submit_button("🚀 建立帳號"):
+                    if new_user and new_pw:
+                        with get_db() as conn:
+                            cursor = conn.cursor()
+                            try:
+                                # 儲存「加密後」的密碼
+                                cursor.execute("INSERT INTO users VALUES (?, ?, ?)", (new_user, hash_pw(new_pw), new_role))
+                                conn.commit()
+                                st.success(f"✅ 帳號 {new_user} 已建立！")
+                                st.rerun()
+                            except Exception as e:
+                                st.error(f"❌ 建立失敗 (帳號可能已存在): {e}")
+
+        st.divider()
+
+        # 2. 編輯與刪除使用者
+        st.subheader("✏️ 編輯角色與刪除帳號")
+        with get_db() as conn:
+            df_users = pd.read_sql("SELECT username, role FROM users", conn)
+            
+            # 編輯角色功能
+            edited_users = st.data_editor(df_users, hide_index=True, use_container_width=True)
+            if st.button("💾 更新角色設定"):
+                with get_db() as conn:
+                    cursor = conn.cursor()
+                    for index, row in edited_users.iterrows():
+                        cursor.execute("UPDATE users SET role=? WHERE username=?", (row['role'], row['username']))
+                    conn.commit()
+                st.success("✅ 角色更新完成！")
+                st.rerun()
+
+            st.divider()
+            
+            # 刪除功能
+            del_user = st.selectbox("選擇要刪除的帳號", df_users["username"].tolist())
+            if st.button("🧨 確認刪除該帳號", type="primary"):
+                with get_db() as conn:
+                    cursor = conn.cursor()
+                    cursor.execute("DELETE FROM users WHERE username=?", (del_user,))
+                    conn.commit()
+                    st.success(f"已刪除 {del_user}")
+                    st.rerun()
