@@ -1,8 +1,10 @@
 import streamlit as st
+from sqlalchemy import create_engine, text
 import sqlite3
 import pandas as pd
 import os
 import time
+import streamlit as st
 
 # --- 1. 基礎設定與整地 ---
 if not os.path.exists("product_images"): os.makedirs("product_images")
@@ -10,21 +12,27 @@ st.set_page_config(page_title="強盛集團 ERP", layout="wide", initial_sidebar
 
 # --- 2. 穩定的資料庫連線 ---
 def get_db():
-    # 這是你的雲端資料庫網址 (建議將密碼替換為你實際設定的密碼)
-    DATABASE_URL = "postgresql://postgres:cihhib-wuvjog-0gaQfu@db.qmrqwmvboetgdthwgesw.supabase.co:5432/postgres"
-
-    # 判斷是否在雲端環境執行 (Render 會自動設定環境變數)
-    if os.environ.get("RENDER"):
-        return create_engine(DATABASE_URL).connect()
+    # 優先讀取 Streamlit Cloud 的 Secrets，如果沒有，才用本地 SQLite
+    if "DATABASE_URL" in st.secrets:
+        return create_engine(st.secrets["DATABASE_URL"]).connect()
     else:
-        # 如果是本地端，還是用你原本的 SQLite 檔案，方便你測試
-        import sqlite3
-        return sqlite3.connect("powerful_group.db")
+        return sqlite3.connect("powerful_group.db", check_same_thread=False)
 
 # --- 3. 初始化資料庫與預設權限 ---
 def init_db():
-    with get_db() as conn:
-        cursor = conn.cursor()
+    conn = get_db()
+    # 判斷是否為 PostgreSQL (雲端)
+    is_postgres = "postgresql" in str(type(conn))
+    
+    # 建立表格的函數 (兼容 SQLite 與 PostgreSQL)
+    def execute_sql(query, params=None):
+        if is_postgres:
+            conn.execute(text(query), params or {})
+            conn.commit()
+        else:
+            cursor = conn.cursor()
+            cursor.execute(query, params or [])
+            conn.commit()
         
         # 1. 建立系統核心表格
         cursor.execute('''CREATE TABLE IF NOT EXISTS users (username TEXT PRIMARY KEY, password TEXT, role TEXT)''')
