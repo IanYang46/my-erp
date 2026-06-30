@@ -228,7 +228,7 @@ elif menu == "商品訊息":
                 # 畫面 B：獨立編輯介面
                 edit_code = st.session_state['edit_item_code']
                 
-                if st.button("🔙 放棄修改並返回列表"):
+                if st.button("🔙 返回列表"):
                     st.session_state['edit_item_code'] = None
                     st.rerun()
                     
@@ -420,7 +420,7 @@ elif menu == "商品庫存":
                 except Exception as e:
                     st.error(f"匯入錯誤: {e}")
     else:
-        st.error("無權限查看")
+        st.error("🚫 您無權限訪問此模組")
 
 elif menu == "採購管理":
     st.title("🛒 採購與進貨管理")
