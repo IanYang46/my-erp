@@ -71,12 +71,12 @@ def init_db_v2():
 init_db_v2()
 
 # --- 4. 權限檢查工具 ---
-def check_perm(role, module, action):
-    with get_db() as conn:
-        cursor = conn.cursor()
-        cursor.execute(f"SELECT {action} FROM permissions WHERE role=? AND module=?", (role, module))
-        res = cursor.fetchone()
-        return bool(res[0]) if res else False
+def check_perm(role_string, module, action=None):
+    # 如果是系統預設的 Admin，直接放行所有權限
+    if str(role_string) == "Admin":
+        return True
+    # 檢查該模組是否有包含在該使用者的權限字串中
+    return module in str(role_string)
 
 # --- 5. 系統登入 ---
 if 'logged_in' not in st.session_state:
@@ -449,16 +449,93 @@ elif menu == "財務報表":
     else: st.error("🚫 您無權限訪問此模組")
 
 elif menu == "權限管理":
-    st.title("🔐 系統權限矩陣")
-    if role != "Admin": 
+    st.title("🔐 系統權限與帳號管理")
+    
+    # 雙重確認：只有 admin 帳號或角色是 Admin 的人可以進入
+    if st.session_state.get('user') != 'admin' and role != "Admin": 
         st.error("🚫 僅限總管理員訪問此頁面")
         st.stop()
+        
+    st.info("💡 **操作說明**：\n"
+            "1. **新增帳號**：滑到表格最底下，點擊空白列即可新增。\n"
+            "2. **修改密碼**：直接將密碼欄位的亂碼刪除，輸入新密碼，儲存後會自動加密。\n"
+            "3. **刪除帳號**：點選表格左側的核取方塊，按下鍵盤 `Delete` 鍵即可刪除該列。\n"
+            "4. 修改完成後，請務必點擊下方的 **「儲存所有變更」** 按鈕。")
     
-    st.write("請直接勾選下方表格來開關各角色的模組權限：")
+    modules = ["商品訊息", "商品庫存", "採購管理", "訂單明細", "財務報表"]
+    
     with get_db() as conn:
-        df_perm = pd.read_sql("SELECT * FROM permissions", conn)
-        edited_perm = st.data_editor(df_perm, hide_index=True, use_container_width=True)
-        if st.button("💾 儲存權限設定", type="primary"):
-            edited_perm.to_sql('permissions', conn, if_exists='replace', index=False)
-            st.success("✅ 權限已成功更新！")
-            st.rerun()
+        # 1. 讀取所有帳號資料
+        df_users = pd.read_sql("SELECT username, password, role FROM users", conn)
+        
+        # 2. 將資料庫的字串，轉換為畫面上好看的 Checkbox 打勾狀態
+        for m in modules:
+            df_users[m] = df_users['role'].apply(lambda x: True if x == 'Admin' else (m in str(x)))
+            
+        # 整理要顯示在畫面的表格
+        df_display = df_users[['username', 'password'] + modules].copy()
+        df_display.rename(columns={'username': '帳號', 'password': '密碼'}, inplace=True)
+        
+        # 3. 顯示可動態增刪改的互動表格
+        edited_df = st.data_editor(
+            df_display, 
+            num_rows="dynamic", # 🌟 允許動態新增與刪除列的關鍵
+            use_container_width=True,
+            column_config={
+                "帳號": st.column_config.TextColumn("👤 帳號 (必填不可重複)"),
+                "密碼": st.column_config.TextColumn("🔑 密碼 (修改時請直接輸入新密碼)")
+            }
+        )
+        
+        # 4. 儲存按鈕與邏輯
+        if st.button("💾 確認儲存所有變更", type="primary", use_container_width=True):
+            try:
+                # 取得畫面上還留著的帳號名單 (用來抓出哪些被你刪除了)
+                current_users = edited_df['帳號'].dropna().astype(str).tolist()
+                current_users = [u.strip() for u in current_users if u.strip() != '']
+                
+                if not current_users:
+                    st.error("❌ 系統至少需要保留一個帳號！")
+                elif 'admin' not in current_users:
+                    st.error("❌ 為了系統安全，禁止刪除預設的 'admin' 帳號！")
+                else:
+                    cursor = conn.cursor()
+                    
+                    # A. 執行刪除：把已經不在畫面上的帳號從資料庫剔除
+                    placeholders = ','.join(['?'] * len(current_users))
+                    cursor.execute(f"DELETE FROM users WHERE username NOT IN ({placeholders})", current_users)
+                    
+                    # B. 執行新增與修改
+                    for _, row in edited_df.iterrows():
+                        u_name = str(row['帳號']).strip()
+                        u_pwd = str(row['密碼']).strip()
+                        
+                        # 略過空白的無效行
+                        if not u_name or u_name == 'nan': 
+                            continue 
+                        
+                        # 判斷是否需要重新加密 (雜湊值固定是 64 個字元，若不是代表是你剛輸入的明文)
+                        if len(u_pwd) != 64 and u_pwd != 'nan' and u_pwd != '':
+                            u_pwd = hash_pw(u_pwd)
+                            
+                        # 把打勾的模組收集起來，變回字串存進資料庫
+                        assigned_modules = [m for m in modules if row[m] == True]
+                        new_role_str = ",".join(assigned_modules)
+                        
+                        # 保護最高管理員身分
+                        if u_name == 'admin':
+                            new_role_str = 'Admin'
+                            
+                        # 寫入資料庫
+                        cursor.execute("""
+                            INSERT OR REPLACE INTO users (username, password, role) 
+                            VALUES (?, ?, ?)
+                        """, (u_name, u_pwd, new_role_str))
+                        
+                    conn.commit()
+                    st.success("✅ 帳號與所有權限配置已成功更新！")
+                    time.sleep(1.5)
+                    st.rerun()
+                    
+            except Exception as e:
+                st.error(f"❌ 儲存失敗發生異常：{str(e)}")
