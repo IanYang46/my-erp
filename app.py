@@ -3,6 +3,10 @@ import sqlite3
 import pandas as pd
 import os
 import time
+import hashlib
+
+def hash_pw(pw):
+    return hashlib.sha256(pw.encode()).hexdigest()
 
 # --- 1. 基礎設定與整地 ---
 if not os.path.exists("product_images"): os.makedirs("product_images")
