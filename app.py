@@ -4,6 +4,7 @@ import pandas as pd
 import os
 import time
 import hashlib
+from sqlalchemy import create_engine, text
 
 def hash_pw(pw):
     return hashlib.sha256(pw.encode()).hexdigest()
@@ -13,12 +14,11 @@ if not os.path.exists("product_images"): os.makedirs("product_images")
 st.set_page_config(page_title="強盛集團 ERP", layout="wide", initial_sidebar_state="expanded")
 
 # --- 2. 穩定的資料庫連線 ---
-def get_db():
-    from sqlalchemy import create_engine
-    # 強制只從 secrets 讀取，不要在程式碼裡寫死
+def get_engine():
+    # 強制只從 secrets 讀取
     url = st.secrets["DATABASE_URL"] 
-    return create_engine(url) # 注意：這裡直接回傳 engine 即可
-
+    return create_engine(url)
+    
 # --- 3. 初始化資料庫與預設權限 ---
 def init_db():
     # 從 st.secrets 讀取帳號密碼
@@ -57,7 +57,6 @@ def init_db():
         cursor.execute("INSERT OR IGNORE INTO settings VALUES ('exchange_rate', 4.5)")
         
         # 5. 建立預設 Admin 帳號
-        cursor.execute("UPDATE users SET password = ? WHERE username = ?", (admin_pw, admin_user))
         cursor.execute("INSERT OR REPLACE INTO users VALUES (?, ?, 'Admin')", (admin_user, admin_pw))
         
         # 6. 初始化全新權限矩陣 (對應您新增的模組)
