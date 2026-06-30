@@ -427,71 +427,44 @@ elif menu == "財務報表":
 
 elif menu == "權限管理":
     st.title("🔐 系統權限與帳號管理")
-    
-    # 權限檢查
     if role != "Admin": 
         st.error("🚫 僅限總管理員訪問此頁面")
         st.stop()
 
-    # 定義密碼加密函式 (確保這裡有這段，或放在程式碼上方)
-    def hash_pw(pw):
-        return hashlib.sha256(pw.encode()).hexdigest()
-
-    # --- 使用 Tabs 將兩個功能分開 ---
+    # 使用 Tab 分頁，讓介面乾淨一點
     tab1, tab2 = st.tabs(["📊 權限矩陣", "👤 帳號管理"])
 
-    # --- Tab 1: 原本的權限矩陣 ---
+    # --- Tab 1: 原本的權限設定 ---
     with tab1:
         st.write("請直接勾選下方表格來開關各角色的模組權限：")
         with get_db() as conn:
-            # 如果你是用 SQLite，conn 是一個 connection 物件；如果是 SQLAlchemy，請改用 pd.read_sql(..., conn)
-            # 這裡沿用你原本的邏輯
             df_perm = pd.read_sql("SELECT * FROM permissions", conn)
             edited_perm = st.data_editor(df_perm, hide_index=True, use_container_width=True)
-            
             if st.button("💾 儲存權限設定", type="primary"):
                 edited_perm.to_sql('permissions', conn, if_exists='replace', index=False)
                 st.success("✅ 權限已成功更新！")
                 st.rerun()
 
-    # --- Tab 2: 新增帳號管理功能 ---
+    # --- Tab 2: 新增帳號管理 (刪除功能在這裡) ---
     with tab2:
-        st.subheader("➕ 新增使用者")
-        with st.form("add_user_form"):
-            new_user = st.text_input("帳號名稱")
-            new_pw = st.text_input("密碼", type="password")
-            new_role = st.selectbox("角色權限", ["Admin", "Finance", "Shareholder", "CS"])
-            
-            if st.form_submit_button("🚀 建立帳號"):
-                if new_user and new_pw:
-                    with get_db() as conn:
-                        cursor = conn.cursor()
-                        try:
-                            # 儲存加密後的密碼 (使用 hash_pw)
-                            cursor.execute("INSERT INTO users (username, password, role) VALUES (?, ?, ?)", 
-                                           (new_user, hash_pw(new_pw), new_role))
-                            conn.commit()
-                            st.success(f"✅ 帳號 {new_user} 已建立！")
-                        except Exception as e:
-                            st.error(f"❌ 建立失敗 (帳號可能已存在): {e}")
-                else:
-                    st.warning("請輸入帳號與密碼")
-
-        st.divider()
-        st.subheader("🗑️ 現有帳號列表")
+        st.subheader("🗑️ 刪除帳號")
+        st.warning("⚠️ 警告：刪除後無法復原，請謹慎操作。")
+        
         with get_db() as conn:
-            # 顯示現有帳號
+            # 讀取目前所有使用者
             df_users = pd.read_sql("SELECT username, role FROM users", conn)
             st.table(df_users)
             
-            # 刪除功能
-            del_user = st.selectbox("選擇要刪除的帳號", df_users["username"].tolist())
-            if st.button("🧨 確認刪除該帳號", type="primary"):
-                if del_user == "admin": # 加個安全機制
-                    st.error("不能刪除預設管理員！")
-                else:
-                    cursor = conn.cursor()
-                    cursor.execute("DELETE FROM users WHERE username=?", (del_user,))
+            # 下拉選單選擇要刪除的帳號
+            del_user = st.selectbox("請選擇要刪除的帳號：", df_users["username"].tolist())
+            
+            if st.button("🧨 確認刪除此帳號", type="primary"):
+                cursor = conn.cursor()
+                try:
+                    # 執行刪除指令
+                    cursor.execute("DELETE FROM users WHERE username = ?", (del_user,))
                     conn.commit()
-                    st.success(f"已刪除 {del_user}")
-                    st.rerun()
+                    st.success(f"✅ 帳號 {del_user} 已成功刪除！")
+                    st.rerun() # 刪除後重新整理畫面
+                except Exception as e:
+                    st.error(f"❌ 發生錯誤: {e}")
