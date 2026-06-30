@@ -505,13 +505,12 @@ elif menu == "權限管理":
             edited_users = st.data_editor(df_users, hide_index=True, use_container_width=True)
             
             if st.button("💾 更新角色設定"):
-                # 將改動同步回資料庫 (這裡只更新角色)
-                with get_db() as conn:
-                    for index, row in edited_users.iterrows():
-                        conn.execute("UPDATE users SET role=? WHERE username=?", (row['role'], row['username']))
-                    conn.commit()
-                st.success("✅ 角色更新完成！")
-                st.rerun()
+    with get_db() as conn:
+        for index, row in edited_users.iterrows():
+            # 這是安全的寫法：只針對該帳號更新角色，不會動到密碼欄位
+            conn.execute("UPDATE users SET role=? WHERE username=?", (row['role'], row['username']))
+        conn.commit()
+    st.success("✅ 角色更新完成！")
 
             st.divider()
             
