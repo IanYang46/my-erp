@@ -5,6 +5,9 @@ import os
 import time
 import hashlib
 
+def hash_pw(pw):
+    return hashlib.sha256(pw.encode()).hexdigest()
+
 # --- 1. 基礎設定與整地 ---
 if not os.path.exists("product_images"): os.makedirs("product_images")
 st.set_page_config(page_title="強盛集團 ERP", layout="wide", initial_sidebar_state="expanded")
