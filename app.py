@@ -14,16 +14,10 @@ st.set_page_config(page_title="強盛集團 ERP", layout="wide", initial_sidebar
 
 # --- 2. 穩定的資料庫連線 ---
 def get_db():
-    # 這是你的雲端資料庫網址 (建議將密碼替換為你實際設定的密碼)
-    DATABASE_URL = "postgresql://postgres:cihhib-wuvjog-0gaQfu@db.qmrqwmvboetgdthwgesw.supabase.co:5432/postgres"
-
-    # 判斷是否在雲端環境執行 (Render 會自動設定環境變數)
-    if os.environ.get("RENDER"):
-        return create_engine(DATABASE_URL).connect()
-    else:
-        # 如果是本地端，還是用你原本的 SQLite 檔案，方便你測試
-        import sqlite3
-        return sqlite3.connect("powerful_group.db")
+    from sqlalchemy import create_engine
+    # 強制只從 secrets 讀取，不要在程式碼裡寫死
+    url = st.secrets["DATABASE_URL"] 
+    return create_engine(url) # 注意：這裡直接回傳 engine 即可
 
 # --- 3. 初始化資料庫與預設權限 ---
 def init_db():
@@ -524,3 +518,5 @@ elif menu == "權限管理":
                         del_conn.commit()
                         st.success(f"已刪除 {del_user}")
                         st.rerun()
+init_db() 
+st.success("✅ 資料庫連線與初始化成功！")                        
