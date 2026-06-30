@@ -449,16 +449,78 @@ elif menu == "財務報表":
     else: st.error("🚫 您無權限訪問此模組")
 
 elif menu == "權限管理":
-    st.title("🔐 系統權限矩陣")
+    st.title("🔐 系統權限與帳號管理")
     if role != "Admin": 
         st.error("🚫 僅限總管理員訪問此頁面")
         st.stop()
-    
-    st.write("請直接勾選下方表格來開關各角色的模組權限：")
-    with get_db() as conn:
-        df_perm = pd.read_sql("SELECT * FROM permissions", conn)
-        edited_perm = st.data_editor(df_perm, hide_index=True, use_container_width=True)
-        if st.button("💾 儲存權限設定", type="primary"):
-            edited_perm.to_sql('permissions', conn, if_exists='replace', index=False)
-            st.success("✅ 權限已成功更新！")
-            st.rerun()
+
+    tab1, tab2, tab3 = st.tabs(["👤 帳號清單與編輯", "➕ 新增帳號", "📊 權限矩陣"])
+
+    # --- 1. 帳號清單 (包含編輯與刪除) ---
+    with tab1:
+        st.subheader("📋 現有帳號列表")
+        with get_db() as conn:
+            # 讀取使用者
+            df_users = pd.read_sql("SELECT username, role FROM users", conn)
+            
+            # 編輯角色 (使用 data_editor)
+            st.info("💡 說明：您可以直接在下表修改『角色』欄位，修改後點擊上方按鈕儲存。")
+            edited_users = st.data_editor(df_users, hide_index=True, use_container_width=True)
+            
+            if st.button("💾 儲存角色變更", type="primary"):
+                try:
+                    with get_db() as conn:
+                        for index, row in edited_users.iterrows():
+                            conn.execute("UPDATE users SET role=? WHERE username=?", (row['role'], row['username']))
+                        conn.commit()
+                    st.success("✅ 所有角色已更新！")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"❌ 更新失敗: {e}")
+
+            st.divider()
+            # 刪除帳號
+            st.subheader("🗑️ 刪除帳號")
+            del_user = st.selectbox("選擇要刪除的帳號", df_users["username"].tolist(), key="del_user_select")
+            if st.button("🧨 確認刪除該帳號", type="primary"):
+                try:
+                    with get_db() as conn:
+                        conn.execute("DELETE FROM users WHERE username=?", (del_user,))
+                        conn.commit()
+                    st.success(f"✅ 帳號 {del_user} 已成功刪除！")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"❌ 刪除失敗: {e}")
+
+    # --- 2. 新增帳號 ---
+    with tab2:
+        st.subheader("➕ 新增使用者")
+        with st.form("add_user_form"):
+            new_user = st.text_input("帳號名稱")
+            new_pw = st.text_input("密碼", type="password")
+            new_role = st.selectbox("角色權限", ["Admin", "Finance", "Shareholder", "CS"])
+            
+            if st.form_submit_button("🚀 建立帳號"):
+                if new_user and new_pw:
+                    try:
+                        with get_db() as conn:
+                            # 記得使用 hash_pw 加密！
+                            conn.execute("INSERT INTO users VALUES (?, ?, ?)", 
+                                         (new_user, hash_pw(new_pw), new_role))
+                            conn.commit()
+                        st.success(f"✅ 帳號 {new_user} 建立成功！")
+                    except Exception as e:
+                        st.error(f"❌ 建立失敗 (帳號可能已存在): {e}")
+                else:
+                    st.warning("⚠️ 請輸入帳號與密碼")
+
+    # --- 3. 權限矩陣 ---
+    with tab3:
+        st.write("請勾選各角色可操作的模組權限：")
+        with get_db() as conn:
+            df_perm = pd.read_sql("SELECT * FROM permissions", conn)
+            edited_perm = st.data_editor(df_perm, hide_index=True, use_container_width=True)
+            if st.button("💾 儲存權限矩陣"):
+                edited_perm.to_sql('permissions', conn, if_exists='replace', index=False)
+                st.success("✅ 權限矩陣已更新！")
+                st.rerun()
