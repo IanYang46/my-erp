@@ -106,7 +106,7 @@ def init_db_v3():  # 🌟 這裡改成 v3
         
         conn.commit()
         
-init_db_v2()
+init_db_v3()  # 🌟 這裡也記得要改成 v3
 
 # --- 4. 權限檢查工具 ---
 def check_perm(role_string, module, action=None):
