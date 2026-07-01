@@ -58,35 +58,43 @@ def init_db_v2():
                             採購金額_RMB REAL,
                             進貨日期 DATE)''')
         
-        # 🌟 【新增】4-1. 採購單主表
-        cursor.execute('''CREATE TABLE IF NOT EXISTS purchase_orders (
-                            採購單號 TEXT PRIMARY KEY,
-                            日期 DATE,
-                            廠商 TEXT,
-                            總數量 INTEGER,
-                            人民幣總金額 REAL,
-                            台幣總金額 REAL,
-                            購入倉庫 TEXT,
-                            採購人員 TEXT,
-                            狀態 TEXT DEFAULT '未入庫')''')
-                            
-        # 🌟 【新增】4-2. 採購單明細表
-        cursor.execute('''CREATE TABLE IF NOT EXISTS purchase_items (
-                            id INTEGER PRIMARY KEY AUTOINCREMENT,
-                            採購單號 TEXT,
-                            商品編碼 TEXT,
-                            數量 INTEGER,
-                            人民幣單價 REAL,
-                            總金額_RMB REAL)''')
-        
         # 4. 匯率設定表
         cursor.execute('''CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value REAL)''')
         cursor.execute("INSERT OR IGNORE INTO settings VALUES ('exchange_rate', 4.5)")
         
-        # 5. 建立預設 Admin 帳號
+        # 5. 採購單主表
+        cursor.execute('''CREATE TABLE IF NOT EXISTS procurement_orders (
+                            order_id TEXT PRIMARY KEY,
+                            date DATE,
+                            supplier TEXT,
+                            total_qty INTEGER,
+                            total_amount_rmb REAL,
+                            total_amount_twd REAL,
+                            warehouse TEXT,
+                            staff TEXT,
+                            status TEXT DEFAULT '待驗收')''')
+                            
+        # 6. 採購單明細表 
+        cursor.execute('''CREATE TABLE IF NOT EXISTS procurement_items (
+                            id INTEGER PRIMARY KEY AUTOINCREMENT,
+                            order_id TEXT,
+                            code TEXT,
+                            qty INTEGER,
+                            unit_price_rmb REAL,
+                            total_price_rmb REAL)''')
+
+        # 🌟 7. 【本次新增】：動態倉庫位置表
+        cursor.execute('''CREATE TABLE IF NOT EXISTS warehouses (name TEXT PRIMARY KEY)''')
+        cursor.execute("SELECT count(*) FROM warehouses")
+        if cursor.fetchone()[0] == 0:
+            default_whs = ['台灣黃興-商品', '東莞熙元-商品', '台灣黃興-樣品', '東莞熙元-樣品', '退換貨倉', '東莞熙元-待結款']
+            for w in default_whs:
+                cursor.execute("INSERT OR IGNORE INTO warehouses (name) VALUES (?)", (w,))
+        
+        # 8. 建立預設 Admin 帳號 
         cursor.execute("INSERT OR IGNORE INTO users VALUES ('admin', ?, 'Admin')", (encode_pw('123456'),))
         
-        # 6. 初始化全新權限矩陣
+        # 9. 初始化全新權限矩陣
         cursor.execute("SELECT count(*) FROM permissions")
         if cursor.fetchone()[0] == 0:
             modules = ["商品訊息", "商品庫存", "採購管理", "訂單明細", "財務報表"]
@@ -371,10 +379,13 @@ elif menu == "商品訊息":
         st.error("🚫 您無權限訪問此模組")
 
 elif menu == "商品庫存":
-    st.title("🏭 商品庫存管理")
+    st.title("🏭 商品庫存與倉庫管理")
 
+    # 取得最新匯率與倉庫名單
     with get_db() as conn:
         rate = conn.execute("SELECT value FROM settings WHERE key='exchange_rate'").fetchone()[0]
+        wh_df = pd.read_sql("SELECT name FROM warehouses", conn)
+        wh_list = wh_df['name'].tolist()
     
     new_rate = st.sidebar.number_input("當前人民幣匯率 (RMB to TWD)", value=rate, step=0.01)
     if st.sidebar.button("更新匯率"):
@@ -384,339 +395,400 @@ elif menu == "商品庫存":
         st.rerun()
 
     if check_perm(role, "商品庫存", "can_view"):
-        with get_db() as conn:
-            query = """
-            SELECT p.編碼, p.名稱, p.類別, p.品牌, 
-                   IFNULL(SUM(i.數量), 0) as 總庫存,
-                   IFNULL(SUM(i.採購金額_RMB), 0) as 總採購金額_RMB,
-                   AVG(i.單支成本_RMB) as 平均成本_RMB
-            FROM products p
-            LEFT JOIN inventory i ON p.編碼 = i.編碼
-            GROUP BY p.編碼
-            """
-            df = pd.read_sql(query, conn)
+        tab_inv, tab_wh = st.tabs(["📊 庫存總覽與查詢", "🏢 倉庫位置管理"])
         
-        df["總庫存金額_RMB"] = df["總採購金額_RMB"]
-        df["總庫存金額_TWD"] = df["總庫存金額_RMB"] * new_rate
-        df["平均成本_TWD"] = df["平均成本_RMB"] * new_rate
-        
-        show_type = st.radio("篩選庫存狀態", ["顯示所有", "僅顯示有庫存", "僅顯示缺貨"], horizontal=True)
-        filtered_df = df.copy()
-        if show_type == "僅顯示有庫存": filtered_df = filtered_df[filtered_df["總庫存"] > 0]
-        elif show_type == "僅顯示缺貨": filtered_df = filtered_df[filtered_df["總庫存"] <= 0]
-        
-        st.dataframe(filtered_df, use_container_width=True)
-        
-        from io import BytesIO
-        output = BytesIO()
-        with pd.ExcelWriter(output, engine='openpyxl') as writer:
-            filtered_df.to_excel(writer, index=False, sheet_name='Inventory')
-        
-        st.download_button(
-            label="💾 下載庫存報表 (Excel)",
-            data=output.getvalue(),
-            file_name="inventory_report.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-        )
-        
-        with st.expander("📥 批次進貨匯入 (Excel/CSV)"):
-            st.write("請上傳包含：編碼, 倉庫位置, 數量, 單支成本_RMB, 採購廠商, 進貨日期 的檔案")
-            uploaded_file = st.file_uploader("上傳進貨單", type=["csv", "xlsx"])
-            if uploaded_file and st.button("確認匯入進貨"):
-                try:
-                    df_in = pd.read_excel(uploaded_file) if uploaded_file.name.endswith('.xlsx') else pd.read_csv(uploaded_file)
-                    with get_db() as conn:
-                        df_in.to_sql('inventory', conn, if_exists='append', index=False)
-                    st.success("進貨紀錄已更新！")
-                    st.rerun()
-                except Exception as e:
-                    st.error(f"匯入錯誤: {e}")
+        # ==========================================
+        # --- Tab 1: 庫存總覽 (含圖片與倉庫篩選) ---
+        # ==========================================
+        with tab_inv:
+            # 倉庫篩選器
+            c_wh, c_status = st.columns(2)
+            selected_wh = c_wh.selectbox("🔍 篩選特定倉庫 (查看單一倉庫庫存)", ["所有倉庫"] + wh_list)
+            show_type = c_status.radio("篩選庫存狀態", ["顯示所有", "僅顯示有庫存", "僅顯示缺貨"], horizontal=True)
+            
+            with get_db() as conn:
+                # 依據選擇的倉庫動態改變 SQL 查詢
+                query = """
+                SELECT p.圖片路徑, p.編碼, p.名稱, p.類別, p.品牌, 
+                       IFNULL(SUM(i.數量), 0) as 總庫存,
+                       IFNULL(SUM(i.採購金額_RMB), 0) as 總採購金額_RMB,
+                       AVG(i.單支成本_RMB) as 平均成本_RMB
+                FROM products p
+                LEFT JOIN inventory i ON p.編碼 = i.編碼
+                """
+                params = []
+                if selected_wh != "所有倉庫":
+                    query += " AND i.倉庫位置 = ?"
+                    params.append(selected_wh)
+                    
+                query += " GROUP BY p.編碼 ORDER BY p.編碼 ASC"
+                df = pd.read_sql(query, conn, params=params)
+            
+            # 計算台幣金額
+            df["總庫存金額_RMB"] = df["總採購金額_RMB"]
+            df["總庫存金額_TWD"] = df["總庫存金額_RMB"] * new_rate
+            df["平均成本_TWD"] = df["平均成本_RMB"] * new_rate
+            
+            # 本地圖片轉 Base64 引擎 (讓 DataFrame 可以直接渲染圖片)
+            def get_image_base64(path):
+                if pd.isna(path) or not path: return None
+                if os.path.exists(path):
+                    with open(path, "rb") as f:
+                        encoded = base64.b64encode(f.read()).decode("utf-8")
+                        return f"data:image/jpeg;base64,{encoded}"
+                return None
+            
+            df['商品圖片'] = df['圖片路徑'].apply(get_image_base64)
+            
+            # 調整欄位順序，並套用缺貨篩選
+            cols = ['商品圖片', '編碼', '名稱', '類別', '品牌', '總庫存', '平均成本_RMB', '平均成本_TWD', '總庫存金額_RMB', '總庫存金額_TWD']
+            filtered_df = df[cols].copy()
+            
+            if show_type == "僅顯示有庫存": filtered_df = filtered_df[filtered_df["總庫存"] > 0]
+            elif show_type == "僅顯示缺貨": filtered_df = filtered_df[filtered_df["總庫存"] <= 0]
+            
+            st.dataframe(
+                filtered_df, 
+                use_container_width=True, 
+                hide_index=True,
+                column_config={
+                    "商品圖片": st.column_config.ImageColumn("圖片", help="商品實體圖"),
+                    "總庫存": st.column_config.NumberColumn("總庫存", format="%d 支"),
+                    "平均成本_RMB": st.column_config.NumberColumn("單支成本 (¥)", format="¥ %.2f"),
+                    "平均成本_TWD": st.column_config.NumberColumn("單支成本 (NT$)", format="$ %.2f"),
+                }
+            )
+            
+            # 匯出報表
+            from io import BytesIO
+            output = BytesIO()
+            with pd.ExcelWriter(output, engine='openpyxl') as writer:
+                # 匯出時把 Base64 圖片那欄拿掉，以免 Excel 壞掉
+                export_df = filtered_df.drop(columns=['商品圖片'])
+                export_df.to_excel(writer, index=False, sheet_name='Inventory')
+            
+            st.download_button(
+                label="💾 下載當前庫存報表 (Excel)",
+                data=output.getvalue(),
+                file_name=f"inventory_{selected_wh}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            )
+
+        # ==========================================
+        # --- Tab 2: 倉庫位置動態管理 ---
+        # ==========================================
+        with tab_wh:
+            st.subheader("🏢 系統倉庫位置管理")
+            st.write("您可以在此自由新增、修改或刪除倉庫位置，這些設定會同步更新至『採購管理』的入庫選項中。")
+            
+            with get_db() as conn:
+                df_wh_edit = pd.read_sql("SELECT name as 倉庫名稱 FROM warehouses", conn)
+                
+            edited_wh = st.data_editor(
+                df_wh_edit, 
+                num_rows="dynamic",
+                use_container_width=True,
+                column_config={"倉庫名稱": st.column_config.TextColumn("📦 倉庫名稱 (必填，不可重複)", required=True)}
+            )
+            
+            if st.button("💾 儲存所有倉庫設定", type="primary"):
+                current_whs = edited_wh['倉庫名稱'].dropna().astype(str).tolist()
+                current_whs = [w.strip() for w in current_whs if w.strip() != '']
+                
+                if not current_whs:
+                    st.error("❌ 系統至少需要保留一個倉庫！")
+                else:
+                    try:
+                        with get_db() as conn:
+                            cursor = conn.cursor()
+                            cursor.execute("DELETE FROM warehouses")
+                            for w in current_whs:
+                                cursor.execute("INSERT INTO warehouses (name) VALUES (?)", (w,))
+                            conn.commit()
+                        st.success("✅ 倉庫名單已成功更新！系統將自動重載。")
+                        time.sleep(1)
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"❌ 儲存失敗：{str(e)}")
     else:
         st.error("🚫 您無權限訪問此模組")
 
 elif menu == "採購管理":
-    st.title("🛒 採購與進貨管理")
+   st.title("🛒 採購與進貨管理系統")
     
-    # 取得當前系統預設匯率
+    if not check_perm(role, "採購管理", "can_view"):
+        st.error("🚫 您無權限訪問此模組")
+        st.stop()
+
+    # 取得當前系統即時台幣匯率，用來自動換算台幣總金額
     with get_db() as conn:
-        po_rate = conn.execute("SELECT value FROM settings WHERE key='exchange_rate'").fetchone()[0]
+        rate = conn.execute("SELECT value FROM settings WHERE key='exchange_rate'").fetchone()[0]
+
+    tab1, tab2, tab3 = st.tabs(["📝 新增採購單", "📋 採購單歷史與點收驗收", "📊 批次作業 (導入/導出)"])
+
+    # ==========================================
+    # --- Tab 1: 新增採購單 (連結商品訊息資料) ---
+    # ==========================================
+    with tab1:
+        st.subheader("✍️ 建立新採購單單據")
         
-    if check_perm(role, "採購管理", "can_view"):
-        
-        # 初始化編輯狀態監聽
-        if 'edit_po_id' not in st.session_state:
-            st.session_state['edit_po_id'] = None
+        # 🌟 這裡修改了！同時撈取商品庫跟剛剛新增的「倉庫清單」，供下拉選取
+        with get_db() as conn:
+            prod_df = pd.read_sql("SELECT 編碼, 名稱 FROM products ORDER BY 編碼 ASC", conn)
+            wh_df = pd.read_sql("SELECT name FROM warehouses", conn) # 撈取動態倉庫
             
-        # ------------------ 模式切換：獨立編輯畫面 ------------------
-        if st.session_state['edit_po_id'] is not None:
-            target_po = st.session_state['edit_po_id']
-            st.subheader(f"✏️ 修正/編輯採購單：{target_po}")
+        valid_product_codes = prod_df['編碼'].tolist()
+        valid_warehouses = wh_df['name'].tolist() # 轉換成清單
+
+        if not valid_product_codes:
+            st.warning("⚠️ 目前商品訊息庫中沒有任何商品資料，請先至『商品訊息』建立基本商品再進行採購。")
+        elif not valid_warehouses:
+            st.warning("⚠️ 系統偵測不到任何倉庫！請先至『商品庫存』分頁建立至少一個倉庫位置。")
+        else:
+            # 填寫單據主表基本欄位
+            col_m1, col_m2, col_m3, col_m4 = st.columns(4)
+            date_input = col_m1.date_input("採購日期")
+            supplier_input = col_m2.text_input("採購廠商 (供應商名稱)", placeholder="例如：法國香氛總倉")
             
-            if st.button("🔙 取消並返回採購清單"):
-                st.session_state['edit_po_id'] = None
-                st.rerun()
+            # 🌟 這裡修改了！將原本寫死的陣列改成連動的 valid_warehouses
+            warehouse_input = col_m3.selectbox("購入的倉庫", valid_warehouses)
+            
+            staff_input = col_m4.text_input("採購人員", value=st.session_state.get('user', 'admin'))
+
+            st.write("📌 **請於下方表格中新增採購品項及金額：**")
+            
+            # 使用 Session State 初始化動態多品項採購編輯器
+            if "po_editor_df" not in st.session_state:
+                st.session_state.po_editor_df = pd.DataFrame(columns=["商品編碼", "數量", "人民幣單價"])
+
+            edited_items = st.data_editor(
+                st.session_state.po_editor_df,
+                num_rows="dynamic",
+                use_container_width=True,
+                key="po_items_editor",
+                column_config={
+                    "商品編碼": st.column_config.SelectboxColumn("📦 選擇商品編碼", options=valid_product_codes, required=True),
+                    "數量": st.column_config.NumberColumn("🔢 採購數量", min_value=1, step=1, default=1),
+                    "人民幣單價": st.column_config.NumberColumn("💰 人民幣單價 (RMB)", min_value=0.0, step=0.01, default=0.0)
+                }
+            )
+
+            # 計算即時總體金額數據
+            if not edited_items.empty:
+                edited_items['數量'] = pd.to_numeric(edited_items['數量']).fillna(0).astype(int)
+                edited_items['人民幣單價'] = pd.to_numeric(edited_items['人民幣單價']).fillna(0.0)
+                edited_items['總金額_RMB'] = edited_items['數量'] * edited_items['人民幣單價']
                 
-            with get_db() as conn:
-                po_master = pd.read_sql("SELECT * FROM purchase_orders WHERE 採購單號=?", conn, params=(target_po,)).iloc[0]
-                po_items = pd.read_sql("SELECT 商品編碼, 數量, 人民幣單價 FROM purchase_items WHERE 採購單號=?", conn, params=(target_po,))
-                df_prod_list = pd.read_sql("SELECT 編碼 FROM products ORDER BY 編碼 ASC", conn)
-                all_prods = df_prod_list['編碼'].tolist()
-                
-            with st.form("edit_po_form"):
-                c1, c2, c3, c4 = st.columns(4)
-                e_date = c1.date_input("採購日期", value=pd.to_datetime(po_master['日期']))
-                e_supplier = c2.text_input("供應商", value=po_master['廠商'])
-                e_wh = c3.text_input("購入倉庫", value=po_master['購入倉庫'])
-                e_user = c4.text_input("採購人員", value=po_master['採購人員'])
-                
-                st.write("📦 修正採購商品項目 (可自行增減列)：")
-                edited_items_df = st.data_editor(
-                    po_items, num_rows="dynamic", use_container_width=True, key="po_item_editor",
-                    column_config={
-                        "商品編碼": st.column_config.SelectboxColumn("商品編碼", options=all_prods, required=True),
-                        "數量": st.column_config.NumberColumn("數量", min_value=1, step=1, default=1),
-                        "人民幣單價": st.column_config.NumberColumn("人民幣單價 (RMB)", min_value=0.0, step=0.01)
-                    }
-                )
-                
-                if st.form_submit_button("💾 儲存採購單修改", type="primary"):
+                total_qty = int(edited_items['數量'].sum())
+                total_rmb = float(edited_items['總金額_RMB'].sum())
+                total_twd = total_rmb * rate
+            else:
+                total_qty, total_rmb, total_twd = 0, 0.0, 0.0
+
+            # 儀表板看板顯示本次單據總計
+            st.divider()
+            sum_c1, sum_c2, sum_c3 = st.columns(3)
+            sum_c1.metric("📦 總採購數量", f"{total_qty} 支")
+            sum_c2.metric("¥ 人民幣總金額", f"{total_rmb:,.2f} RMB")
+            sum_c3.metric("$ 台幣總金額 (自動換算)", f"{total_twd:,.2f} TWD", f"目前匯率: {rate}")
+
+            # 提交寫入資料庫邏輯（含成敗通知）
+            if st.button("🚀 提交並儲存此採購單", type="primary", use_container_width=True):
+                if not supplier_input.strip():
+                    st.error("❌ 儲存失敗：採購廠商為必填項目，請勿留空！")
+                elif edited_items.empty or total_qty == 0:
+                    st.error("❌ 儲存失敗：採購單內必須包含至少一項商品且數量大於 0！")
+                else:
                     try:
-                        valid_items = edited_items_df.dropna(subset=['商品編碼']).copy()
-                        if valid_items.empty:
-                            st.error("❌ 採購單不能沒有任何商品項目！")
-                        else:
-                            valid_items['總金額_RMB'] = valid_items['數量'] * valid_items['人民幣單價']
-                            total_qty = int(valid_items['數量'].sum())
-                            total_rmb = float(valid_items['總金額_RMB'].sum())
-                            total_twd = round(total_rmb * po_rate, 2)
+                        # 自動生成唯一採購單號 PO-YYYYMMDD-隨機流水碼
+                        order_id = f"PO-{time.strftime('%Y%m%d')}-{int(time.time())%100000:05d}"
+                        with get_db() as conn:
+                            cursor = conn.cursor()
+                            # 1. 寫入主表
+                            cursor.execute("""
+                                INSERT INTO procurement_orders (order_id, date, supplier, total_qty, total_amount_rmb, total_amount_twd, warehouse, staff, status)
+                                VALUES (?, ?, ?, ?, ?, ?, ?, ?, '待驗收')
+                            """, (order_id, str(date_input), supplier_input.strip(), total_qty, total_rmb, total_twd, warehouse_input, staff_input))
                             
+                            # 2. 寫入明細細項
+                            for _, row in edited_items.iterrows():
+                                if str(row['商品編碼']).strip() and row['數量'] > 0:
+                                    item_total_rmb = int(row['數量']) * float(row['人民幣單價'])
+                                    cursor.execute("""
+                                        INSERT INTO procurement_items (order_id, code, qty, unit_price_rmb, total_price_rmb)
+                                        VALUES (?, ?, ?, ?, ?)
+                                    """, (order_id, str(row['商品編碼']), int(row['數量']), float(row['人民幣單價']), item_total_rmb))
+                            conn.commit()
+                        st.success(f"✅ 採購單 【{order_id}】 建立並保存成功！請至核對頁面辦理點收。")
+                        st.session_state.po_editor_df = pd.DataFrame(columns=["商品編碼", "數量", "人民幣單價"]) # 清空暫存
+                        time.sleep(1.5)
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"❌ 資料庫寫入異常，單據儲存失敗！錯誤詳情：{str(e)}")
+
+    # ==========================================
+    # --- Tab 2: 採購單歷史與驗收入庫 (連結商品庫存) ---
+    # ==========================================
+    with tab2:
+        st.subheader("📋 採購單據維護與點收庫存作業")
+        with get_db() as conn:
+            df_orders = pd.read_sql("""
+                SELECT order_id as 採購單號, date as 日期, supplier as 廠商, 
+                       total_qty as 總數量, total_amount_rmb as 人民幣總額, 
+                       total_amount_twd as 台幣總額, warehouse as 購入倉庫, 
+                       staff as 採購人員, status as 狀態 
+                FROM procurement_orders ORDER BY 日期 DESC, order_id DESC
+            """, conn)
+            
+        if df_orders.empty:
+            st.info("目前系統中無任何採購歷史紀錄。")
+        else:
+            # 顯示主表清單
+            st.dataframe(df_orders, use_container_width=True, hide_index=True)
+            
+            st.divider()
+            # 點選單號打開詳細明細內容，並包含商品圖片
+            selected_po = st.selectbox("🔍 請選取採購單號以展開「詳細明細內容」與辦理進貨點收入庫：", df_orders['採購單號'].tolist())
+            
+            if selected_po:
+                order_meta = df_orders[df_orders['採購單號'] == selected_po].iloc[0]
+                
+                with get_db() as conn:
+                    df_items = pd.read_sql("""
+                        SELECT i.code as 編碼, p.名稱 as 名稱, p.圖片路徑, 
+                               i.qty as 數量, i.unit_price_rmb as 單價, i.total_price_rmb as 總金額
+                        FROM procurement_items i
+                        LEFT JOIN products p ON i.code = p.編碼
+                        WHERE i.order_id = ?
+                    """, conn, params=(selected_po,))
+                
+                st.write(f"📁 **採購單號：** `{selected_po}` ｜ **狀態：** `{order_meta['狀態']}` ｜ **目的地倉庫：** `{order_meta['購入倉庫']}`")
+                
+                # 依需求排版顯示：編碼、名稱、圖片、數量、單價、總金額
+                for _, item in df_items.iterrows():
+                    with st.container(border=True):
+                        img_c, details_c = st.columns([1.2, 6])
+                        # 圖片欄位顯示
+                        if item['圖片路徑'] and os.path.exists(item['圖片路徑']):
+                            img_c.image(item['圖片路徑'], width=90)
+                        else:
+                            img_c.write("無商品圖片")
+                        
+                        details_c.markdown(
+                            f"🆔 **商品編碼**：`{item['編碼']}`  &nbsp;&nbsp;&nbsp;&nbsp; 📦 **商品名稱**：**{item['名稱']}**\n\n"
+                            f"🔢 **採購數量**：`{item['數量']}` 支 ｜ 💰 **人民幣單價**：`{item['單價']}` RMB ｜ 🧾 **項目總金額**：`{item['總金額']}` RMB"
+                        )
+
+                # 💡 進貨點收連結商品庫存功能
+                if order_meta['狀態'] == '待驗收':
+                    st.write("")
+                    if st.button(f"🚚 點收完成！確認將單號 {selected_po} 的商品數量正式撥入『商品庫存』", type="primary", use_container_width=True):
+                        try:
                             with get_db() as conn:
                                 cursor = conn.cursor()
-                                # 更新主表
-                                cursor.execute("""
-                                    UPDATE purchase_orders 
-                                    SET 日期=?, 廠商=?, 總數量=?, 人民幣總金額=?, 台幣總金額=?, 購入倉庫=?, 採購人員=?
-                                    WHERE 採購單號=?
-                                """, (str(e_date), e_supplier, total_qty, total_rmb, total_twd, e_wh, e_user, target_po))
-                                
-                                # 重新整理明細表 (先刪再蓋)
-                                cursor.execute("DELETE FROM purchase_items WHERE 採購單號=?", (target_po,))
-                                for _, row in valid_items.iterrows():
+                                # 逐筆把採購明細的品項加進庫存流水表 inventory 中
+                                for _, item in df_items.iterrows():
                                     cursor.execute("""
-                                        INSERT INTO purchase_items (採購單號, 商品編碼, 數量, 人民幣單價, 總金額_RMB)
-                                        VALUES (?, ?, ?, ?, ?)
-                                    """, (target_po, str(row['商品編碼']), int(row['數量']), float(row['人民幣單價']), float(row['總金額_RMB'])))
+                                        INSERT INTO inventory (編碼, 倉庫位置, 數量, 單支成本_RMB, 採購廠商, 採購金額_RMB, 進貨日期)
+                                        VALUES (?, ?, ?, ?, ?, ?, ?)
+                                    """, (item['編碼'], order_meta['購入倉庫'], item['數量'], item['單價'], order_meta['廠商'], item['總金額'], order_meta['日期']))
+                                
+                                # 更新此張採購單的狀態改為『已入庫』，防止重複點收入庫
+                                cursor.execute("UPDATE procurement_orders SET status = '已入庫' WHERE order_id = ?", (selected_po,))
                                 conn.commit()
-                            st.success(f"✅ 採購單 {target_po} 已成功修正更新！")
-                            st.session_state['edit_po_id'] = None
-                            time.sleep(1)
+                            st.success(f"✅ 點收入庫成功！採購單 {selected_po} 已正式與庫存完成連動，數量已匯入庫存。")
+                            time.sleep(1.5)
                             st.rerun()
-                    except Exception as e:
-                        st.error(f"❌ 修改失敗，發生異常：{str(e)}")
-                        
-        # ------------------ 正常模組畫面 (分頁籤) ------------------
-        else:
-            tab1, tab2, tab3 = st.tabs(["📋 採購單瀏覽與入庫驗收", "➕ 新增採購訂單", "📥 批次匯入/匯出"])
-            
-            # --- Tab 1: 瀏覽與核對明細 ---
-            with tab1:
-                with get_db() as conn:
-                    df_po = pd.read_sql("SELECT * FROM purchase_orders ORDER BY 日期 DESC", conn)
-                    
-                if df_po.empty:
-                    st.info("目前尚無任何採購單紀錄。")
+                        except Exception as e:
+                            st.error(f"❌ 庫存撥配連動過程中發生異常錯誤：{str(e)}")
                 else:
-                    selected_po = st.selectbox("🔍 選擇要檢視詳細內容或操作的採購單：", ["請選擇採購單..."] + df_po['採購單號'].tolist())
-                    
-                    if selected_po != "請選擇採購單...":
-                        po_info = df_po[df_po['採購單號'] == selected_po].iloc[0]
-                        
-                        # 看板式摘要資訊
-                        with st.container(border=True):
-                            st.subheader(f"📄 採購單基本資料 ({po_info['採購單號']})")
-                            m_c1, m_c2, m_c3, m_c4 = st.columns(4)
-                            m_c1.write(f"📅 **採購日期**：{po_info['日期']}")
-                            m_c2.write(f"🏭 **供應廠商**：{po_info['廠商']}")
-                            m_c3.write(f"🛒 **採購人員**：{po_info['採購人員']}")
-                            m_c4.write(f"🏢 **購入倉庫**：{po_info['購入倉庫']}")
-                            
-                            m_c1.write(f"📊 **總數量**：{po_info['總數量']} 支")
-                            m_c2.write(f"💰 **人民幣總額**：¥{po_info['人民幣總金額']:.2f}")
-                            m_c3.write(f"💵 **台幣估算總額**：NT${po_info['台幣總金額']:.2f}")
-                            
-                            status_color = "🟢" if po_info['狀態'] == '已入庫' else "🟡"
-                            m_c4.write(f"{status_color} **目前的狀態**：{po_info['狀態']}")
-                        
-                        # 顯示商品詳細內容表 (包含圖片、名稱)
-                        st.write("📋 **採購商品詳細清單：**")
-                        with get_db() as conn:
-                            df_items = pd.read_sql("""
-                                SELECT i.*, p.名稱, p.圖片路徑 
-                                FROM purchase_items i
-                                LEFT JOIN products p ON i.商品編碼 = p.編碼
-                                WHERE i.採購單號 = ?
-                            """, conn, params=(selected_po,))
-                            
-                        for _, item in df_items.iterrows():
-                            with st.container(border=True):
-                                col_img, col_info, col_qty, col_price, col_tot = st.columns([1.5, 4, 1.5, 2, 2])
-                                # 1. 圖片
-                                if item['圖片路徑'] and os.path.exists(item['圖片路徑']):
-                                    col_img.image(item['圖片路徑'], width=70)
-                                else:
-                                    col_img.write("無圖")
-                                # 2. 商品訊息
-                                col_info.write(f"**編碼**: {item['商品編碼']}")
-                                col_info.write(f"**名稱**: {item['名稱'] if item['名稱'] else '---'}")
-                                # 3. 數量與單價
-                                col_qty.write(f"**數量**\n### {item['數量']}")
-                                col_price.write(f"**人民幣單價**\n¥ {item['人民幣單價']:.2f}")
-                                col_tot.write(f"**小計金額**\n¥ {item['總金額_RMB']:.2f}\n(NT${round(item['總金額_RMB']*po_rate, 1)})")
-                        
-                        st.divider()
-                        # 操作功能列
-                        act_c1, act_c2, act_c3 = st.columns(3)
-                        
-                        # A. 入庫動作
-                        if po_info['狀態'] == '未入庫':
-                            if act_c1.button("🚚 執行驗收，確認點收入庫", type="primary", use_container_width=True):
-                                try:
-                                    with get_db() as conn:
-                                        cursor = conn.cursor()
-                                        # 將採購項目全數倒入庫存表 inventory
-                                        for _, item in df_items.iterrows():
-                                            cursor.execute("""
-                                                INSERT INTO inventory (編碼, 倉庫位置, 數量, 單支成本_RMB, 採購廠商, 採購金額_RMB, 進貨日期)
-                                                VALUES (?, ?, ?, ?, ?, ?, ?)
-                                            """, (item['商品編碼'], po_info['購入倉庫'], item['數量'], item['人民幣單價'], po_info['廠商'], item['總金額_RMB'], po_info['日期']))
-                                        # 更新本單狀態
-                                        cursor.execute("UPDATE purchase_orders SET 狀態='已入庫' WHERE 採購單號=?", (selected_po,))
-                                        conn.commit()
-                                    st.success(f"🎉 採購單 {selected_po} 驗收完成！商品數量已全數加進『商品庫存』。")
-                                    time.sleep(1)
-                                    st.rerun()
-                                except Exception as e:
-                                    st.error(f"❌ 入庫作業失敗：{str(e)}")
-                        else:
-                            act_c1.button("✅ 此單已完成驗收入庫", disabled=True, use_container_width=True)
-                            
-                        # B. 編輯單據
-                        if act_c2.button("✏️ 編輯修改此單內容", use_container_width=True):
-                            if po_info['狀態'] == '已入庫':
-                                st.warning("⚠️ 此採購單已執行過入庫，直接修改明細可能導致與目前庫存數量不符，請謹慎操作。")
-                            st.session_state['edit_po_id'] = selected_po
-                            st.rerun()
-                            
-                        # C. 刪除單據
-                        if act_c3.button("🗑️ 刪除此筆採購訂單", type="primary", use_container_width=True):
-                            try:
-                                with get_db() as conn:
-                                    cursor = conn.cursor()
-                                    cursor.execute("DELETE FROM purchase_orders WHERE 採購單號=?", (selected_po,))
-                                    cursor.execute("DELETE FROM purchase_items WHERE 採購單號=?", (selected_po,))
-                                    conn.commit()
-                                st.success(f"🗑️ 採購單 {selected_po} 及相關明細已徹底刪除。")
-                                time.sleep(1)
-                                st.rerun()
-                            except Exception as e:
-                                st.error(f"❌ 刪除採購單失敗：{str(e)}")
-                                
-            # --- Tab 2: 手動新增採購單 ---
-            with tab2:
-                st.subheader("➕ 建立新採購單項目")
-                # 自動產生一個不易重複的單號
-                suggested_id = f"PO-{time.strftime('%Y%m%d-%H%M%S')}"
-                
-                with get_db() as conn:
-                    df_prod_list = pd.read_sql("SELECT 編碼 FROM products ORDER BY 編碼 ASC", conn)
-                    all_prods = df_prod_list['編碼'].tolist()
-                    
-                if not all_prods:
-                    st.warning("⚠️ 商品訊息庫目前沒有任何商品，請先至『商品訊息』模組建立商品才能進行採購。")
-                else:
-                    with st.form("add_po_form", clear_on_submit=True):
-                        col_x1, col_x2 = st.columns(2)
-                        new_po_id = col_x1.text_input("採購單號 (可留空用系統自動產生)", value=suggested_id)
-                        new_po_date = col_x2.date_input("採購日期")
-                        
-                        col_x3, col_x4, col_x5 = st.columns(3)
-                        new_po_supplier = col_x3.text_input("供應商名稱")
-                        new_po_wh = col_x4.text_input("預計購入倉庫位置 (如：A倉、高雄倉)", value="主倉庫")
-                        new_po_user = col_x5.text_input("採購經辦人員", value=st.session_state.get('user', ''))
-                        
-                        st.write("📝 請於下方建立商品項目與採購單價：")
-                        # 預設乾淨的一列資料供填寫
-                        init_df = pd.DataFrame([{"商品編碼": all_prods[0], "數量": 1, "人民幣單價": 0.0}])
-                        
-                        new_items_df = st.data_editor(
-                            init_df, num_rows="dynamic", use_container_width=True, key="new_po_editor",
-                            column_config={
-                                "商品編碼": st.column_config.SelectboxColumn("商品編碼", options=all_prods, required=True),
-                                "數量": st.column_config.NumberColumn("數量", min_value=1, step=1, default=1),
-                                "人民幣單價": st.column_config.NumberColumn("人民幣單價 (RMB)", min_value=0.0, step=0.01)
-                            }
-                        )
-                        
-                        if st.form_submit_button("🚀 確認建立並儲存此採購單", type="primary"):
-                            try:
-                                valid_new_items = new_items_df.dropna(subset=['商品編碼']).copy()
-                                if valid_new_items.empty:
-                                    st.error("❌ 建立失敗：採購清單內不可為空！")
-                                else:
-                                    # 計算金額與總量
-                                    valid_new_items['總金額_RMB'] = valid_new_items['數量'] * valid_new_items['人民幣單價']
-                                    total_qty = int(valid_new_items['數量'].sum())
-                                    total_rmb = float(valid_new_items['總金額_RMB'].sum())
-                                    total_twd = round(total_rmb * po_rate, 2)
-                                    final_po_id = new_po_id.strip() if new_po_id.strip() else suggested_id
-                                    
-                                    with get_db() as conn:
-                                        cursor = conn.cursor()
-                                        # 寫入主表
-                                        cursor.execute("""
-                                            INSERT INTO purchase_orders (採購單號, 日期, 廠商, 總數量, 人民幣總金額, 台幣總金額, 購入倉庫, 採購人員, 狀態)
-                                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, '未入庫')
-                                        """, (final_po_id, str(new_po_date), new_po_supplier, total_qty, total_rmb, total_twd, new_po_wh, new_po_user))
-                                        
-                                        # 寫入明細
-                                        for _, row in valid_new_items.iterrows():
-                                            cursor.execute("""
-                                                INSERT INTO purchase_items (採購單號, 商品編碼, 數量, 人民幣單價, 總金額_RMB)
-                                                VALUES (?, ?, ?, ?, ?)
-                                            """, (final_po_id, str(row['商品編碼']), int(row['數量']), float(row['人民幣單價']), float(row['總金額_RMB'])))
-                                        conn.commit()
-                                    st.success(f"🎉 採購單 {final_po_id} 建立成功！狀態目前為「未入庫」，請至清單分頁執行驗收。")
-                                    time.sleep(1)
-                                    st.rerun()
-                            except sqlite3.IntegrityError:
-                                st.error(f"❌ 建立失敗：採購單號【{new_po_id}】已存在，請使用其他單號。")
-                            except Exception as e:
-                                st.error(f"❌ 建立單據失敗：{str(e)}")
-                                
-            # --- Tab 3: 批次作業與導出 ---
-            with tab3:
-                st.subheader("📤 下載所有採購單歷史報表")
-                if df_po.empty:
-                    st.caption("暫無歷史資料可供導出。")
-                else:
-                    from io import BytesIO
-                    output_po = BytesIO()
-                    with pd.ExcelWriter(output_po, engine='openpyxl') as writer:
-                        df_po.to_excel(writer, index=False, sheet_name='採購單總表')
-                    
-                    st.download_button(
-                        label="💾 導出採購單主表 (Excel)",
-                        data=output_po.getvalue(),
-                        file_name="purchase_orders_report.xlsx",
-                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                    )
-                
-                st.divider()
-                st.subheader("📥 批量匯入採購單 (開發預留區塊)")
-                st.info("此區塊未來可配合物流格式直接上傳廠商 CSV 檔批量產單。目前建議使用【新增採購訂單】分頁進行動態極速建立。")
-    else:
-        st.error("🚫 您無權限訪問此模組")
+                    st.write("")
+                    st.success("🎉 此採購單已完成點收入庫驗收，商品數量已在『商品庫存管理』核算中。")
 
+    # ==========================================
+    # --- Tab 3: 導入與導出功能 (Excel 處理) ---
+    # ==========================================
+    with tab3:
+        st.subheader("📤 導出公司完整採購報表")
+        try:
+            with get_db() as conn:
+                df_report = pd.read_sql("""
+                    SELECT o.order_id as 採購單號, o.date as 日期, o.supplier as 廠商, 
+                           o.warehouse as 購入倉庫, o.staff as 採購人員, o.status as 狀態,
+                           i.code as 商品編碼, i.qty as 採購數量, i.unit_price_rmb as 人民幣單價, i.total_price_rmb as 人民幣總額
+                    FROM procurement_orders o
+                    JOIN procurement_items i ON o.order_id = i.order_id
+                    ORDER BY o.date DESC, o.order_id DESC
+                """, conn)
+            
+            from io import BytesIO
+            output_excel = BytesIO()
+            with pd.ExcelWriter(output_excel, engine='openpyxl') as writer:
+                df_report.to_excel(writer, index=False, sheet_name='採購明細總表')
+            
+            st.download_button(
+                label="💾 點擊下載完整採購歷史明細報表 (Excel 格式)",
+                data=output_excel.getvalue(),
+                file_name="procurement_global_report.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                use_container_width=True
+            )
+        except Exception as e:
+            st.error(f"❌ 報表導出模組發生例外錯誤：{str(e)}")
+
+        st.divider()
+        st.subheader("📥 導入外部採購單資料")
+        st.caption("💡 批次匯入 Excel / CSV 欄位名稱順序必須包含：日期, 廠商, 購入倉庫, 採購人員, 商品編碼, 數量, 人民幣單價")
+        
+        uploaded_po = st.file_uploader("選擇您要上傳的批次採購檔案", type=["csv", "xlsx"])
+        
+        if uploaded_po and st.button("🚀 執行批量採購單據匯入作業", type="primary"):
+            try:
+                if uploaded_po.name.endswith('.csv'):
+                    df_imp = pd.read_csv(uploaded_po)
+                else:
+                    df_imp = pd.read_excel(uploaded_po, engine='openpyxl')
+                
+                required_cols = ["日期", "廠商", "購入倉庫", "採購人員", "商品編碼", "數量", "人民幣單價"]
+                
+                if not all(c in df_imp.columns for c in required_cols):
+                    st.error(f"❌ 匯入失敗：檔案內必填欄位不符，必須完整包含：{required_cols}")
+                else:
+                    # 將相同日期、相同廠商、相同倉庫的資料合併歸類為同一個採購單號
+                    df_imp['Group_Key'] = df_imp['日期'].astype(str) + "_" + df_imp['廠商'].astype(str) + "_" + df_imp['購入倉庫'].astype(str)
+                    
+                    with get_db() as conn:
+                        cursor = conn.cursor()
+                        for g_key, group in df_imp.groupby('Group_Key'):
+                            base_row = group.iloc[0]
+                            # 生成專屬單號
+                            order_id = f"PO-IMP-{time.strftime('%Y%m%d')}-{int(time.time())%100000:05d}"
+                            time.sleep(0.02) # 避免生成碰撞
+                            
+                            g_qty = int(group['數量'].sum())
+                            g_rmb = float((group['數量'] * group['人民幣單價']).sum())
+                            g_twd = g_rmb * rate
+                            
+                            # A. 寫入主表
+                            cursor.execute("""
+                                INSERT INTO procurement_orders (order_id, date, supplier, total_qty, total_amount_rmb, total_amount_twd, warehouse, staff, status)
+                                VALUES (?, ?, ?, ?, ?, ?, ?, ?, '待驗收')
+                            """, (order_id, str(base_row['日期']), str(base_row['廠商']), g_qty, g_rmb, g_twd, str(base_row['購入倉庫']), str(base_row['採購人員'])))
+                            
+                            # B. 寫入該單據底下所有明細細項
+                            for _, row in group.iterrows():
+                                item_rmb = int(row['數量']) * float(row['人民幣單價'])
+                                cursor.execute("""
+                                    INSERT INTO procurement_items (order_id, code, qty, unit_price_rmb, total_price_rmb)
+                                    VALUES (?, ?, ?, ?, ?)
+                                """, (order_id, str(row['商品編碼']), int(row['數量']), float(row['人民幣單價']), item_rmb))
+                        
+                        conn.commit()
+                    st.success("✅ 外部採購單據批次匯入作業成功完成！所有新單據預設為『待驗收』狀態。")
+                    time.sleep(1.5)
+                    st.rerun()
+            except Exception as e:
+                st.error(f"❌ 批量解析匯入失敗：格式不正確或資料有誤。詳情：{str(e)}")
 elif menu == "訂單明細":
     st.title("🧾 客戶訂單明細")
     if check_perm(role, "訂單明細", "can_view"):
