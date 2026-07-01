@@ -27,12 +27,11 @@ def get_db():
     
 # --- 3. 初始化資料庫與預設權限 ---
 @st.cache_resource
-def init_db_v3():  # 🌟 這裡改成 v3
+def init_db_v4():  # 🌟 升級為 v4
     with get_db() as conn:
         cursor = conn.cursor()
         
-        # 🧨 強制刪除舊的錯誤表格 (這會清空舊的 hashlib 亂碼，並重置正確的表)
-        cursor.execute("DROP TABLE IF EXISTS users")
+        # 🔒 安全防護：拿掉了舊版本的 DROP TABLE users 指令，確保你的帳號與權限不再被清空重置！
         
         # 1. 建立系統核心表格
         cursor.execute('''CREATE TABLE IF NOT EXISTS users (username TEXT PRIMARY KEY, password TEXT, role TEXT)''')
@@ -83,7 +82,7 @@ def init_db_v3():  # 🌟 這裡改成 v3
                             unit_price_rmb REAL,
                             total_price_rmb REAL)''')
 
-        # 🌟 7. 【本次新增】：動態倉庫位置表
+        # 7. 動態倉庫位置表
         cursor.execute('''CREATE TABLE IF NOT EXISTS warehouses (name TEXT PRIMARY KEY)''')
         cursor.execute("SELECT count(*) FROM warehouses")
         if cursor.fetchone()[0] == 0:
@@ -91,10 +90,18 @@ def init_db_v3():  # 🌟 這裡改成 v3
             for w in default_whs:
                 cursor.execute("INSERT OR IGNORE INTO warehouses (name) VALUES (?)", (w,))
         
-        # 8. 建立預設 Admin 帳號 
+        # 🌟 【本次新增】8. 庫存操作變動軌跡歷史日誌表
+        cursor.execute('''CREATE TABLE IF NOT EXISTS inventory_logs (
+                            id INTEGER PRIMARY KEY AUTOINCREMENT,
+                            timestamp TEXT,
+                            operator TEXT,
+                            action_type TEXT,
+                            details TEXT)''')
+        
+        # 9. 建立預設 Admin 帳號 
         cursor.execute("INSERT OR IGNORE INTO users VALUES ('admin', ?, 'Admin')", (encode_pw('123456'),))
         
-        # 9. 初始化全新權限矩陣
+        # 10. 初始化全新權限矩陣
         cursor.execute("SELECT count(*) FROM permissions")
         if cursor.fetchone()[0] == 0:
             modules = ["商品訊息", "商品庫存", "採購管理", "訂單明細", "財務報表"]
@@ -106,13 +113,17 @@ def init_db_v3():  # 🌟 這裡改成 v3
         
         conn.commit()
         
-init_db_v3()  # 🌟 這裡也記得要改成 v3
+init_db_v4()  # 🌟 執行 v4 初始化
 
 # --- 4. 權限檢查工具 ---
-def check_perm(role_string, module, action=None):
-    if str(role_string) == "Admin":
-        return True
-    return module in str(role_string)
+def log_inventory_change(operator, action_type, details):
+    """自動記錄每一次的庫存修正與刪除軌跡，精確到秒"""
+    with get_db() as conn:
+        conn.execute("""
+            INSERT INTO inventory_logs (timestamp, operator, action_type, details)
+            VALUES (datetime('now', 'localtime'), ?, ?, ?)
+        """, (operator, action_type, details))
+        conn.commit()
 
 # --- 5. 系統登入 ---
 if 'logged_in' not in st.session_state:
@@ -379,13 +390,15 @@ elif menu == "商品訊息":
         st.error("🚫 您無權限訪問此模組")
 
 elif menu == "商品庫存":
-    st.title("🏭 商品庫存與倉庫管理")
+    st.title("🏭 商品庫存與物料倉庫管理")
 
-    # 取得最新匯率與倉庫名單
+    # 取得最新即時換算匯率與現有動態倉庫名單
     with get_db() as conn:
         rate = conn.execute("SELECT value FROM settings WHERE key='exchange_rate'").fetchone()[0]
         wh_df = pd.read_sql("SELECT name FROM warehouses", conn)
         wh_list = wh_df['name'].tolist()
+        prod_df = pd.read_sql("SELECT 編碼 FROM products ORDER BY 編碼 ASC", conn)
+        all_products = prod_df['編碼'].tolist()
     
     new_rate = st.sidebar.number_input("當前人民幣匯率 (RMB to TWD)", value=rate, step=0.01)
     if st.sidebar.button("更新匯率"):
@@ -395,19 +408,23 @@ elif menu == "商品庫存":
         st.rerun()
 
     if check_perm(role, "商品庫存", "can_view"):
-        tab_inv, tab_wh = st.tabs(["📊 庫存總覽與查詢", "🏢 倉庫位置管理"])
+        # 🌟 擴充為 4 個分頁，架構更清晰完整
+        tab_inv, tab_manage, tab_wh, tab_log = st.tabs([
+            "📊 庫存數據總覽", 
+            "🛠️ 庫存批次明細維護 (編輯/刪除)", 
+            "🏢 倉庫位置管理", 
+            "📜 歷史異動軌跡日誌"
+        ])
         
         # ==========================================
-        # --- Tab 1: 庫存總覽 (含圖片與倉庫篩選) ---
+        # --- Tab 1: 庫存總覽 (含圖片與聚合計算) ---
         # ==========================================
         with tab_inv:
-            # 倉庫篩選器
             c_wh, c_status = st.columns(2)
-            selected_wh = c_wh.selectbox("🔍 篩選特定倉庫 (查看單一倉庫庫存)", ["所有倉庫"] + wh_list)
-            show_type = c_status.radio("篩選庫存狀態", ["顯示所有", "僅顯示有庫存", "僅顯示缺貨"], horizontal=True)
+            selected_wh = c_wh.selectbox("🔍 篩選特定分倉庫存", ["所有倉庫"] + wh_list, key="inv_wh_filter")
+            show_type = c_status.radio("依庫存水位篩選", ["顯示所有", "僅顯示有庫存", "僅顯示缺貨"], horizontal=True, key="inv_status_filter")
             
             with get_db() as conn:
-                # 依據選擇的倉庫動態改變 SQL 查詢
                 query = """
                 SELECT p.圖片路徑, p.編碼, p.名稱, p.類別, p.品牌, 
                        IFNULL(SUM(i.數量), 0) as 總庫存,
@@ -424,12 +441,11 @@ elif menu == "商品庫存":
                 query += " GROUP BY p.編碼 ORDER BY p.編碼 ASC"
                 df = pd.read_sql(query, conn, params=params)
             
-            # 計算台幣金額
             df["總庫存金額_RMB"] = df["總採購金額_RMB"]
             df["總庫存金額_TWD"] = df["總庫存金額_RMB"] * new_rate
             df["平均成本_TWD"] = df["平均成本_RMB"] * new_rate
             
-            # 本地圖片轉 Base64 引擎 (讓 DataFrame 可以直接渲染圖片)
+            # 本地圖片轉 Base64 引擎
             def get_image_base64(path):
                 if pd.isna(path) or not path: return None
                 if os.path.exists(path):
@@ -439,8 +455,6 @@ elif menu == "商品庫存":
                 return None
             
             df['商品圖片'] = df['圖片路徑'].apply(get_image_base64)
-            
-            # 調整欄位順序，並套用缺貨篩選
             cols = ['商品圖片', '編碼', '名稱', '類別', '品牌', '總庫存', '平均成本_RMB', '平均成本_TWD', '總庫存金額_RMB', '總庫存金額_TWD']
             filtered_df = df[cols].copy()
             
@@ -448,46 +462,128 @@ elif menu == "商品庫存":
             elif show_type == "僅顯示缺貨": filtered_df = filtered_df[filtered_df["總庫存"] <= 0]
             
             st.dataframe(
-                filtered_df, 
-                use_container_width=True, 
-                hide_index=True,
+                filtered_df, use_container_width=True, hide_index=True,
                 column_config={
-                    "商品圖片": st.column_config.ImageColumn("圖片", help="商品實體圖"),
+                    "商品圖片": st.column_config.ImageColumn("圖片"),
                     "總庫存": st.column_config.NumberColumn("總庫存", format="%d 支"),
                     "平均成本_RMB": st.column_config.NumberColumn("單支成本 (¥)", format="¥ %.2f"),
                     "平均成本_TWD": st.column_config.NumberColumn("單支成本 (NT$)", format="$ %.2f"),
                 }
             )
             
-            # 匯出報表
             from io import BytesIO
             output = BytesIO()
             with pd.ExcelWriter(output, engine='openpyxl') as writer:
-                # 匯出時把 Base64 圖片那欄拿掉，以免 Excel 壞掉
-                export_df = filtered_df.drop(columns=['商品圖片'])
-                export_df.to_excel(writer, index=False, sheet_name='Inventory')
+                filtered_df.drop(columns=['商品圖片']).to_excel(writer, index=False, sheet_name='Inventory')
             
             st.download_button(
-                label="💾 下載當前庫存報表 (Excel)",
-                data=output.getvalue(),
-                file_name=f"inventory_{selected_wh}.xlsx",
+                label="💾 下載當前篩選庫存 Excel 報表", data=output.getvalue(),
+                file_name=f"inventory_report_{selected_wh}.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             )
 
         # ==========================================
-        # --- Tab 2: 倉庫位置動態管理 ---
+        # --- 🌟 Tab 2: 庫存批次明細維護 (修正與刪除) ---
+        # ==========================================
+        with tab_manage:
+            st.subheader("🛠️ 原始進貨批次明細修正區")
+            st.write("不論是手動匯入或是由採購單點收進來的個別紀錄，皆會在下方展開。您可以選取對應的序號進行精準修正或刪除，系統會留存完整稽核日誌。")
+            
+            with get_db() as conn:
+                # 撈出未歸戶的原始庫存紀錄
+                df_raw_inv = pd.read_sql("""
+                    SELECT i.id as 流水號, i.編碼, p.名稱 as 商品名稱, i.倉庫位置, 
+                           i.數量, i.單支成本_RMB as '單支成本(RMB)', i.採購廠商, i.進貨日期
+                    FROM inventory i
+                    LEFT JOIN products p ON i.編碼 = p.編碼
+                    ORDER BY i.id DESC
+                """, conn)
+                
+            if df_raw_inv.empty:
+                st.info("目前庫存流水表中無任何原始資料。")
+            else:
+                # 顯示目前明細
+                st.dataframe(df_raw_inv, use_container_width=True, hide_index=True)
+                st.divider()
+                
+                # 操作維護表單
+                st.markdown("#### ✍️ 執行特定批次庫存更正作業")
+                select_id = st.selectbox("請指定您要修正或刪除的庫存「流水號 (ID)」：", ["請選擇 ID..."] + df_raw_inv['流水號'].tolist())
+                
+                if select_id != "請選擇 ID...":
+                    # 抓出選定的那筆舊資料
+                    old_row = df_raw_inv[df_raw_inv['流水號'] == select_id].iloc[0]
+                    
+                    with st.form(f"edit_inventory_form_{select_id}"):
+                        st.info(f"正在維護流水號 ID: {select_id} ｜ 原品項：{old_row['編碼']} - {old_row['商品名稱']}")
+                        
+                        m_c1, m_c2 = st.columns(2)
+                        edit_code = m_c1.selectbox("更正商品編碼", all_products, index=all_products.index(old_row['編碼']) if old_row['編碼'] in all_products else 0)
+                        edit_wh = m_c2.selectbox("更正存放倉庫位置", wh_list, index=wh_list.index(old_row['倉庫位置']) if old_row['倉庫位置'] in wh_list else 0)
+                        
+                        m_c3, m_c4, m_c5 = st.columns(3)
+                        edit_qty = m_c3.number_input("修正後數量", min_value=0, step=1, value=int(old_row['數量']))
+                        edit_cost = m_c4.number_input("修正後人民幣單價", min_value=0.0, step=0.1, value=float(old_row['單支成本(RMB)']))
+                        edit_vendor = m_c5.text_input("更正採購廠商", value=str(old_row['採購廠商']))
+                        
+                        edit_date = st.date_input("修正進貨日期", value=pd.to_datetime(old_row['進貨日期']))
+                        
+                        col_btn1, col_btn2 = st.columns(2)
+                        save_submit = col_btn1.form_submit_button("💾 儲存此筆更正變更", type="primary", use_container_width=True)
+                        delete_submit = col_btn2.form_submit_button("🗑️ 徹底刪除此筆庫存紀錄", use_container_width=True)
+                        
+                        current_operator = st.session_state.get('user', 'admin')
+                        
+                        # A. 處理儲存修改
+                        if save_submit:
+                            calc_amt_rmb = edit_qty * edit_cost
+                            try:
+                                with get_db() as conn:
+                                    conn.execute("""
+                                        UPDATE inventory 
+                                        SET 編碼=?, 倉庫位置=?, 數量=?, 單支成本_RMB=?, 採購廠商=?, 採購金額_RMB=?, 進貨日期=?
+                                        WHERE id=?
+                                    """, (edit_code, edit_wh, edit_qty, edit_cost, edit_vendor.strip(), calc_amt_rmb, str(edit_date), select_id))
+                                    conn.commit()
+                                
+                                # 寫入軌跡日誌
+                                log_details = (f"修改流水號 {select_id}。原資料:[品項:{old_row['編碼']},數量:{old_row['數量']},倉:{old_row['倉庫位置']}] "
+                                               f"➡️ 新資料:[品項:{edit_code},數量:{edit_qty},倉:{edit_wh},單價:{edit_cost} RMB]")
+                                log_inventory_change(current_operator, "修正庫存", log_details)
+                                
+                                st.success(f"✅ 流水號 【{select_id}】 庫存明細更正成功！")
+                                time.sleep(1)
+                                st.rerun()
+                            except Exception as e:
+                                st.error(f"❌ 修正失敗：{e}")
+                                
+                        # B. 處理刪除紀錄
+                        if delete_submit:
+                            try:
+                                with get_db() as conn:
+                                    conn.execute("DELETE FROM inventory WHERE id=?", (select_id,))
+                                    conn.commit()
+                                    
+                                # 寫入軌跡日誌
+                                log_details = f"徹底刪除流水號 {select_id} 紀錄。原內含品項:{old_row['編碼']}, 移除數量:{old_row['數量']} 支, 原倉庫:{old_row['倉庫位置']}, 廠商:{old_row['採購廠商']}"
+                                log_inventory_change(current_operator, "刪除庫存", log_details)
+                                
+                                st.success(f"🗑️ 庫存流水號 【{select_id}】 已成功從資料庫中移除！")
+                                time.sleep(1)
+                                st.rerun()
+                            except Exception as e:
+                                st.error(f"❌ 刪除動作失敗：{e}")
+
+        # ==========================================
+        # --- Tab 3: 倉庫位置動態管理 ---
         # ==========================================
         with tab_wh:
             st.subheader("🏢 系統倉庫位置管理")
-            st.write("您可以在此自由新增、修改或刪除倉庫位置，這些設定會同步更新至『採購管理』的入庫選項中。")
-            
             with get_db() as conn:
                 df_wh_edit = pd.read_sql("SELECT name as 倉庫名稱 FROM warehouses", conn)
                 
             edited_wh = st.data_editor(
-                df_wh_edit, 
-                num_rows="dynamic",
-                use_container_width=True,
+                df_wh_edit, num_rows="dynamic", use_container_width=True,
                 column_config={"倉庫名稱": st.column_config.TextColumn("📦 倉庫名稱 (必填，不可重複)", required=True)}
             )
             
@@ -510,6 +606,38 @@ elif menu == "商品庫存":
                         st.rerun()
                     except Exception as e:
                         st.error(f"❌ 儲存失敗：{str(e)}")
+
+        # ==========================================
+        # --- 🌟 Tab 4: 歷史異動軌跡日誌 (變動紀錄牆) ---
+        # ==========================================
+        with tab_log:
+            st.subheader("📜 庫存操作變動審查軌跡")
+            st.write("此處會即時顯示系統中所有人工進行「修正庫存」或「刪除庫存」的歷史操作紀錄，時間依最新時間排序。")
+            
+            with get_db() as conn:
+                df_logs = pd.read_sql("""
+                    SELECT timestamp as 操作時間, operator as 操作人員, 
+                           action_type as 動作類別, details as 變動詳情說明 
+                    FROM inventory_logs 
+                    ORDER BY id DESC
+                """, conn)
+                
+            if df_logs.empty:
+                st.caption("✨ 目前尚無任何庫存更動日誌紀錄，系統營運正常。")
+            else:
+                st.dataframe(df_logs, use_container_width=True, hide_index=True)
+                
+                # 額外提供日誌清除功能（限定 Admin 權限，安全防呆）
+                if st.session_state.get('role') == "Admin":
+                    st.write("")
+                    if st.checkbox("⚠️ 啟用清除歷史日誌安全授權"):
+                        if st.button("🗑️ 清空所有變更日誌歷史紀錄", type="primary"):
+                            with get_db() as conn:
+                                conn.execute("DELETE FROM inventory_logs")
+                                conn.commit()
+                            st.success("日誌紀錄已清空。")
+                            time.sleep(1)
+                            st.rerun()
     else:
         st.error("🚫 您無權限訪問此模組")
 
