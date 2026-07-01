@@ -27,7 +27,7 @@ def get_db():
     
 # --- 3. 初始化資料庫與預設權限 ---
 @st.cache_resource
-def init_db_v2():
+def init_db_v3():  # 🌟 這裡改成 v3
     with get_db() as conn:
         cursor = conn.cursor()
         
