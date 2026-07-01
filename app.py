@@ -27,109 +27,76 @@ def get_db():
     
 # --- 3. 初始化資料庫與預設權限 ---
 @st.cache_resource
-def init_db_v4():  # 🌟 升級為 v4
+def init_db_v5():  # 🌟 升級為 v5
     with get_db() as conn:
         cursor = conn.cursor()
         
-        # 🔒 安全防護：拿掉了舊版本的 DROP TABLE users 指令，確保你的帳號與權限不再被清空重置！
-        
         # 1. 建立系統核心表格
         cursor.execute('''CREATE TABLE IF NOT EXISTS users (username TEXT PRIMARY KEY, password TEXT, role TEXT)''')
+        
+        # 🌟 安全擴充：為舊的 users 表格加入「暱稱」欄位 (保留舊帳號資料)
+        cursor.execute("PRAGMA table_info(users)")
+        cols = [info[1] for info in cursor.fetchall()]
+        if 'nickname' not in cols:
+            cursor.execute("ALTER TABLE users ADD COLUMN nickname TEXT DEFAULT ''")
+            
         cursor.execute('''CREATE TABLE IF NOT EXISTS permissions (role TEXT, module TEXT, can_view BOOLEAN, can_edit BOOLEAN, can_upload BOOLEAN, can_download BOOLEAN)''')
         
+        # 🌟 【本次新增】細部權限設定表
+        cursor.execute('''CREATE TABLE IF NOT EXISTS user_perms (
+                            username TEXT,
+                            module TEXT,
+                            can_view BOOLEAN DEFAULT 0,
+                            can_edit BOOLEAN DEFAULT 0,
+                            can_upload BOOLEAN DEFAULT 0,
+                            can_download BOOLEAN DEFAULT 0,
+                            PRIMARY KEY (username, module))''')
+        
         # 2. 商品資料表
-        cursor.execute('''CREATE TABLE IF NOT EXISTS products (
-                            編碼 TEXT PRIMARY KEY, 
-                            類別 TEXT, 
-                            品牌 TEXT, 
-                            名稱 TEXT, 
-                            備註 TEXT, 
-                            圖片路徑 TEXT)''')
+        cursor.execute('''CREATE TABLE IF NOT EXISTS products (編碼 TEXT PRIMARY KEY, 類別 TEXT, 品牌 TEXT, 名稱 TEXT, 備註 TEXT, 圖片路徑 TEXT)''')
         
         # 3. 庫存管理表
-        cursor.execute('''CREATE TABLE IF NOT EXISTS inventory (
-                            id INTEGER PRIMARY KEY AUTOINCREMENT,
-                            編碼 TEXT,
-                            倉庫位置 TEXT,
-                            數量 INTEGER,
-                            單支成本_RMB REAL,
-                            採購廠商 TEXT,
-                            採購金額_RMB REAL,
-                            進貨日期 DATE)''')
+        cursor.execute('''CREATE TABLE IF NOT EXISTS inventory (id INTEGER PRIMARY KEY AUTOINCREMENT, 編碼 TEXT, 倉庫位置 TEXT, 數量 INTEGER, 單支成本_RMB REAL, 採購廠商 TEXT, 採購金額_RMB REAL, 進貨日期 DATE)''')
         
         # 4. 匯率設定表
         cursor.execute('''CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value REAL)''')
         cursor.execute("INSERT OR IGNORE INTO settings VALUES ('exchange_rate', 4.5)")
         
-        # 5. 採購單主表
-        cursor.execute('''CREATE TABLE IF NOT EXISTS procurement_orders (
-                            order_id TEXT PRIMARY KEY,
-                            date DATE,
-                            supplier TEXT,
-                            total_qty INTEGER,
-                            total_amount_rmb REAL,
-                            total_amount_twd REAL,
-                            warehouse TEXT,
-                            staff TEXT,
-                            status TEXT DEFAULT '待驗收')''')
-                            
-        # 6. 採購單明細表 
-        cursor.execute('''CREATE TABLE IF NOT EXISTS procurement_items (
-                            id INTEGER PRIMARY KEY AUTOINCREMENT,
-                            order_id TEXT,
-                            code TEXT,
-                            qty INTEGER,
-                            unit_price_rmb REAL,
-                            total_price_rmb REAL)''')
+        # 5. 採購單與明細表
+        cursor.execute('''CREATE TABLE IF NOT EXISTS procurement_orders (order_id TEXT PRIMARY KEY, date DATE, supplier TEXT, total_qty INTEGER, total_amount_rmb REAL, total_amount_twd REAL, warehouse TEXT, staff TEXT, status TEXT DEFAULT '待驗收')''')
+        cursor.execute('''CREATE TABLE IF NOT EXISTS procurement_items (id INTEGER PRIMARY KEY AUTOINCREMENT, order_id TEXT, code TEXT, qty INTEGER, unit_price_rmb REAL, total_price_rmb REAL)''')
 
-        # 7. 動態倉庫位置表
+        # 6. 動態倉庫與日誌表
         cursor.execute('''CREATE TABLE IF NOT EXISTS warehouses (name TEXT PRIMARY KEY)''')
         cursor.execute("SELECT count(*) FROM warehouses")
         if cursor.fetchone()[0] == 0:
-            default_whs = ['台灣黃興-商品', '東莞熙元-商品', '台灣黃興-樣品', '東莞熙元-樣品', '退換貨倉', '東莞熙元-待結款']
-            for w in default_whs:
+            for w in ['台灣黃興-商品', '東莞熙元-商品', '台灣黃興-樣品', '退換貨倉']:
                 cursor.execute("INSERT OR IGNORE INTO warehouses (name) VALUES (?)", (w,))
+                
+        cursor.execute('''CREATE TABLE IF NOT EXISTS inventory_logs (id INTEGER PRIMARY KEY AUTOINCREMENT, timestamp TEXT, operator TEXT, action_type TEXT, details TEXT)''')
         
-        # 🌟 【本次新增】8. 庫存操作變動軌跡歷史日誌表
-        cursor.execute('''CREATE TABLE IF NOT EXISTS inventory_logs (
-                            id INTEGER PRIMARY KEY AUTOINCREMENT,
-                            timestamp TEXT,
-                            operator TEXT,
-                            action_type TEXT,
-                            details TEXT)''')
-        
-        # 9. 建立預設 Admin 帳號 
-        cursor.execute("INSERT OR IGNORE INTO users VALUES ('admin', ?, 'Admin')", (encode_pw('123456'),))
-        
-        # 10. 初始化全新權限矩陣
-        cursor.execute("SELECT count(*) FROM permissions")
-        if cursor.fetchone()[0] == 0:
-            modules = ["商品訊息", "商品庫存", "採購管理", "訂單明細", "財務報表"]
-            roles = ["Admin", "Finance", "Shareholder", "CS"]
-            for r in roles:
-                v, e, u, d = (1, 1, 1, 1) if r == "Admin" else (0, 0, 0, 0)
-                for m in modules:
-                    cursor.execute("INSERT INTO permissions VALUES (?,?,?,?,?,?)", (r, m, v, e, u, d))
-        
+        # 7. 建立預設 Admin 帳號 
+        cursor.execute("INSERT OR IGNORE INTO users (username, password, nickname, role) VALUES ('admin', ?, '總管理員', 'Admin')", (encode_pw('123456'),))
         conn.commit()
         
-init_db_v4()  # 🌟 執行 v4 初始化
+init_db_v5()
 
-# --- 🌟 【新增】庫存自動日誌工具 ---
+# --- 庫存自動日誌工具 ---
 def log_inventory_change(operator, action_type, details):
-    """自動記錄每一次的庫存修正與刪除軌跡，精確到秒"""
     with get_db() as conn:
-        conn.execute("""
-            INSERT INTO inventory_logs (timestamp, operator, action_type, details)
-            VALUES (datetime('now', 'localtime'), ?, ?, ?)
-        """, (operator, action_type, details))
+        conn.execute("INSERT INTO inventory_logs (timestamp, operator, action_type, details) VALUES (datetime('now', 'localtime'), ?, ?, ?)", (operator, action_type, details))
         conn.commit()
 
-# --- 4. 權限檢查工具 (🌟 被你不小心刪掉的元凶就是它！) ---
-def check_perm(role_string, module, action=None):
-    if str(role_string) == "Admin":
+# --- 🌟 4. 全新顆粒化權限檢查工具 ---
+def check_perm(role_string, module, action="can_view"):
+    """動態檢查當前登入者是否具備特定模組的 View/Edit/Upload/Download 權限"""
+    if str(role_string) == "Admin": 
         return True
-    return module in str(role_string)
+    
+    # 抓取登入時存在 Session 的權限字典
+    perms = st.session_state.get('perms', {})
+    mod_perms = perms.get(module, {})
+    return bool(mod_perms.get(action, False))
 
 # --- 5. 系統登入 ---
 if 'logged_in' not in st.session_state:
@@ -139,24 +106,33 @@ if 'logged_in' not in st.session_state:
     
     if mode == "登入":
         with st.form("login_form"):
-            # 🌟 加上 autocomplete="username" 與 "current-password"，喚醒瀏覽器自動記憶
             user = st.text_input("帳號", autocomplete="username")
             pw = st.text_input("密碼", type="password", autocomplete="current-password")
             
             if st.form_submit_button("登入"):
                 with get_db() as conn:
                     cursor = conn.cursor()
-                    cursor.execute("SELECT role FROM users WHERE username=? AND password=?", (user, encode_pw(pw)))
+                    # 🌟 登入時一併抓取暱稱與細部權限
+                    cursor.execute("SELECT role, nickname FROM users WHERE username=? AND password=?", (user, encode_pw(pw)))
                     res = cursor.fetchone()
                     if res:
-                        st.session_state.update({'logged_in': True, 'role': res[0], 'user': user})
+                        user_role, user_nick = res[0], res[1]
+                        
+                        # 撈取該使用者的四維權限表
+                        cursor.execute("SELECT module, can_view, can_edit, can_upload, can_download FROM user_perms WHERE username=?", (user,))
+                        perms_data = cursor.fetchall()
+                        perm_dict = {row[0]: {'can_view': bool(row[1]), 'can_edit': bool(row[2]), 'can_upload': bool(row[3]), 'can_download': bool(row[4])} for row in perms_data}
+                        
+                        st.session_state.update({
+                            'logged_in': True, 'role': user_role, 'user': user, 
+                            'nickname': user_nick if user_nick else user, 'perms': perm_dict
+                        })
                         st.rerun()
                     else:
                         st.error("帳號或密碼錯誤！")
                         
     else: 
         with st.form("register_form"):
-            # 🌟 註冊時也加上 autocomplete，讓瀏覽器可以在註冊當下就幫忙記住密碼
             new_user = st.text_input("設定新帳號", autocomplete="username")
             new_pw = st.text_input("設定新密碼", type="password", autocomplete="new-password")
             confirm_pw = st.text_input("確認密碼", type="password", autocomplete="new-password")
@@ -170,17 +146,19 @@ if 'logged_in' not in st.session_state:
                     try:
                         with get_db() as conn:
                             cursor = conn.cursor()
-                            cursor.execute("INSERT INTO users (username, password, role) VALUES (?, ?, ?)", 
-                                           (new_user, encode_pw(new_pw), 'CS'))
+                            cursor.execute("INSERT INTO users (username, password, nickname, role) VALUES (?, ?, '', 'CS')", (new_user, encode_pw(new_pw)))
                             conn.commit()
-                            st.success(f"註冊成功！帳號【{new_user}】已建立，請切換至登入模式登入。")
+                            st.success(f"註冊成功！帳號【{new_user}】已建立，請通知管理員開放權限後登入。")
                     except sqlite3.IntegrityError:
-                        st.error("❌ 該帳號名稱已被註冊，請更換一個。")
-
+                        st.error("❌ 該帳號名稱已被註冊。")
     st.stop()
+
 # --- 6. 側邊欄設計 ---
 st.sidebar.title("🏢 強盛集團 ERP")
-st.sidebar.info(f"👤 帳號: {st.session_state['user']} \n🔑 角色: {st.session_state['role']}")
+# 🌟 側邊欄顯示暱稱
+show_name = st.session_state.get('nickname', st.session_state['user'])
+st.sidebar.info(f"👤 登入者: {show_name} \n🔑 權限組: {st.session_state['role']}")
+
 if st.sidebar.button("登出系統", use_container_width=True): 
     st.session_state.clear()
     st.rerun()
@@ -192,7 +170,7 @@ menu = st.sidebar.radio(
     ["首頁", "商品訊息", "商品庫存", "採購管理", "訂單明細", "財務報表", "權限管理"],
     key="main_menu"
 )
-role = st.session_state['role']  # 🌟 這行負責把登入者的權限抓出來給下面用
+role = st.session_state['role']
 
 # --- 7. 各大模組骨架預覽 ---
 
@@ -423,7 +401,7 @@ elif menu == "商品庫存":
         ])
         
         # ==========================================
-        # --- Tab 1: 庫存總覽 (含圖片與聚合計算) ---
+        # --- Tab 1: 庫存總覽 (動態展開各分倉庫存) ---
         # ==========================================
         with tab_inv:
             c_wh, c_status = st.columns(2)
@@ -431,62 +409,66 @@ elif menu == "商品庫存":
             show_type = c_status.radio("依庫存水位篩選", ["顯示所有", "僅顯示有庫存", "僅顯示缺貨"], horizontal=True, key="inv_status_filter")
             
             with get_db() as conn:
+                # 1. 撈取基本總計資料
                 query = """
                 SELECT p.圖片路徑, p.編碼, p.名稱, p.類別, p.品牌, 
-                       IFNULL(SUM(i.數量), 0) as 總庫存,
-                       IFNULL(SUM(i.採購金額_RMB), 0) as 總採購金額_RMB,
-                       AVG(i.單支成本_RMB) as 平均成本_RMB
-                FROM products p
-                LEFT JOIN inventory i ON p.編碼 = i.編碼
+                       IFNULL(SUM(i.數量), 0) as 總庫存, IFNULL(SUM(i.採購金額_RMB), 0) as 總採購金額_RMB, AVG(i.單支成本_RMB) as 平均成本_RMB
+                FROM products p LEFT JOIN inventory i ON p.編碼 = i.編碼
                 """
                 params = []
                 if selected_wh != "所有倉庫":
                     query += " AND i.倉庫位置 = ?"
                     params.append(selected_wh)
-                    
                 query += " GROUP BY p.編碼 ORDER BY p.編碼 ASC"
                 df = pd.read_sql(query, conn, params=params)
+                
+                # 🌟 2. 利用 Pandas 樞紐分析 (Pivot) 將各倉庫數量攤平成獨立欄位
+                wh_query = "SELECT 編碼, 倉庫位置, SUM(數量) as 數量 FROM inventory GROUP BY 編碼, 倉庫位置"
+                df_wh = pd.read_sql(wh_query, conn)
+                if not df_wh.empty:
+                    wh_pivot = df_wh.pivot_table(index='編碼', columns='倉庫位置', values='數量', aggfunc='sum').fillna(0).astype(int)
+                    df = df.merge(wh_pivot, on='編碼', how='left')
+                    wh_cols = list(wh_pivot.columns)
+                    for c in wh_cols: df[c] = df[c].fillna(0).astype(int)
+                else:
+                    wh_cols = []
             
+            # 計算金額與圖片轉換
             df["總庫存金額_RMB"] = df["總採購金額_RMB"]
             df["總庫存金額_TWD"] = df["總庫存金額_RMB"] * new_rate
             df["平均成本_TWD"] = df["平均成本_RMB"] * new_rate
             
-            # 本地圖片轉 Base64 引擎
             def get_image_base64(path):
                 if pd.isna(path) or not path: return None
                 if os.path.exists(path):
-                    with open(path, "rb") as f:
-                        encoded = base64.b64encode(f.read()).decode("utf-8")
-                        return f"data:image/jpeg;base64,{encoded}"
+                    with open(path, "rb") as f: return f"data:image/jpeg;base64,{base64.b64encode(f.read()).decode('utf-8')}"
                 return None
-            
             df['商品圖片'] = df['圖片路徑'].apply(get_image_base64)
-            cols = ['商品圖片', '編碼', '名稱', '類別', '品牌', '總庫存', '平均成本_RMB', '平均成本_TWD', '總庫存金額_RMB', '總庫存金額_TWD']
+            
+            # 準備欄位顯示順序
+            cols = ['商品圖片', '編碼', '名稱', '類別', '品牌', '總庫存'] + wh_cols + ['平均成本_RMB', '平均成本_TWD', '總庫存金額_RMB', '總庫存金額_TWD']
             filtered_df = df[cols].copy()
             
             if show_type == "僅顯示有庫存": filtered_df = filtered_df[filtered_df["總庫存"] > 0]
             elif show_type == "僅顯示缺貨": filtered_df = filtered_df[filtered_df["總庫存"] <= 0]
             
-            st.dataframe(
-                filtered_df, use_container_width=True, hide_index=True,
-                column_config={
-                    "商品圖片": st.column_config.ImageColumn("圖片"),
-                    "總庫存": st.column_config.NumberColumn("總庫存", format="%d 支"),
-                    "平均成本_RMB": st.column_config.NumberColumn("單支成本 (¥)", format="¥ %.2f"),
-                    "平均成本_TWD": st.column_config.NumberColumn("單支成本 (NT$)", format="$ %.2f"),
-                }
-            )
+            # 🌟 動態設定表格欄位 UI (自動為每個倉庫加上特殊圖示)
+            col_cfg = {
+                "商品圖片": st.column_config.ImageColumn("圖片"),
+                "總庫存": st.column_config.NumberColumn("🔥 總計", format="%d 支"),
+                "平均成本_RMB": st.column_config.NumberColumn("單支成本 (¥)", format="¥ %.2f"),
+                "平均成本_TWD": st.column_config.NumberColumn("單支成本 (NT$)", format="$ %.2f")
+            }
+            for w in wh_cols: col_cfg[w] = st.column_config.NumberColumn(f"📍 {w}", format="%d")
             
+            st.dataframe(filtered_df, use_container_width=True, hide_index=True, column_config=col_cfg)
+            
+            # 匯出報表
             from io import BytesIO
             output = BytesIO()
             with pd.ExcelWriter(output, engine='openpyxl') as writer:
                 filtered_df.drop(columns=['商品圖片']).to_excel(writer, index=False, sheet_name='Inventory')
-            
-            st.download_button(
-                label="💾 下載當前篩選庫存 Excel 報表", data=output.getvalue(),
-                file_name=f"inventory_report_{selected_wh}.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-            )
+            st.download_button("💾 下載當前篩選庫存報表", data=output.getvalue(), file_name=f"inventory_{selected_wh}.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
         # ==========================================
         # --- 🌟 Tab 2: 庫存批次明細維護 (修正與刪除) ---
@@ -923,6 +905,7 @@ elif menu == "採購管理":
                     st.rerun()
             except Exception as e:
                 st.error(f"❌ 批量解析匯入失敗：格式不正確或資料有誤。詳情：{str(e)}")
+                
 elif menu == "訂單明細":
     st.title("🧾 客戶訂單明細")
     if check_perm(role, "訂單明細", "can_view"):
@@ -948,76 +931,108 @@ elif menu == "權限管理":
         st.error("🚫 僅限總管理員訪問此頁面")
         st.stop()
         
-    st.info("💡 **操作說明**：\n"
-            "1. **新增帳號**：滑到表格最底下，點擊空白列即可新增。\n"
-            "2. **修改密碼**：直接將密碼刪除並輸入新密碼即可。\n"
-            "3. **刪除帳號**：點選表格左側的核取方塊，按下鍵盤 `Delete` 鍵即可刪除該列。\n"
-            "4. 修改完成後，請務必點擊下方的 **「儲存所有變更」** 按鈕。")
+    t_acct, t_perm = st.tabs(["👥 帳號基本資料管理", "⚙️ 細部模組權限配置"])
     
-    modules = ["商品訊息", "商品庫存", "採購管理", "訂單明細", "財務報表"]
-    
-    with get_db() as conn:
-        df_users = pd.read_sql("SELECT username, password, role FROM users", conn)
-        
-        # 🌟 讀取資料庫時，馬上把密碼解碼回明文，讓你在畫面上能直接看見！
-        df_users['password'] = df_users['password'].apply(decode_pw)
-        
-        for m in modules:
-            df_users[m] = df_users['role'].apply(lambda x: True if x == 'Admin' else (m in str(x)))
+    # === Tab A: 帳號管理 ===
+    with t_acct:
+        st.info("管理員工帳號與密碼，並可設定『暱稱 / 備註』以利系統日誌追蹤識別。")
+        with get_db() as conn:
+            df_users = pd.read_sql("SELECT username as 帳號, password as 密碼, nickname as 暱稱 FROM users", conn)
+            df_users['密碼'] = df_users['密碼'].apply(decode_pw)
             
-        df_display = df_users[['username', 'password'] + modules].copy()
-        df_display.rename(columns={'username': '帳號', 'password': '密碼'}, inplace=True)
-        
-        edited_df = st.data_editor(
-            df_display, 
-            num_rows="dynamic", 
-            use_container_width=True,
+        edited_users = st.data_editor(
+            df_users, num_rows="dynamic", use_container_width=True,
             column_config={
-                "帳號": st.column_config.TextColumn("👤 帳號 (必填不可重複)"),
-                "密碼": st.column_config.TextColumn("🔑 密碼 (此處顯示為明文)")
+                "帳號": st.column_config.TextColumn("👤 登入帳號 (必填不可重複)", required=True),
+                "密碼": st.column_config.TextColumn("🔑 密碼 (明文顯示)", required=True),
+                "暱稱": st.column_config.TextColumn("📝 暱稱 / 職稱備註")
             }
         )
         
-        if st.button("💾 確認儲存所有變更", type="primary", use_container_width=True):
-            try:
-                current_users = edited_df['帳號'].dropna().astype(str).tolist()
-                current_users = [u.strip() for u in current_users if u.strip() != '']
-                
-                if not current_users:
-                    st.error("❌ 系統至少需要保留一個帳號！")
-                elif 'admin' not in current_users:
-                    st.error("❌ 為了系統安全，禁止刪除預設的 'admin' 帳號！")
-                else:
-                    cursor = conn.cursor()
-                    
-                    placeholders = ','.join(['?'] * len(current_users))
-                    cursor.execute(f"DELETE FROM users WHERE username NOT IN ({placeholders})", current_users)
-                    
-                    for _, row in edited_df.iterrows():
-                        u_name = str(row['帳號']).strip()
-                        u_pwd = str(row['密碼']).strip()
+        if st.button("💾 儲存帳號基本資料", type="primary"):
+            current_users = edited_users['帳號'].dropna().astype(str).tolist()
+            current_users = [u.strip() for u in current_users if u.strip() != '']
+            
+            if 'admin' not in current_users:
+                st.error("❌ 系統防護：禁止刪除預設的 'admin' 總帳號！")
+            else:
+                try:
+                    with get_db() as conn:
+                        cursor = conn.cursor()
+                        placeholders = ','.join(['?'] * len(current_users))
+                        cursor.execute(f"DELETE FROM users WHERE username NOT IN ({placeholders})", current_users)
                         
-                        if not u_name or u_name == 'nan': 
-                            continue 
-                        
-                        # 🌟 寫回資料庫前，將你在畫面上看到的明文密碼再次隱藏編碼
-                        u_pwd_encoded = encode_pw(u_pwd)
+                        for _, row in edited_users.iterrows():
+                            u_name, u_pwd = str(row['帳號']).strip(), str(row['密碼']).strip()
+                            u_nick = str(row['暱稱']).strip() if pd.notna(row['暱稱']) else ""
+                            if not u_name or u_name == 'nan': continue
                             
-                        assigned_modules = [m for m in modules if row[m] == True]
-                        new_role_str = ",".join(assigned_modules)
-                        
-                        if u_name == 'admin':
-                            new_role_str = 'Admin'
+                            u_role = 'Admin' if u_name == 'admin' else 'CS'
+                            cursor.execute("""
+                                INSERT OR REPLACE INTO users (username, password, nickname, role) 
+                                VALUES (?, ?, ?, ?)
+                            """, (u_name, encode_pw(u_pwd), u_nick, u_role))
+                        conn.commit()
+                    st.success("✅ 帳號資料更新成功！")
+                    time.sleep(1)
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"❌ 儲存失敗發生異常：{str(e)}")
+
+    # === Tab B: 細部權限設定 ===
+    with t_perm:
+        st.info("💡 針對指定員工設定各模組權限。若勾選『全選/全開』並按下儲存，系統將自動開啟該模組所有權限。")
+        with get_db() as conn:
+            user_list = pd.read_sql("SELECT username, nickname FROM users WHERE username != 'admin'", conn)
+            
+        if user_list.empty:
+            st.warning("目前系統只有 admin 帳號，請先至『帳號基本資料管理』新增員工帳號。")
+        else:
+            # 製作友善的下拉選單選項 (帳號 - 暱稱)
+            user_options = [f"{r['username']} ({r['nickname']})" if r['nickname'] else r['username'] for _, r in user_list.iterrows()]
+            selected_str = st.selectbox("🔍 請選擇要設定權限的帳號：", user_options)
+            select_u = selected_str.split(" (")[0] # 取出純帳號
+            
+            modules = ["商品訊息", "商品庫存", "採購管理", "訂單明細", "財務報表"]
+            with get_db() as conn:
+                df_p = pd.read_sql("SELECT module, can_view, can_edit, can_upload, can_download FROM user_perms WHERE username=?", conn, params=(select_u,))
+                
+            # 建立該員工目前的權限陣列
+            perm_records = []
+            for m in modules:
+                match = df_p[df_p['module'] == m]
+                if not match.empty:
+                    perm_records.append({
+                        "模組": m,
+                        "👁️ 查看": bool(match.iloc[0]['can_view']),
+                        "✏️ 編輯": bool(match.iloc[0]['can_edit']),
+                        "📤 上傳": bool(match.iloc[0]['can_upload']),
+                        "📥 下載": bool(match.iloc[0]['can_download']),
+                        "🌟 全選/全開": False
+                    })
+                else:
+                    perm_records.append({"模組": m, "👁️ 查看": False, "✏️ 編輯": False, "📤 上傳": False, "📥 下載": False, "🌟 全選/全開": False})
+                    
+            df_edit_p = pd.DataFrame(perm_records)
+            edited_p = st.data_editor(df_edit_p, hide_index=True, use_container_width=True, column_config={"模組": st.column_config.TextColumn(disabled=True)})
+            
+            if st.button(f"💾 儲存 {select_u} 的細部權限", type="primary"):
+                with get_db() as conn:
+                    cursor = conn.cursor()
+                    cursor.execute("DELETE FROM user_perms WHERE username=?", (select_u,))
+                    
+                    for _, row in edited_p.iterrows():
+                        # 若勾選了全開，則覆蓋為全 True
+                        if row['🌟 全選/全開']:
+                            v, e, u, d = True, True, True, True
+                        else:
+                            v, e, u, d = row['👁️ 查看'], row['✏️ 編輯'], row['📤 上傳'], row['📥 下載']
                             
                         cursor.execute("""
-                            INSERT OR REPLACE INTO users (username, password, role) 
-                            VALUES (?, ?, ?)
-                        """, (u_name, u_pwd_encoded, new_role_str))
-                        
+                            INSERT INTO user_perms (username, module, can_view, can_edit, can_upload, can_download)
+                            VALUES (?, ?, ?, ?, ?, ?)
+                        """, (select_u, row['模組'], v, e, u, d))
                     conn.commit()
-                    st.success("✅ 帳號與所有權限配置已成功更新！")
-                    time.sleep(1.5)
-                    st.rerun()
-                    
-            except Exception as e:
-                st.error(f"❌ 儲存失敗發生異常：{str(e)}")
+                st.success(f"✅ 帳號 {select_u} 的顆粒化權限已生效！(被設定者需重新整理網頁方可套用)")
+                time.sleep(1.5)
+                st.rerun()
