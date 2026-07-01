@@ -514,7 +514,7 @@ elif menu == "商品庫存":
         st.error("🚫 您無權限訪問此模組")
 
 elif menu == "採購管理":
-   st.title("🛒 採購與進貨管理系統")
+    st.title("🛒 採購與進貨管理系統")
     
     if not check_perm(role, "採購管理", "can_view"):
         st.error("🚫 您無權限訪問此模組")
