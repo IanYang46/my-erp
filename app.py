@@ -122,12 +122,13 @@ if 'logged_in' not in st.session_state:
     
     if mode == "登入":
         with st.form("login_form"):
-            user = st.text_input("帳號")
-            pw = st.text_input("密碼", type="password")
+            # 🌟 加上 autocomplete="username" 與 "current-password"，喚醒瀏覽器自動記憶
+            user = st.text_input("帳號", autocomplete="username")
+            pw = st.text_input("密碼", type="password", autocomplete="current-password")
+            
             if st.form_submit_button("登入"):
                 with get_db() as conn:
                     cursor = conn.cursor()
-                    # 🌟 比對時，將輸入的密碼 encode 後去跟資料庫比對
                     cursor.execute("SELECT role FROM users WHERE username=? AND password=?", (user, encode_pw(pw)))
                     res = cursor.fetchone()
                     if res:
@@ -138,9 +139,10 @@ if 'logged_in' not in st.session_state:
                         
     else: 
         with st.form("register_form"):
-            new_user = st.text_input("設定新帳號")
-            new_pw = st.text_input("設定新密碼", type="password")
-            confirm_pw = st.text_input("確認密碼", type="password")
+            # 🌟 註冊時也加上 autocomplete，讓瀏覽器可以在註冊當下就幫忙記住密碼
+            new_user = st.text_input("設定新帳號", autocomplete="username")
+            new_pw = st.text_input("設定新密碼", type="password", autocomplete="new-password")
+            confirm_pw = st.text_input("確認密碼", type="password", autocomplete="new-password")
             
             if st.form_submit_button("註冊"):
                 if not new_user or not new_pw:
@@ -151,7 +153,6 @@ if 'logged_in' not in st.session_state:
                     try:
                         with get_db() as conn:
                             cursor = conn.cursor()
-                            # 🌟 註冊時，將新密碼 encode 後存入
                             cursor.execute("INSERT INTO users (username, password, role) VALUES (?, ?, ?)", 
                                            (new_user, encode_pw(new_pw), 'CS'))
                             conn.commit()
@@ -160,7 +161,6 @@ if 'logged_in' not in st.session_state:
                         st.error("❌ 該帳號名稱已被註冊，請更換一個。")
 
     st.stop()
-
 # --- 6. 側邊欄設計 ---
 st.sidebar.title("🏢 強盛集團 ERP")
 st.sidebar.info(f"👤 帳號: {st.session_state['user']} \n🔑 角色: {st.session_state['role']}")
