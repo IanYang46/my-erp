@@ -115,7 +115,7 @@ def init_db_v4():  # 🌟 升級為 v4
         
 init_db_v4()  # 🌟 執行 v4 初始化
 
-# --- 4. 權限檢查工具 ---
+# --- 🌟 【新增】庫存自動日誌工具 ---
 def log_inventory_change(operator, action_type, details):
     """自動記錄每一次的庫存修正與刪除軌跡，精確到秒"""
     with get_db() as conn:
@@ -124,6 +124,12 @@ def log_inventory_change(operator, action_type, details):
             VALUES (datetime('now', 'localtime'), ?, ?, ?)
         """, (operator, action_type, details))
         conn.commit()
+
+# --- 4. 權限檢查工具 (🌟 被你不小心刪掉的元凶就是它！) ---
+def check_perm(role_string, module, action=None):
+    if str(role_string) == "Admin":
+        return True
+    return module in str(role_string)
 
 # --- 5. 系統登入 ---
 if 'logged_in' not in st.session_state:
@@ -186,7 +192,7 @@ menu = st.sidebar.radio(
     ["首頁", "商品訊息", "商品庫存", "採購管理", "訂單明細", "財務報表", "權限管理"],
     key="main_menu"
 )
-role = st.session_state['role']
+role = st.session_state['role']  # 🌟 這行負責把登入者的權限抓出來給下面用
 
 # --- 7. 各大模組骨架預覽 ---
 
