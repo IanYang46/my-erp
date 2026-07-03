@@ -4,6 +4,7 @@ import pandas as pd
 import os
 import time
 import base64  # 🌟 改用 base64，這是可逆的編碼套件
+import requests  # 🌟 新增：用於向 API 查詢 IP 的地理位置
 
 # --- 密碼編解碼工具 ---
 def encode_pw(pw):
@@ -73,7 +74,14 @@ def init_db_v5():  # 🌟 升級為 v5
             for w in ['台灣黃興-商品', '東莞熙元-商品', '台灣黃興-樣品', '退換貨倉']:
                 cursor.execute("INSERT OR IGNORE INTO warehouses (name) VALUES (?)", (w,))
                 
-        cursor.execute('''CREATE TABLE IF NOT EXISTS inventory_logs (id INTEGER PRIMARY KEY AUTOINCREMENT, timestamp TEXT, operator TEXT, action_type TEXT, details TEXT)''')
+        # 🌟 新增：建立登入歷史紀錄表格
+        cursor.execute('''CREATE TABLE IF NOT EXISTS login_logs (
+                            id INTEGER PRIMARY KEY AUTOINCREMENT,
+                            username TEXT,
+                            login_time TEXT,
+                            ip TEXT,
+                            location TEXT,
+                            device TEXT)''')
         
         # 7. 建立預設 Admin 帳號 
         cursor.execute("INSERT OR IGNORE INTO users (username, password, nickname, role) VALUES ('admin', ?, '總管理員', 'Admin')", (encode_pw('123456'),))
@@ -85,6 +93,47 @@ init_db_v5()
 def log_inventory_change(operator, action_type, details):
     with get_db() as conn:
         conn.execute("INSERT INTO inventory_logs (timestamp, operator, action_type, details) VALUES (datetime('now', 'localtime'), ?, ?, ?)", (operator, action_type, details))
+        conn.commit()
+
+# --- 🌟 新增：自動抓取並記錄登入歷程工具 ---
+def log_login_event(username):
+    """自動分析登入者的 IP、設備 User-Agent 並透過 API 查出地理位置，存入資料庫"""
+    # 1. 透過 Streamlit 內建上下文抓取瀏覽器標頭資訊
+    try:
+        headers = st.context.headers
+        # 在雲端平台(如 Streamlit Cloud)，真正的客戶端 IP 通常藏在 X-Forwarded-For 中
+        ip_raw = headers.get("X-Forwarded-For", "127.0.0.1")
+        ip = ip_raw.split(",")[0].strip() # 若有多個代理 IP，取第一個真正的客戶 IP
+        device = headers.get("User-Agent", "未知裝置/瀏覽器")
+    except Exception:
+        ip = "127.0.0.1"
+        device = "本地運行環境/無法辨識裝置"
+
+    # 2. 根據 IP 判定地理位置 (排除本地端測試)
+    location = "未知地點"
+    if ip and ip != "127.0.0.1" and not ip.startswith("192.168.") and not ip.startswith("10."):
+        try:
+            # 使用免費免金鑰的地理定位 API (回傳繁體中文)
+            response = requests.get(f"http://ip-api.com/json/{ip}?lang=zh-TW", timeout=5).json()
+            if response.get("status") == "success":
+                country = response.get("country", "")
+                region = response.get("regionName", "")
+                city = response.get("city", "")
+                location = f"{country} · {region} ({city})"
+            else:
+                location = "內部/私人網路區間"
+        except Exception:
+            location = "地理定位查詢超時"
+    else:
+        location = "區域網路/本機端測試 (Localhost)"
+
+    # 3. 寫入資料庫
+    current_time = time.strftime('%Y-%m-%d %H:%M:%S')
+    with get_db() as conn:
+        conn.execute(
+            "INSERT INTO login_logs (username, login_time, ip, location, device) VALUES (?, ?, ?, ?, ?)",
+            (username, current_time, ip, location, device)
+        )
         conn.commit()
 
 # --- 🌟 4. 全新顆粒化權限檢查工具 ---
@@ -127,6 +176,10 @@ if 'logged_in' not in st.session_state:
                             'logged_in': True, 'role': user_role, 'user': user, 
                             'nickname': user_nick if user_nick else user, 'perms': perm_dict
                         })
+                        
+                        # 🌟 新增：登入成功，立刻在後台默默抓取資訊並寫入歷程表
+                        log_login_event(user)
+                        
                         st.rerun()
                     else:
                         st.error("帳號或密碼錯誤！")
@@ -931,7 +984,8 @@ elif menu == "權限管理":
         st.error("🚫 僅限總管理員訪問此頁面")
         st.stop()
         
-    t_acct, t_perm = st.tabs(["👥 帳號基本資料管理", "⚙️ 細部模組權限配置"])
+    # 🌟 修改：將原本的兩個分頁，擴充加入第三個分頁「📜 帳號登入歷程紀錄」
+    t_acct, t_perm, t_login_log = st.tabs(["👥 帳號基本資料管理", "⚙️ 細部模組權限配置", "📜 帳號登入歷程紀錄"])
     
     # === Tab A: 帳號管理 ===
     with t_acct:
@@ -1036,3 +1090,40 @@ elif menu == "權限管理":
                 st.success(f"✅ 帳號 {select_u} 的顆粒化權限已生效！(被設定者需重新整理網頁方可套用)")
                 time.sleep(1.5)
                 st.rerun()
+                
+                
+    # === 🌟 全新新增 Tab C: 登入歷程牆 ===
+    with t_login_log:
+        st.subheader("📋 員工系統登入審計安全日誌")
+        st.write("此處會即時顯示所有使用者（包含管理員與員工）的登入軌跡，防範帳號遭盜用或異常跨國登入。")
+        
+        with get_db() as conn:
+            # 撈出最新的 200 筆登入歷史，按照時間從新到舊排序
+            df_login_data = pd.read_sql("""
+                SELECT username as 登入帳號, login_time as 登入時間, 
+                       ip as "IP 位址", location as 解析地點, device as "操作裝置 / 瀏覽器環境"
+                FROM login_logs 
+                ORDER BY id DESC 
+                LIMIT 200
+            """, conn)
+            
+        if df_login_data.empty:
+            st.info("✨ 目前系統尚無任何登入歷程紀錄。")
+        else:
+            # 使用大表格精美呈現，並將寬度自動拉滿
+            st.dataframe(
+                df_login_data, 
+                use_container_width=True, 
+                hide_index=True
+            )
+            # 貼心提供歷程下載備份功能
+            from io import BytesIO
+            output_log = BytesIO()
+            with pd.ExcelWriter(output_log, engine='openpyxl') as writer:
+                df_login_data.to_excel(writer, index=False, sheet_name='Login_Logs')
+            st.download_button(
+                label="📥 下載完整登入歷程備份 (Excel 格式)",
+                data=output_log.getvalue(),
+                file_name=f"login_audit_logs_{time.strftime('%Y%m%d')}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            )
