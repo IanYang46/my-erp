@@ -5,8 +5,6 @@ import os
 import time
 import base64  # 🌟 改用 base64，這是可逆的編碼套件
 import requests  # 🌟 新增：用於向 API 查詢 IP 的地理位置
-
-# 👇 新增下面這兩行 👇
 import datetime
 import extra_streamlit_components as stx
 
@@ -169,15 +167,16 @@ def check_perm(role_string, module, action="can_view"):
     return bool(mod_perms.get(action, False))
 
 # --- 5. 系統登入 ---
-# --- 🌟 初始化 Cookie 管理器 (處理跨網頁關閉自動登入) ---
+# --- 🌟 初始化 Cookie 管理器 ---
 cookie_manager = stx.CookieManager(key="cookie_manager")
 
-# 👇 🌟 新增這兩行「煞車機制」：強制等待瀏覽器回傳資料 👇
-if cookie_manager.get_all() is None:
-    st.stop()
-# 👆 新增結束 👆
+# 👇 🌟 終極殺手鐧：強迫系統在剛打開網頁時「等待 0.5 秒並重整一次」，確保 100% 抓到瀏覽器的 Cookie 👇
+if 'cookie_synced' not in st.session_state:
+    st.session_state['cookie_synced'] = True
+    time.sleep(0.5)
+    st.rerun()
+# 👆 殺手鐧結束 👆
 
-# --- 5. 系統登入與超時自動登出機制 (支援關閉網頁保持狀態) ---
 TIMEOUT_SECONDS = 3 * 3600  # 核心設定：3 小時完全無動作即判定超時 (3小時 * 3600秒)
 
 # 1. 狀況 A：如果目前已經在登入狀態中，持續監控當前操作是否超時，並即時同步至資料庫
@@ -190,7 +189,7 @@ if 'logged_in' in st.session_state and st.session_state['logged_in']:
         username_to_clear = st.session_state.get('user')
         st.session_state.clear()
         if cookie_manager.get('erp_auto_login'):
-            cookie_manager.delete('erp_auto_login')
+            cookie_manager.delete('erp_auto_login', key="del_cookie_timeout")
         with get_db() as conn:
             conn.execute("UPDATE users SET last_active = 0 WHERE username = ?", (username_to_clear,))
             conn.commit()
@@ -235,7 +234,7 @@ if 'logged_in' not in st.session_state:
                     st.rerun()
                 else:
                     # 雖然有 Cookie 但在關閉網頁期間已經失聯超過 3 小時，無情抹除 Cookie 要求重新密碼登入
-                    cookie_manager.delete('erp_auto_login')
+                    cookie_manager.delete('erp_auto_login', key="del_cookie_expired")
 
 # 3. 狀況 C：完全未登入或已超時，顯示傳統登入介面
 if 'logged_in' not in st.session_state:
@@ -248,7 +247,7 @@ if 'logged_in' not in st.session_state:
             user = st.text_input("帳號", autocomplete="username")
             pw = st.text_input("密碼", type="password", autocomplete="current-password")
             
-            keep_logged_in = st.checkbox("保持登入狀態", value=True)
+            keep_logged_in = st.checkbox("保持登入狀態 (關閉分頁免密碼，閒置 3 小時才登出)", value=True)
             
             if st.form_submit_button("登入"):
                 with get_db() as conn:
@@ -271,14 +270,15 @@ if 'logged_in' not in st.session_state:
                         
                         # 登入成功立刻把時間打入資料庫
                         cursor.execute("UPDATE users SET last_active = ? WHERE username = ?", (current_now, user))
-                        
-                        # 如果勾選保持登入，派發一個最長可存活一週的實體 Cookie，防止關閉網頁時被清除
-                        if keep_logged_in:
-                            far_future = datetime.datetime.now() + datetime.timedelta(days=7)
-                            cookie_manager.set('erp_auto_login', user, expires_at=far_future)
-                            time.sleep(0.5)
-                        
                         conn.commit()
+                        
+                        # 🌟 修正：改用 max_age=604800 (相對時間 7 天)，徹底避免 Python 與瀏覽器之間的時區衝突
+                        if keep_logged_in:
+                            cookie_manager.set('erp_auto_login', user, key="set_cookie_login", max_age=604800)
+                        else:
+                            cookie_manager.set('erp_auto_login', user, key="set_cookie_login")
+                        
+                        time.sleep(0.5) # 確保前端寫入 Cookie
                         log_login_event(user)
                         st.rerun()
                     else:
@@ -316,7 +316,7 @@ if st.sidebar.button("登出系統", use_container_width=True):
     username_to_clear = st.session_state.get('user')
     st.session_state.clear()
     if cookie_manager.get('erp_auto_login'):
-        cookie_manager.delete('erp_auto_login')
+        cookie_manager.delete('erp_auto_login', key="del_cookie_manual")
     with get_db() as conn:
         conn.execute("UPDATE users SET last_active = 0 WHERE username = ?", (username_to_clear,))
         conn.commit()
