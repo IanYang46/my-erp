@@ -170,11 +170,12 @@ def check_perm(role_string, module, action="can_view"):
 # --- 🌟 初始化 Cookie 管理器 ---
 cookie_manager = stx.CookieManager(key="cookie_manager")
 
-# 👇 🌟 終極殺手鐧：強迫系統在剛打開網頁時「等待 0.5 秒並重整一次」，確保 100% 抓到瀏覽器的 Cookie 👇
+# 👇 🌟 終極殺手鐧：強迫系統在剛打開網頁時等待，確保抓到瀏覽器的 Cookie 👇
 if 'cookie_synced' not in st.session_state:
-    st.session_state['cookie_synced'] = True
-    time.sleep(0.5)
-    st.rerun()
+    with st.spinner("🔄 正在安全驗證連線與同步環境..."):
+        st.session_state['cookie_synced'] = True
+        time.sleep(1)  # 放寬至 1 秒，確保手機 APP (較慢) 的 Webview 也能成功掛載
+        st.rerun()
 # 👆 殺手鐧結束 👆
 
 TIMEOUT_SECONDS = 3 * 3600  # 核心設定：3 小時完全無動作即判定超時 (3小時 * 3600秒)
@@ -272,11 +273,11 @@ if 'logged_in' not in st.session_state:
                         cursor.execute("UPDATE users SET last_active = ? WHERE username = ?", (current_now, user))
                         conn.commit()
                         
-                        # 🌟 修正：改用 max_age=604800 (相對時間 7 天)，徹底避免 Python 與瀏覽器之間的時區衝突
+                        # 🌟 修正：加入 max_age、same_site="none" 與 secure=True 突破 Chrome/APP 的安全封鎖
                         if keep_logged_in:
-                            cookie_manager.set('erp_auto_login', user, key="set_cookie_login", max_age=604800)
+                            cookie_manager.set('erp_auto_login', user, key="set_cookie_login", max_age=604800, same_site="none", secure=True)
                         else:
-                            cookie_manager.set('erp_auto_login', user, key="set_cookie_login")
+                            cookie_manager.set('erp_auto_login', user, key="set_cookie_login", same_site="none", secure=True)
                         
                         time.sleep(0.5) # 確保前端寫入 Cookie
                         log_login_event(user)
