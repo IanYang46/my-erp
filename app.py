@@ -22,6 +22,18 @@ def decode_pw(pw_encoded):
 if not os.path.exists("product_images"): os.makedirs("product_images")
 st.set_page_config(page_title="強盛集團 ERP", layout="wide", initial_sidebar_state="expanded")
 
+# 👇 新增這段隱藏 Streamlit 預設 UI 的語法 👇
+hide_st_style = """
+            <style>
+            #MainMenu {visibility: hidden;} /* 隱藏右上角漢堡選單 */
+            footer {visibility: hidden;}    /* 隱藏底部 Made with Streamlit 浮水印 */
+            header {visibility: hidden;}    /* 隱藏頂部預設 header (避免出現 Deploy 按鈕) */
+            [data-testid="stToolbar"] {display: none;} /* 徹底隱藏右上角工具列 */
+            </style>
+            """
+st.markdown(hide_st_style, unsafe_allow_html=True)
+# 👆 新增結束 👆
+
 # --- 2. 穩定的資料庫連線 ---
 def get_db():
     return sqlite3.connect("powerful_group.db", timeout=30, check_same_thread=False)
