@@ -6,6 +6,10 @@ import time
 import base64  # 🌟 改用 base64，這是可逆的編碼套件
 import requests  # 🌟 新增：用於向 API 查詢 IP 的地理位置
 
+# 👇 新增下面這兩行 👇
+import datetime
+import extra_streamlit_components as stx
+
 # --- 密碼編解碼工具 ---
 def encode_pw(pw):
     """將密碼編碼隱藏 (存入資料庫時使用)"""
@@ -163,6 +167,53 @@ def check_perm(role_string, module, action="can_view"):
     return bool(mod_perms.get(action, False))
 
 # --- 5. 系統登入 ---
+# --- 🌟 新增：初始化 Cookie 管理器 (處理自動登入) ---
+cookie_manager = stx.CookieManager(key="cookie_manager")
+
+# --- 5. 系統登入與超時自動登出機制 ---
+TIMEOUT_SECONDS = 3 * 3600  # 設定 3 小時無動作即登出 (3小時 * 3600秒)
+
+# 1. 檢查是否已經登入，並判定是否閒置過久
+if 'logged_in' in st.session_state and st.session_state['logged_in']:
+    last_active = st.session_state.get('last_active', time.time())
+    
+    # 閒置超過 3 小時，執行強制登出
+    if time.time() - last_active > TIMEOUT_SECONDS:
+        st.session_state.clear()
+        if cookie_manager.get('erp_auto_login'):
+            cookie_manager.delete('erp_auto_login')
+            time.sleep(0.5) # 給前端一點時間清除 Cookie
+        st.warning("⚠️ 由於長時間未操作，為保護系統安全，已為您自動登出。")
+        time.sleep(2)
+        st.rerun()
+    else:
+        # 有任何短時間操作，刷新最後活躍時間
+        st.session_state['last_active'] = time.time()
+
+# 2. 若未登入，嘗試從 Cookie 自動登入
+if 'logged_in' not in st.session_state:
+    auto_login_user = cookie_manager.get(cookie="erp_auto_login")
+    if auto_login_user:
+        with get_db() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT role, nickname FROM users WHERE username=?", (auto_login_user,))
+            res = cursor.fetchone()
+            if res:
+                user_role, user_nick = res[0], res[1]
+                cursor.execute("SELECT module, can_view, can_edit, can_upload, can_download FROM user_perms WHERE username=?", (auto_login_user,))
+                perms_data = cursor.fetchall()
+                perm_dict = {row[0]: {'can_view': bool(row[1]), 'can_edit': bool(row[2]), 'can_upload': bool(row[3]), 'can_download': bool(row[4])} for row in perms_data}
+                
+                st.session_state.update({
+                    'logged_in': True, 'role': user_role, 'user': auto_login_user, 
+                    'nickname': user_nick if user_nick else auto_login_user, 'perms': perm_dict,
+                    'last_active': time.time() # 登入當下紀錄時間
+                })
+                st.toast("👋 歡迎回來！已為您自動登入。")
+                time.sleep(1)
+                st.rerun()
+
+# 3. 系統登入表單介面
 if 'logged_in' not in st.session_state:
     st.title("📦 強盛集團 | ERP 系統")
     
@@ -173,32 +224,37 @@ if 'logged_in' not in st.session_state:
             user = st.text_input("帳號", autocomplete="username")
             pw = st.text_input("密碼", type="password", autocomplete="current-password")
             
+            # 🌟 新增：保持登入核取方塊
+            keep_logged_in = st.checkbox("保持登入 (3 小時內免重新輸入密碼)")
+            
             if st.form_submit_button("登入"):
                 with get_db() as conn:
                     cursor = conn.cursor()
-                    # 🌟 登入時一併抓取暱稱與細部權限
                     cursor.execute("SELECT role, nickname FROM users WHERE username=? AND password=?", (user, encode_pw(pw)))
                     res = cursor.fetchone()
                     if res:
                         user_role, user_nick = res[0], res[1]
                         
-                        # 撈取該使用者的四維權限表
                         cursor.execute("SELECT module, can_view, can_edit, can_upload, can_download FROM user_perms WHERE username=?", (user,))
                         perms_data = cursor.fetchall()
                         perm_dict = {row[0]: {'can_view': bool(row[1]), 'can_edit': bool(row[2]), 'can_upload': bool(row[3]), 'can_download': bool(row[4])} for row in perms_data}
                         
                         st.session_state.update({
                             'logged_in': True, 'role': user_role, 'user': user, 
-                            'nickname': user_nick if user_nick else user, 'perms': perm_dict
+                            'nickname': user_nick if user_nick else user, 'perms': perm_dict,
+                            'last_active': time.time()
                         })
                         
-                        # 🌟 新增：登入成功，立刻在後台默默抓取資訊並寫入歷程表
-                        log_login_event(user)
+                        # 🌟 如果有勾選，將帳號寫入 Cookie
+                        if keep_logged_in:
+                            expire_time = datetime.datetime.now() + datetime.timedelta(hours=3)
+                            cookie_manager.set('erp_auto_login', user, expires_at=expire_time)
+                            time.sleep(0.5) # 確保 Cookie 有寫入前端
                         
+                        log_login_event(user)
                         st.rerun()
                     else:
                         st.error("帳號或密碼錯誤！")
-                        
     else: 
         with st.form("register_form"):
             new_user = st.text_input("設定新帳號", autocomplete="username")
@@ -227,8 +283,12 @@ st.sidebar.title("🏢 強盛集團 ERP")
 show_name = st.session_state.get('nickname', st.session_state['user'])
 st.sidebar.info(f"👤 登入者: {show_name} \n🔑 權限組: {st.session_state['role']}")
 
+# 👇 更改登出按鈕邏輯，登出時一併刪除 Cookie 👇
 if st.sidebar.button("登出系統", use_container_width=True): 
     st.session_state.clear()
+    if cookie_manager.get('erp_auto_login'):
+        cookie_manager.delete('erp_auto_login')
+        time.sleep(0.5) # 給前端一點時間清除 Cookie
     st.rerun()
 
 st.sidebar.divider()
