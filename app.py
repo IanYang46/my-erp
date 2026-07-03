@@ -697,18 +697,20 @@ elif menu == "採購管理":
     with tab1:
         st.subheader("✍️ 建立新採購單單據")
         
-        # 🌟 新增權限阻擋：沒有編輯權限不能建單
         if not check_perm(role, "採購管理", "can_edit"):
             st.warning("🔒 您的權限無法新增採購單。")
         else:
             with get_db() as conn:
-                prod_df = pd.read_sql("SELECT 編碼, 名稱 FROM products ORDER BY 編碼 ASC", conn)
+                # 🌟 這裡修改了：多撈取「圖片路徑」
+                prod_df = pd.read_sql("SELECT 編碼, 名稱, 圖片路徑 FROM products ORDER BY 編碼 ASC", conn)
                 wh_df = pd.read_sql("SELECT name FROM warehouses", conn) 
                 
-            valid_product_codes = prod_df['編碼'].tolist()
+            # 🌟 這裡修改了：將編碼與名稱合併成新陣列，方便下拉選單辨識防呆
+            prod_df['顯示選單'] = prod_df['編碼'] + " | " + prod_df['名稱']
+            valid_product_options = prod_df['顯示選單'].tolist()
             valid_warehouses = wh_df['name'].tolist() 
             
-            if not valid_product_codes:
+            if not valid_product_options:
                 st.warning("⚠️ 目前商品訊息庫中沒有任何商品資料，請先至『商品訊息』建立基本商品再進行採購。")
             elif not valid_warehouses:
                 st.warning("⚠️ 系統偵測不到任何倉庫！請先至『商品庫存』分頁建立至少一個倉庫位置。")
@@ -719,20 +721,46 @@ elif menu == "採購管理":
                 warehouse_input = col_m3.selectbox("購入的倉庫", valid_warehouses)
                 staff_input = col_m4.text_input("採購人員", value=st.session_state.get('user', 'admin'))
                 
-                st.write("📌 **請於下方表格中新增採購品項及金額：**")
+                st.write("📌 **請於下方表格中挑選採購品項及金額：**")
                 
-                if "po_editor_df" not in st.session_state:
-                    st.session_state.po_editor_df = pd.DataFrame(columns=["商品編碼", "數量", "人民幣單價"])
+                # 🌟 更新 session_state key，避免舊的欄位名稱打架報錯
+                if "po_editor_df_v2" not in st.session_state:
+                    st.session_state.po_editor_df_v2 = pd.DataFrame(columns=["挑選商品", "數量", "人民幣單價"])
                     
                 edited_items = st.data_editor(
-                    st.session_state.po_editor_df, num_rows="dynamic", use_container_width=True, key="po_items_editor",
+                    st.session_state.po_editor_df_v2, num_rows="dynamic", use_container_width=True, key="po_items_editor_v2",
                     column_config={
-                        "商品編碼": st.column_config.SelectboxColumn("📦 選擇商品編碼", options=valid_product_codes, required=True),
+                        "挑選商品": st.column_config.SelectboxColumn("📦 選擇商品 (編碼 | 名稱)", options=valid_product_options, required=True),
                         "數量": st.column_config.NumberColumn("🔢 採購數量", min_value=1, step=1, default=1),
                         "人民幣單價": st.column_config.NumberColumn("💰 人民幣單價 (RMB)", min_value=0.0, step=0.01, default=0.0)
                     }
                 )
                 
+                # ==========================================
+                # 🌟 全新實裝：即時圖片預覽防呆牆
+                # ==========================================
+                if not edited_items.empty and not edited_items["挑選商品"].isnull().all():
+                    st.write("🖼️ **已選商品圖片確認區** (預防選錯防呆)")
+                    preview_cols = st.columns(6) # 橫向排 6 個，超出會自動換行
+                    col_idx = 0
+                    for _, row in edited_items.iterrows():
+                        if pd.notna(row['挑選商品']) and str(row['挑選商品']).strip():
+                            # 將 "編碼 | 名稱" 拆開，只拿回最前面的純編碼
+                            raw_code = str(row['挑選商品']).split(" | ")[0].strip()
+                            matching_row = prod_df[prod_df['編碼'] == raw_code]
+                            
+                            if not matching_row.empty:
+                                img_path = matching_row['圖片路徑'].values[0]
+                                with preview_cols[col_idx % 6]:
+                                    st.markdown(f"<div style='text-align:center; font-size:14px; font-weight:bold;'>{raw_code}</div>", unsafe_allow_html=True)
+                                    if img_path and os.path.exists(img_path):
+                                        st.image(img_path, use_container_width=True)
+                                    else:
+                                        st.info("無圖片")
+                                col_idx += 1
+                    st.write("") 
+                    
+                # 計算總計
                 if not edited_items.empty:
                     edited_items['數量'] = pd.to_numeric(edited_items['數量']).fillna(0).astype(int)
                     edited_items['人民幣單價'] = pd.to_numeric(edited_items['人民幣單價']).fillna(0.0)
@@ -766,15 +794,17 @@ elif menu == "採購管理":
                                 """, (order_id, str(date_input), supplier_input.strip(), total_qty, total_rmb, total_twd, warehouse_input, staff_input))
                                 
                                 for _, row in edited_items.iterrows():
-                                    if str(row['商品編碼']).strip() and row['數量'] > 0:
+                                    if pd.notna(row['挑選商品']) and str(row['挑選商品']).strip() and row['數量'] > 0:
+                                        # 🌟 儲存時自動把 "編碼 | 名稱" 拆卸，只把純編碼寫入資料庫確保整潔
+                                        raw_code = str(row['挑選商品']).split(" | ")[0].strip()
                                         item_total_rmb = int(row['數量']) * float(row['人民幣單價'])
                                         cursor.execute("""
                                             INSERT INTO procurement_items (order_id, code, qty, unit_price_rmb, total_price_rmb)
                                             VALUES (?, ?, ?, ?, ?)
-                                        """, (order_id, str(row['商品編碼']), int(row['數量']), float(row['人民幣單價']), item_total_rmb))
+                                        """, (order_id, raw_code, int(row['數量']), float(row['人民幣單價']), item_total_rmb))
                                 conn.commit()
                             st.success(f"✅ 採購單 【{order_id}】 建立並保存成功！請至核對頁面辦理點收。")
-                            st.session_state.po_editor_df = pd.DataFrame(columns=["商品編碼", "數量", "人民幣單價"]) 
+                            st.session_state.po_editor_df_v2 = pd.DataFrame(columns=["挑選商品", "數量", "人民幣單價"]) 
                             time.sleep(1.5)
                             st.rerun()
                         except Exception as e:
@@ -830,7 +860,6 @@ elif menu == "採購管理":
                         
                 if order_meta['狀態'] == '待驗收':
                     st.write("")
-                    # 🌟 新增權限阻擋：沒有編輯權限不能點收
                     if check_perm(role, "採購管理", "can_edit"):
                         if st.button(f"🚚 點收完成！確認將單號 {selected_po} 的商品數量正式撥入『商品庫存』", type="primary", use_container_width=True):
                             try:
@@ -860,7 +889,6 @@ elif menu == "採購管理":
     with tab3:
         st.subheader("📤 導出公司完整採購報表")
         
-        # 🌟 新增權限阻擋：導出
         if not check_perm(role, "採購管理", "can_download"):
             st.warning("🔒 您沒有下載採購報表的權限。")
         else:
@@ -893,7 +921,6 @@ elif menu == "採購管理":
         st.divider()
         st.subheader("📥 導入外部採購單資料")
         
-        # 🌟 新增權限阻擋：導入
         if not check_perm(role, "採購管理", "can_upload"):
             st.warning("🔒 您沒有上傳外部採購單的權限。")
         else:
