@@ -87,12 +87,28 @@ def init_db_v5():  # 🌟 升級為 v5
         cursor.execute("INSERT OR IGNORE INTO users (username, password, nickname, role) VALUES ('admin', ?, '總管理員', 'Admin')", (encode_pw('123456'),))
         conn.commit()
         
+        # 🌟 8. 新增：商品變動日誌表
+        cursor.execute('''CREATE TABLE IF NOT EXISTS product_logs (
+                            id INTEGER PRIMARY KEY AUTOINCREMENT,
+                            timestamp TEXT,
+                            operator TEXT,
+                            action_type TEXT,
+                            details TEXT)''')
+        
+        conn.commit()
+        
 init_db_v5()
 
 # --- 庫存自動日誌工具 ---
 def log_inventory_change(operator, action_type, details):
     with get_db() as conn:
         conn.execute("INSERT INTO inventory_logs (timestamp, operator, action_type, details) VALUES (datetime('now', 'localtime'), ?, ?, ?)", (operator, action_type, details))
+        conn.commit()
+        
+# --- 🌟 新增：商品自動日誌工具 ---
+def log_product_change(operator, action_type, details):
+    with get_db() as conn:
+        conn.execute("INSERT INTO product_logs (timestamp, operator, action_type, details) VALUES (datetime('now', 'localtime'), ?, ?, ?)", (operator, action_type, details))
         conn.commit()
 
 # --- 🌟 新增：自動抓取並記錄登入歷程工具 ---
@@ -239,8 +255,12 @@ if menu == "首頁":
 elif menu == "商品訊息":
     st.title("📦 商品訊息管理")
     
+    # 取得當前操作者帳號，準備寫入日誌
+    current_operator = st.session_state.get('user', 'admin')
+    
     if check_perm(role, "商品訊息", "can_view"):
-        tab1, tab2, tab3 = st.tabs(["📋 列表瀏覽與編輯", "➕ 新增商品", "📁 批次作業"])
+        # 🌟 新增第四個分頁：變動歷程日誌
+        tab1, tab2, tab3, tab4 = st.tabs(["📋 列表瀏覽與編輯", "➕ 新增商品", "📁 批次作業", "📜 變動歷程日誌"])
         
         with tab1:
             if 'edit_item_code' not in st.session_state:
@@ -269,21 +289,35 @@ elif menu == "商品訊息":
                         filtered_df = filtered_df[filtered_df["品牌"] == selected_brand]
                     
                     st.divider()
-                    st.caption(f"📊 顯示結果：共找到 {len(filtered_df)} 筆符合條件的商品")
+                    
+                    # 🌟 實裝：批量刪除功能區塊
+                    c_info, c_batch = st.columns([1, 1])
+                    c_info.caption(f"📊 顯示結果：共找到 {len(filtered_df)} 筆符合條件的商品")
+                    
+                    if check_perm(role, "商品訊息", "can_edit") and not filtered_df.empty:
+                        with c_batch.expander("🗑️ 展開批量刪除工具"):
+                            del_list = st.multiselect("請選擇要刪除的商品編碼：", filtered_df['編碼'].tolist())
+                            if st.button("🚨 執行批量刪除", type="primary", use_container_width=True) and del_list:
+                                with get_db() as conn:
+                                    placeholders = ','.join(['?'] * len(del_list))
+                                    conn.execute(f"DELETE FROM products WHERE 編碼 IN ({placeholders})", del_list)
+                                    conn.commit()
+                                # 寫入日誌
+                                log_product_change(current_operator, "批量刪除", f"移除了 {len(del_list)} 筆商品：{', '.join(del_list)}")
+                                st.success(f"✅ 已成功批量刪除 {len(del_list)} 筆商品！")
+                                time.sleep(1.5)
+                                st.rerun()
                     
                     if filtered_df.empty:
                         st.warning("沒有符合此篩選條件的商品，請嘗試其他組合。")
                     else:
                         for _, row in filtered_df.iterrows():
                             with st.container(border=True):
-                                # 🌟 微調欄位比例 [2, 3, 5, 2]，給圖片與備註更多空間
                                 img_col, info_col, remark_col, action_col = st.columns([2, 3, 5, 2])
                                 
-                                # 🌟 移除固定 width=120，改用 use_container_width=True 填滿框架
                                 if row['圖片路徑'] and os.path.exists(row['圖片路徑']):
                                     img_col.image(row['圖片路徑'], use_container_width=True)
                                 else:
-                                    # 讓無圖的提示字體居中且美觀
                                     img_col.markdown("<div style='text-align:center; color:gray; padding-top:20px;'>📷 暫無圖片</div>", unsafe_allow_html=True)
                                     
                                 info_col.subheader(f"🆔 {row['編碼']}")
@@ -304,6 +338,10 @@ elif menu == "商品訊息":
                                             with get_db() as conn:
                                                 conn.execute("DELETE FROM products WHERE 編碼=?", (row['編碼'],))
                                                 conn.commit()
+                                            
+                                            # 寫入單筆刪除日誌
+                                            log_product_change(current_operator, "單筆刪除", f"移除了商品：{row['編碼']} - {row['名稱']}")
+                                            
                                             st.toast(f"已成功刪除商品：{row['編碼']}！")
                                             time.sleep(1)
                                             st.rerun()
@@ -342,6 +380,13 @@ elif menu == "商品訊息":
                                              (edit_cat, edit_brand, edit_name, edit_remark, new_path, edit_code))
                                 conn.commit()
                             
+                            # 寫入編輯日誌
+                            log_msg = f"更新了商品 {edit_code} 資料。"
+                            if edit_name != target[2]: log_msg += f" 名稱: {target[2]} ➔ {edit_name}。"
+                            if edit_cat != target[0]: log_msg += f" 類別: {target[0]} ➔ {edit_cat}。"
+                            if edit_brand != target[1]: log_msg += f" 品牌: {target[1]} ➔ {edit_brand}。"
+                            log_product_change(current_operator, "編輯商品", log_msg)
+                            
                             st.success(f"✅ 商品 {edit_code} 資料已成功更新！")
                             st.session_state['edit_item_code'] = None
                             time.sleep(1.5)
@@ -372,6 +417,9 @@ elif menu == "商品訊息":
                                     conn.execute("INSERT INTO products (編碼, 類別, 品牌, 名稱, 備註, 圖片路徑) VALUES (?,?,?,?,?,?)",
                                                  (code, category, brand, name, remark, path))
                                     conn.commit()
+                                
+                                # 寫入新增日誌
+                                log_product_change(current_operator, "新增單筆", f"建檔了新商品：{code} - {name} (品牌: {brand})")
                                 
                                 st.success(f"🎉 成功新增商品：【{code}】 {name}！")
                                 time.sleep(1.5)
@@ -421,11 +469,49 @@ elif menu == "商品訊息":
                                 cursor.execute("INSERT OR REPLACE INTO products (編碼, 類別, 品牌, 名稱, 備註, 圖片路徑) VALUES (?,?,?,?,?,?)",
                                                (str(row["編碼"]), str(row["類別"]), str(row["品牌"]), str(row["名稱"]), str(row["備註"]), existing_img))
                             conn.commit()
+                            
+                        # 寫入批量上傳日誌
+                        log_product_change(current_operator, "批量匯入", f"透過 Excel/CSV 檔案批次更新/新增了 {len(df_insert)} 筆商品資料")
+                            
                         st.success("✅ 批量商品資料匯入完成！")
                         time.sleep(1.5)
                         st.rerun()
                     except Exception as e:
                         st.error(f"❌ 匯入錯誤：{str(e)}")
+            else:
+                st.error("🚫 您沒有上傳商品的權限")
+
+        # ==========================================
+        # 🌟 全新新增 Tab 4: 商品日誌
+        # ==========================================
+        with tab4:
+            st.subheader("📜 商品異動審查軌跡")
+            st.write("此處會即時顯示所有人員進行「新增、編輯、刪除、批量操作」的歷史紀錄。")
+            
+            with get_db() as conn:
+                df_prod_logs = pd.read_sql("""
+                    SELECT timestamp as 操作時間, operator as 操作人員, 
+                           action_type as 動作類別, details as 變動詳情說明 
+                    FROM product_logs 
+                    ORDER BY id DESC
+                """, conn)
+                
+            if df_prod_logs.empty:
+                st.caption("✨ 目前尚無任何商品更動日誌紀錄。")
+            else:
+                st.dataframe(df_prod_logs, use_container_width=True, hide_index=True)
+                
+                if st.session_state.get('role') == "Admin":
+                    st.write("")
+                    if st.checkbox("⚠️ 啟用清除歷史日誌安全授權 (僅限 Admin)"):
+                        if st.button("🗑️ 清空所有商品變更日誌紀錄", type="primary"):
+                            with get_db() as conn:
+                                conn.execute("DELETE FROM product_logs")
+                                conn.commit()
+                            st.success("日誌紀錄已清空。")
+                            time.sleep(1)
+                            st.rerun()
+
     else:
         st.error("🚫 您無權限訪問此模組")
 
