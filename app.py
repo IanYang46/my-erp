@@ -225,7 +225,7 @@ if 'logged_in' not in st.session_state:
             pw = st.text_input("密碼", type="password", autocomplete="current-password")
             
             # 🌟 新增：保持登入核取方塊
-            keep_logged_in = st.checkbox("保持登入 (3 小時內免重新輸入密碼)")
+            keep_logged_in = st.checkbox("保持登入")
             
             if st.form_submit_button("登入"):
                 with get_db() as conn:
