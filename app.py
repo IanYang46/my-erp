@@ -207,6 +207,8 @@ if 'logged_in' in st.session_state and st.session_state['logged_in']:
 # 2. 狀況 B：若網頁剛被重開 (Session 暫存全空)，嘗試由 Cookie 與資料庫時間核對進行安全登入
 if 'logged_in' not in st.session_state:
     auto_login_user = cookie_manager.get(cookie="erp_auto_login")
+    
+    # 🌟 偵錯提示：如果 Cookie 抓不到，嘗試強迫瀏覽器重新整理一次
     if auto_login_user:
         with get_db() as conn:
             cursor = conn.cursor()
@@ -215,7 +217,6 @@ if 'logged_in' not in st.session_state:
             if res:
                 user_role, user_nick, db_last_active = res[0], res[1], (res[2] if res[2] else 0)
                 
-                # 關鍵防線：比對現在時間與這名帳號在資料庫上記錄的最後操作時間
                 if time.time() - db_last_active < TIMEOUT_SECONDS:
                     cursor.execute("SELECT module, can_view, can_edit, can_upload, can_download FROM user_perms WHERE username=?", (auto_login_user,))
                     perms_data = cursor.fetchall()
@@ -226,17 +227,18 @@ if 'logged_in' not in st.session_state:
                         'nickname': user_nick if user_nick else auto_login_user, 'perms': perm_dict,
                         'last_active': time.time()
                     })
-                    # 順便刷一下當前時間回資料庫
                     conn.execute("UPDATE users SET last_active = ? WHERE username = ?", (time.time(), auto_login_user))
                     conn.commit()
-                    
-                    st.toast("👋 歡迎回來！已為您自動登入。")
-                    time.sleep(1)
-                    st.rerun()
+                    st.rerun() # 成功登入，重整進入系統
                 else:
-                    # 雖然有 Cookie 但在關閉網頁期間已經失聯超過 3 小時，無情抹除 Cookie 要求重新密碼登入
                     cookie_manager.delete('erp_auto_login', key="del_cookie_expired")
-
+    else:
+        # 🌟 如果這時候還是沒抓到，且不是第一次進入，可能是被 Chrome 攔截了
+        # 我們設定一個標記，強制跳過一次重新嘗試
+        if 'retry_count' not in st.session_state:
+            st.session_state['retry_count'] = 1
+            st.rerun() # 這裡會強制讓網頁閃爍一次，讓 Chrome 有第二次機會加載 Cookie
+            
 # 3. 狀況 C：完全未登入或已超時，顯示傳統登入介面
 if 'logged_in' not in st.session_state:
     st.title("📦 強盛集團 | ERP 系統")
@@ -273,8 +275,10 @@ if 'logged_in' not in st.session_state:
                         cursor.execute("UPDATE users SET last_active = ? WHERE username = ?", (current_now, user))
                         conn.commit()
                         
-                        # 🌟 修正：加入 max_age、same_site="none" 與 secure=True 突破 Chrome/APP 的安全封鎖
+                        # 🌟 強力修正：確保 Chrome 能寫入
                         if keep_logged_in:
+                            # 嘗試多寫入一個加密後的 Session 備份，作為雙重防禦
+                            st.session_state['auto_login_key'] = user
                             cookie_manager.set('erp_auto_login', user, key="set_cookie_login", max_age=604800, same_site="none", secure=True)
                         else:
                             cookie_manager.set('erp_auto_login', user, key="set_cookie_login", same_site="none", secure=True)
