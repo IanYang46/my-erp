@@ -60,11 +60,13 @@ def init_db_v6():  # 🌟 升級為 v6
         # 1. 建立系統核心表格
         cursor.execute('''CREATE TABLE IF NOT EXISTS users (username TEXT PRIMARY KEY, password TEXT, role TEXT)''')
         
-        # 🌟 安全擴充：為舊的 users 表格加入「暱稱」欄位
+        # 🌟 安全擴充：為舊的 users 表格加入「暱稱」與「最後活躍時間」欄位
         cursor.execute("PRAGMA table_info(users)")
         cols = [info[1] for info in cursor.fetchall()]
         if 'nickname' not in cols:
             cursor.execute("ALTER TABLE users ADD COLUMN nickname TEXT DEFAULT ''")
+        if 'last_active' not in cols:
+            cursor.execute("ALTER TABLE users ADD COLUMN last_active REAL DEFAULT 0")
             
         cursor.execute('''CREATE TABLE IF NOT EXISTS permissions (role TEXT, module TEXT, can_view BOOLEAN, can_edit BOOLEAN, can_upload BOOLEAN, can_download BOOLEAN)''')
         
@@ -167,53 +169,70 @@ def check_perm(role_string, module, action="can_view"):
     return bool(mod_perms.get(action, False))
 
 # --- 5. 系統登入 ---
-# --- 🌟 新增：初始化 Cookie 管理器 (處理自動登入) ---
+# --- 🌟 初始化 Cookie 管理器 (處理跨網頁關閉自動登入) ---
 cookie_manager = stx.CookieManager(key="cookie_manager")
 
-# --- 5. 系統登入與超時自動登出機制 ---
-TIMEOUT_SECONDS = 3 * 3600  # 設定 3 小時無動作即登出 (3小時 * 3600秒)
+# --- 5. 系統登入與超時自動登出機制 (支援關閉網頁保持狀態) ---
+TIMEOUT_SECONDS = 3 * 3600  # 核心設定：3 小時完全無動作即判定超時 (3小時 * 3600秒)
 
-# 1. 檢查是否已經登入，並判定是否閒置過久
+# 1. 狀況 A：如果目前已經在登入狀態中，持續監控當前操作是否超時，並即時同步至資料庫
 if 'logged_in' in st.session_state and st.session_state['logged_in']:
-    last_active = st.session_state.get('last_active', time.time())
+    current_time = time.time()
+    last_active = st.session_state.get('last_active', current_time)
     
-    # 閒置超過 3 小時，執行強制登出
-    if time.time() - last_active > TIMEOUT_SECONDS:
+    # 檢查是否在不知不覺中閒置超過 3 小時
+    if current_time - last_active > TIMEOUT_SECONDS:
+        username_to_clear = st.session_state.get('user')
         st.session_state.clear()
         if cookie_manager.get('erp_auto_login'):
             cookie_manager.delete('erp_auto_login')
-            time.sleep(0.5) # 給前端一點時間清除 Cookie
+        with get_db() as conn:
+            conn.execute("UPDATE users SET last_active = 0 WHERE username = ?", (username_to_clear,))
+            conn.commit()
         st.warning("⚠️ 由於長時間未操作，為保護系統安全，已為您自動登出。")
         time.sleep(2)
         st.rerun()
     else:
-        # 有任何短時間操作，刷新最後活躍時間
-        st.session_state['last_active'] = time.time()
+        # 有任何點擊或切換模組的短時間操作，刷新 Session 暫存，並立刻回寫資料庫存檔
+        st.session_state['last_active'] = current_time
+        with get_db() as conn:
+            conn.execute("UPDATE users SET last_active = ? WHERE username = ?", (current_time, st.session_state['user']))
+            conn.commit()
 
-# 2. 若未登入，嘗試從 Cookie 自動登入
+# 2. 狀況 B：若網頁剛被重開 (Session 暫存全空)，嘗試由 Cookie 與資料庫時間核對進行安全登入
 if 'logged_in' not in st.session_state:
     auto_login_user = cookie_manager.get(cookie="erp_auto_login")
     if auto_login_user:
         with get_db() as conn:
             cursor = conn.cursor()
-            cursor.execute("SELECT role, nickname FROM users WHERE username=?", (auto_login_user,))
+            cursor.execute("SELECT role, nickname, last_active FROM users WHERE username = ?", (auto_login_user,))
             res = cursor.fetchone()
             if res:
-                user_role, user_nick = res[0], res[1]
-                cursor.execute("SELECT module, can_view, can_edit, can_upload, can_download FROM user_perms WHERE username=?", (auto_login_user,))
-                perms_data = cursor.fetchall()
-                perm_dict = {row[0]: {'can_view': bool(row[1]), 'can_edit': bool(row[2]), 'can_upload': bool(row[3]), 'can_download': bool(row[4])} for row in perms_data}
+                user_role, user_nick, db_last_active = res[0], res[1], (res[2] if res[2] else 0)
                 
-                st.session_state.update({
-                    'logged_in': True, 'role': user_role, 'user': auto_login_user, 
-                    'nickname': user_nick if user_nick else auto_login_user, 'perms': perm_dict,
-                    'last_active': time.time() # 登入當下紀錄時間
-                })
-                st.toast("👋 歡迎回來！已為您自動登入。")
-                time.sleep(1)
-                st.rerun()
+                # 關鍵防線：比對現在時間與這名帳號在資料庫上記錄的最後操作時間
+                if time.time() - db_last_active < TIMEOUT_SECONDS:
+                    cursor.execute("SELECT module, can_view, can_edit, can_upload, can_download FROM user_perms WHERE username=?", (auto_login_user,))
+                    perms_data = cursor.fetchall()
+                    perm_dict = {row[0]: {'can_view': bool(row[1]), 'can_edit': bool(row[2]), 'can_upload': bool(row[3]), 'can_download': bool(row[4])} for row in perms_data}
+                    
+                    st.session_state.update({
+                        'logged_in': True, 'role': user_role, 'user': auto_login_user, 
+                        'nickname': user_nick if user_nick else auto_login_user, 'perms': perm_dict,
+                        'last_active': time.time()
+                    })
+                    # 順便刷一下當前時間回資料庫
+                    conn.execute("UPDATE users SET last_active = ? WHERE username = ?", (time.time(), auto_login_user))
+                    conn.commit()
+                    
+                    st.toast("👋 歡迎回來！已為您自動登入。")
+                    time.sleep(1)
+                    st.rerun()
+                else:
+                    # 雖然有 Cookie 但在關閉網頁期間已經失聯超過 3 小時，無情抹除 Cookie 要求重新密碼登入
+                    cookie_manager.delete('erp_auto_login')
 
-# 3. 系統登入表單介面
+# 3. 狀況 C：完全未登入或已超時，顯示傳統登入介面
 if 'logged_in' not in st.session_state:
     st.title("📦 強盛集團 | ERP 系統")
     
@@ -224,8 +243,7 @@ if 'logged_in' not in st.session_state:
             user = st.text_input("帳號", autocomplete="username")
             pw = st.text_input("密碼", type="password", autocomplete="current-password")
             
-            # 🌟 新增：保持登入核取方塊
-            keep_logged_in = st.checkbox("保持登入")
+            keep_logged_in = st.checkbox("保持登入狀態 (關閉分頁免密碼，閒置 3 小時才登出)", value=True)
             
             if st.form_submit_button("登入"):
                 with get_db() as conn:
@@ -239,18 +257,23 @@ if 'logged_in' not in st.session_state:
                         perms_data = cursor.fetchall()
                         perm_dict = {row[0]: {'can_view': bool(row[1]), 'can_edit': bool(row[2]), 'can_upload': bool(row[3]), 'can_download': bool(row[4])} for row in perms_data}
                         
+                        current_now = time.time()
                         st.session_state.update({
                             'logged_in': True, 'role': user_role, 'user': user, 
                             'nickname': user_nick if user_nick else user, 'perms': perm_dict,
-                            'last_active': time.time()
+                            'last_active': current_now
                         })
                         
-                        # 🌟 如果有勾選，將帳號寫入 Cookie
-                        if keep_logged_in:
-                            expire_time = datetime.datetime.now() + datetime.timedelta(hours=3)
-                            cookie_manager.set('erp_auto_login', user, expires_at=expire_time)
-                            time.sleep(0.5) # 確保 Cookie 有寫入前端
+                        # 登入成功立刻把時間打入資料庫
+                        cursor.execute("UPDATE users SET last_active = ? WHERE username = ?", (current_now, user))
                         
+                        # 如果勾選保持登入，派發一個最長可存活一週的實體 Cookie，防止關閉網頁時被清除
+                        if keep_logged_in:
+                            far_future = datetime.datetime.now() + datetime.timedelta(days=7)
+                            cookie_manager.set('erp_auto_login', user, expires_at=far_future)
+                            time.sleep(0.5)
+                        
+                        conn.commit()
                         log_login_event(user)
                         st.rerun()
                     else:
@@ -283,14 +306,18 @@ st.sidebar.title("🏢 強盛集團 ERP")
 show_name = st.session_state.get('nickname', st.session_state['user'])
 st.sidebar.info(f"👤 登入者: {show_name} \n🔑 權限組: {st.session_state['role']}")
 
-# 👇 更改登出按鈕邏輯，登出時一併刪除 Cookie 👇
+# 👇 更改主動登出按鈕邏輯，徹底清除 Cookie 與資料庫紀錄 👇
 if st.sidebar.button("登出系統", use_container_width=True): 
+    username_to_clear = st.session_state.get('user')
     st.session_state.clear()
     if cookie_manager.get('erp_auto_login'):
         cookie_manager.delete('erp_auto_login')
-        time.sleep(0.5) # 給前端一點時間清除 Cookie
+    with get_db() as conn:
+        conn.execute("UPDATE users SET last_active = 0 WHERE username = ?", (username_to_clear,))
+        conn.commit()
+    time.sleep(0.5) # 確保前端與資料庫寫入完畢
     st.rerun()
-
+    
 st.sidebar.divider()
 
 menu = st.sidebar.radio(
