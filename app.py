@@ -172,6 +172,11 @@ def check_perm(role_string, module, action="can_view"):
 # --- 🌟 初始化 Cookie 管理器 (處理跨網頁關閉自動登入) ---
 cookie_manager = stx.CookieManager(key="cookie_manager")
 
+# 👇 🌟 新增這兩行「煞車機制」：強制等待瀏覽器回傳資料 👇
+if cookie_manager.get_all() is None:
+    st.stop()
+# 👆 新增結束 👆
+
 # --- 5. 系統登入與超時自動登出機制 (支援關閉網頁保持狀態) ---
 TIMEOUT_SECONDS = 3 * 3600  # 核心設定：3 小時完全無動作即判定超時 (3小時 * 3600秒)
 
