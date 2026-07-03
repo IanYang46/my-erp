@@ -276,12 +276,15 @@ elif menu == "商品訊息":
                     else:
                         for _, row in filtered_df.iterrows():
                             with st.container(border=True):
-                                img_col, info_col, remark_col, action_col = st.columns([1.5, 3, 4.5, 1.5])
+                                # 🌟 微調欄位比例 [2, 3, 5, 2]，給圖片與備註更多空間
+                                img_col, info_col, remark_col, action_col = st.columns([2, 3, 5, 2])
                                 
+                                # 🌟 移除固定 width=120，改用 use_container_width=True 填滿框架
                                 if row['圖片路徑'] and os.path.exists(row['圖片路徑']):
-                                    img_col.image(row['圖片路徑'], width=120)
+                                    img_col.image(row['圖片路徑'], use_container_width=True)
                                 else:
-                                    img_col.write("無圖")
+                                    # 讓無圖的提示字體居中且美觀
+                                    img_col.markdown("<div style='text-align:center; color:gray; padding-top:20px;'>📷 暫無圖片</div>", unsafe_allow_html=True)
                                     
                                 info_col.subheader(f"🆔 {row['編碼']}")
                                 info_col.write(f"類別: {row['類別']}")
