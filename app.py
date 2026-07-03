@@ -22,17 +22,26 @@ def decode_pw(pw_encoded):
 if not os.path.exists("product_images"): os.makedirs("product_images")
 st.set_page_config(page_title="強盛集團 ERP", layout="wide", initial_sidebar_state="expanded")
 
-# 👇 新增這段隱藏 Streamlit 預設 UI 的語法 👇
+# 👇 替換成這段加強版隱藏語法 👇
 hide_st_style = """
             <style>
-            #MainMenu {visibility: hidden;} /* 隱藏右上角漢堡選單 */
-            footer {visibility: hidden;}    /* 隱藏底部 Made with Streamlit 浮水印 */
-            header {visibility: hidden;}    /* 隱藏頂部預設 header (避免出現 Deploy 按鈕) */
-            [data-testid="stToolbar"] {display: none;} /* 徹底隱藏右上角工具列 */
+            /* 1. 隱藏右上角漢堡選單與預設 Header */
+            #MainMenu {visibility: hidden;} 
+            header {visibility: hidden;}    
+            [data-testid="stToolbar"] {visibility: hidden !important;}
+
+            /* 2. 隱藏底部 Made with Streamlit 網頁文字浮水印 */
+            footer {visibility: hidden;}    
+
+            /* 🌟 3. 強制隱藏 Streamlit Cloud 右下角的 "Hosted with Streamlit" 徽章與頭像 */
+            div[class^="viewerBadge_container"] { display: none !important; }
+            div[class^="styles_viewerBadge"] { display: none !important; }
+            .viewerBadge_container__1QSob { display: none !important; }
+            .styles_viewerBadge__1yB5_ { display: none !important; }
             </style>
             """
 st.markdown(hide_st_style, unsafe_allow_html=True)
-# 👆 新增結束 👆
+# 👆 替換結束 👆
 
 # --- 2. 穩定的資料庫連線 ---
 def get_db():
