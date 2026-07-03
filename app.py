@@ -28,14 +28,14 @@ def get_db():
     
 # --- 3. 初始化資料庫與預設權限 ---
 @st.cache_resource
-def init_db_v5():  # 🌟 升級為 v5
+def init_db_v6():  # 🌟 升級為 v6
     with get_db() as conn:
         cursor = conn.cursor()
         
         # 1. 建立系統核心表格
         cursor.execute('''CREATE TABLE IF NOT EXISTS users (username TEXT PRIMARY KEY, password TEXT, role TEXT)''')
         
-        # 🌟 安全擴充：為舊的 users 表格加入「暱稱」欄位 (保留舊帳號資料)
+        # 🌟 安全擴充：為舊的 users 表格加入「暱稱」欄位
         cursor.execute("PRAGMA table_info(users)")
         cols = [info[1] for info in cursor.fetchall()]
         if 'nickname' not in cols:
@@ -43,15 +43,11 @@ def init_db_v5():  # 🌟 升級為 v5
             
         cursor.execute('''CREATE TABLE IF NOT EXISTS permissions (role TEXT, module TEXT, can_view BOOLEAN, can_edit BOOLEAN, can_upload BOOLEAN, can_download BOOLEAN)''')
         
-        # 🌟 【本次新增】細部權限設定表
+        # 細部權限設定表
         cursor.execute('''CREATE TABLE IF NOT EXISTS user_perms (
-                            username TEXT,
-                            module TEXT,
-                            can_view BOOLEAN DEFAULT 0,
-                            can_edit BOOLEAN DEFAULT 0,
-                            can_upload BOOLEAN DEFAULT 0,
-                            can_download BOOLEAN DEFAULT 0,
-                            PRIMARY KEY (username, module))''')
+                            username TEXT, module TEXT, can_view BOOLEAN DEFAULT 0,
+                            can_edit BOOLEAN DEFAULT 0, can_upload BOOLEAN DEFAULT 0,
+                            can_download BOOLEAN DEFAULT 0, PRIMARY KEY (username, module))''')
         
         # 2. 商品資料表
         cursor.execute('''CREATE TABLE IF NOT EXISTS products (編碼 TEXT PRIMARY KEY, 類別 TEXT, 品牌 TEXT, 名稱 TEXT, 備註 TEXT, 圖片路徑 TEXT)''')
@@ -74,68 +70,55 @@ def init_db_v5():  # 🌟 升級為 v5
             for w in ['台灣黃興-商品', '東莞熙元-商品', '台灣黃興-樣品', '退換貨倉']:
                 cursor.execute("INSERT OR IGNORE INTO warehouses (name) VALUES (?)", (w,))
                 
-        # 🌟 新增：建立登入歷史紀錄表格
-        cursor.execute('''CREATE TABLE IF NOT EXISTS login_logs (
-                            id INTEGER PRIMARY KEY AUTOINCREMENT,
-                            username TEXT,
-                            login_time TEXT,
-                            ip TEXT,
-                            location TEXT,
-                            device TEXT)''')
+        # 登入歷史紀錄表格
+        cursor.execute('''CREATE TABLE IF NOT EXISTS login_logs (id INTEGER PRIMARY KEY AUTOINCREMENT, username TEXT, login_time TEXT, ip TEXT, location TEXT, device TEXT)''')
         
         # 7. 建立預設 Admin 帳號 
         cursor.execute("INSERT OR IGNORE INTO users (username, password, nickname, role) VALUES ('admin', ?, '總管理員', 'Admin')", (encode_pw('123456'),))
-        conn.commit()
         
-        # 🌟 8. 新增：商品變動日誌表
-        cursor.execute('''CREATE TABLE IF NOT EXISTS product_logs (
-                            id INTEGER PRIMARY KEY AUTOINCREMENT,
-                            timestamp TEXT,
-                            operator TEXT,
-                            action_type TEXT,
-                            details TEXT)''')
+        # 🌟 8. 舊有的獨立日誌表 (保留給商品與庫存)
+        cursor.execute('''CREATE TABLE IF NOT EXISTS product_logs (id INTEGER PRIMARY KEY AUTOINCREMENT, timestamp TEXT, operator TEXT, action_type TEXT, details TEXT)''')
+        cursor.execute('''CREATE TABLE IF NOT EXISTS inventory_logs (id INTEGER PRIMARY KEY AUTOINCREMENT, timestamp TEXT, operator TEXT, action_type TEXT, details TEXT)''')
+        
+        # 🌟 9. 新增：全局系統操作日誌表 (供採購、訂單、權限等共用)
+        cursor.execute('''CREATE TABLE IF NOT EXISTS system_logs (id INTEGER PRIMARY KEY AUTOINCREMENT, timestamp TEXT, module TEXT, operator TEXT, action_type TEXT, details TEXT)''')
         
         conn.commit()
         
-init_db_v5()
+init_db_v6()
 
-# --- 庫存自動日誌工具 ---
+# --- 日誌自動寫入工具群 ---
 def log_inventory_change(operator, action_type, details):
     with get_db() as conn:
         conn.execute("INSERT INTO inventory_logs (timestamp, operator, action_type, details) VALUES (datetime('now', 'localtime'), ?, ?, ?)", (operator, action_type, details))
         conn.commit()
         
-# --- 🌟 新增：商品自動日誌工具 ---
 def log_product_change(operator, action_type, details):
     with get_db() as conn:
         conn.execute("INSERT INTO product_logs (timestamp, operator, action_type, details) VALUES (datetime('now', 'localtime'), ?, ?, ?)", (operator, action_type, details))
         conn.commit()
 
-# --- 🌟 新增：自動抓取並記錄登入歷程工具 ---
+def log_system_action(module, operator, action_type, details):
+    with get_db() as conn:
+        conn.execute("INSERT INTO system_logs (timestamp, module, operator, action_type, details) VALUES (datetime('now', 'localtime'), ?, ?, ?, ?)", (module, operator, action_type, details))
+        conn.commit()
+
+# --- 自動抓取並記錄登入歷程工具 ---
 def log_login_event(username):
-    """自動分析登入者的 IP、設備 User-Agent 並透過 API 查出地理位置，存入資料庫"""
-    # 1. 透過 Streamlit 內建上下文抓取瀏覽器標頭資訊
     try:
         headers = st.context.headers
-        # 在雲端平台(如 Streamlit Cloud)，真正的客戶端 IP 通常藏在 X-Forwarded-For 中
         ip_raw = headers.get("X-Forwarded-For", "127.0.0.1")
-        ip = ip_raw.split(",")[0].strip() # 若有多個代理 IP，取第一個真正的客戶 IP
+        ip = ip_raw.split(",")[0].strip()
         device = headers.get("User-Agent", "未知裝置/瀏覽器")
     except Exception:
-        ip = "127.0.0.1"
-        device = "本地運行環境/無法辨識裝置"
+        ip, device = "127.0.0.1", "本地運行環境/無法辨識裝置"
 
-    # 2. 根據 IP 判定地理位置 (排除本地端測試)
     location = "未知地點"
     if ip and ip != "127.0.0.1" and not ip.startswith("192.168.") and not ip.startswith("10."):
         try:
-            # 使用免費免金鑰的地理定位 API (回傳繁體中文)
             response = requests.get(f"http://ip-api.com/json/{ip}?lang=zh-TW", timeout=5).json()
             if response.get("status") == "success":
-                country = response.get("country", "")
-                region = response.get("regionName", "")
-                city = response.get("city", "")
-                location = f"{country} · {region} ({city})"
+                location = f"{response.get('country', '')} · {response.get('regionName', '')} ({response.get('city', '')})"
             else:
                 location = "內部/私人網路區間"
         except Exception:
@@ -143,13 +126,8 @@ def log_login_event(username):
     else:
         location = "區域網路/本機端測試 (Localhost)"
 
-    # 3. 寫入資料庫
-    current_time = time.strftime('%Y-%m-%d %H:%M:%S')
     with get_db() as conn:
-        conn.execute(
-            "INSERT INTO login_logs (username, login_time, ip, location, device) VALUES (?, ?, ?, ?, ?)",
-            (username, current_time, ip, location, device)
-        )
+        conn.execute("INSERT INTO login_logs (username, login_time, ip, location, device) VALUES (?, ?, ?, ?, ?)", (username, time.strftime('%Y-%m-%d %H:%M:%S'), ip, location, device))
         conn.commit()
 
 # --- 🌟 4. 全新顆粒化權限檢查工具 ---
@@ -254,15 +232,18 @@ if menu == "首頁":
 
 elif menu == "商品訊息":
     st.title("📦 商品訊息管理")
-    
-    # 取得當前操作者帳號，準備寫入日誌
     current_operator = st.session_state.get('user', 'admin')
+    is_admin = (st.session_state.get('role') == 'Admin')  # 🌟 判斷是否為管理員
     
     if check_perm(role, "商品訊息", "can_view"):
-        # 🌟 新增第四個分頁：變動歷程日誌
-        tab1, tab2, tab3, tab4 = st.tabs(["📋 列表瀏覽與編輯", "➕ 新增商品", "📁 批次作業", "📜 變動歷程日誌"])
+        # 🌟 動態生成分頁：一般員工只會看到前三個，Admin 才會被 push 第四個
+        tabs_list = ["📋 列表瀏覽與編輯", "➕ 新增商品", "📁 批次作業"]
+        if is_admin:
+            tabs_list.append("📜 變動歷程日誌 (僅管理員可見)")
+            
+        tabs = st.tabs(tabs_list)
         
-        with tab1:
+        with tabs[0]:
             if 'edit_item_code' not in st.session_state:
                 st.session_state['edit_item_code'] = None
                 
@@ -283,14 +264,10 @@ elif menu == "商品訊息":
                     selected_brand = filter_col2.selectbox("選擇品牌", brand_list)
                     
                     filtered_df = df.copy()
-                    if selected_category != "全部":
-                        filtered_df = filtered_df[filtered_df["類別"] == selected_category]
-                    if selected_brand != "全部":
-                        filtered_df = filtered_df[filtered_df["品牌"] == selected_brand]
+                    if selected_category != "全部": filtered_df = filtered_df[filtered_df["類別"] == selected_category]
+                    if selected_brand != "全部": filtered_df = filtered_df[filtered_df["品牌"] == selected_brand]
                     
                     st.divider()
-                    
-                    # 🌟 實裝：批量刪除功能區塊
                     c_info, c_batch = st.columns([1, 1])
                     c_info.caption(f"📊 顯示結果：共找到 {len(filtered_df)} 筆符合條件的商品")
                     
@@ -302,7 +279,6 @@ elif menu == "商品訊息":
                                     placeholders = ','.join(['?'] * len(del_list))
                                     conn.execute(f"DELETE FROM products WHERE 編碼 IN ({placeholders})", del_list)
                                     conn.commit()
-                                # 寫入日誌
                                 log_product_change(current_operator, "批量刪除", f"移除了 {len(del_list)} 筆商品：{', '.join(del_list)}")
                                 st.success(f"✅ 已成功批量刪除 {len(del_list)} 筆商品！")
                                 time.sleep(1.5)
@@ -314,7 +290,6 @@ elif menu == "商品訊息":
                         for _, row in filtered_df.iterrows():
                             with st.container(border=True):
                                 img_col, info_col, remark_col, action_col = st.columns([2, 3, 5, 2])
-                                
                                 if row['圖片路徑'] and os.path.exists(row['圖片路徑']):
                                     img_col.image(row['圖片路徑'], use_container_width=True)
                                 else:
@@ -324,7 +299,6 @@ elif menu == "商品訊息":
                                 info_col.write(f"類別: {row['類別']}")
                                 info_col.write(f"品牌: {row['品牌']}")
                                 info_col.write(f"名稱: {row['名稱']}")
-                                
                                 remark_col.write("📝 備註:")
                                 remark_col.caption(row['備註'])
                                 
@@ -333,25 +307,19 @@ elif menu == "商品訊息":
                                         if st.button("✏️ 編輯", key=f"edit_{row['編碼']}", use_container_width=True):
                                             st.session_state['edit_item_code'] = row['編碼']
                                             st.rerun()
-                                            
                                         if st.button("🗑️ 刪除", key=f"del_{row['編碼']}", type="primary", use_container_width=True):
                                             with get_db() as conn:
                                                 conn.execute("DELETE FROM products WHERE 編碼=?", (row['編碼'],))
                                                 conn.commit()
-                                            
-                                            # 寫入單筆刪除日誌
                                             log_product_change(current_operator, "單筆刪除", f"移除了商品：{row['編碼']} - {row['名稱']}")
-                                            
                                             st.toast(f"已成功刪除商品：{row['編碼']}！")
                                             time.sleep(1)
                                             st.rerun()
             else:
                 edit_code = st.session_state['edit_item_code']
-                
                 if st.button("🔙 放棄修改並返回列表"):
                     st.session_state['edit_item_code'] = None
                     st.rerun()
-                    
                 st.divider()
                 
                 with get_db() as conn:
@@ -376,11 +344,9 @@ elif menu == "商品訊息":
                                 with open(new_path, "wb") as f: f.write(edit_img.getbuffer())
                             
                             with get_db() as conn:
-                                conn.execute("UPDATE products SET 類別=?, 品牌=?, 名稱=?, 備註=?, 圖片路徑=? WHERE 編碼=?",
-                                             (edit_cat, edit_brand, edit_name, edit_remark, new_path, edit_code))
+                                conn.execute("UPDATE products SET 類別=?, 品牌=?, 名稱=?, 備註=?, 圖片路徑=? WHERE 編碼=?", (edit_cat, edit_brand, edit_name, edit_remark, new_path, edit_code))
                                 conn.commit()
                             
-                            # 寫入編輯日誌
                             log_msg = f"更新了商品 {edit_code} 資料。"
                             if edit_name != target[2]: log_msg += f" 名稱: {target[2]} ➔ {edit_name}。"
                             if edit_cat != target[0]: log_msg += f" 類別: {target[0]} ➔ {edit_cat}。"
@@ -392,7 +358,7 @@ elif menu == "商品訊息":
                             time.sleep(1.5)
                             st.rerun()
                 
-        with tab2:
+        with tabs[1]:
             if check_perm(role, "商品訊息", "can_edit"):
                 st.subheader("➕ 新增單筆商品")
                 with st.form("add_new_form", clear_on_submit=True):
@@ -414,13 +380,10 @@ elif menu == "商品訊息":
                                     with open(path, "wb") as f: f.write(img_file.getbuffer())
                                 
                                 with get_db() as conn:
-                                    conn.execute("INSERT INTO products (編碼, 類別, 品牌, 名稱, 備註, 圖片路徑) VALUES (?,?,?,?,?,?)",
-                                                 (code, category, brand, name, remark, path))
+                                    conn.execute("INSERT INTO products (編碼, 類別, 品牌, 名稱, 備註, 圖片路徑) VALUES (?,?,?,?,?,?)", (code, category, brand, name, remark, path))
                                     conn.commit()
                                 
-                                # 寫入新增日誌
                                 log_product_change(current_operator, "新增單筆", f"建檔了新商品：{code} - {name} (品牌: {brand})")
-                                
                                 st.success(f"🎉 成功新增商品：【{code}】 {name}！")
                                 time.sleep(1.5)
                                 st.rerun()
@@ -429,24 +392,17 @@ elif menu == "商品訊息":
             else:
                 st.error("🚫 您沒有編輯商品的權限")
 
-        with tab3:
+        with tabs[2]:
             st.subheader("📥 批量下載完整商品表")
             if check_perm(role, "商品訊息", "can_download"):
                 with get_db() as conn:
                     df_all = pd.read_sql("SELECT 編碼, 類別, 品牌, 名稱, 備註 FROM products ORDER BY 編碼 ASC", conn)
-                
                 from io import BytesIO
                 output = BytesIO()
                 with pd.ExcelWriter(output, engine='openpyxl') as writer:
                     df_all.to_excel(writer, index=False, sheet_name='Sheet1')
-                excel_data = output.getvalue()
                 
-                st.download_button(
-                    label="💾 下載商品清單 (Excel格式)",
-                    data=excel_data,
-                    file_name="products.xlsx",
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                )
+                st.download_button(label="💾 下載商品清單 (Excel格式)", data=output.getvalue(), file_name="products.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
             
             st.divider()
             st.subheader("📤 批量上傳商品資料")
@@ -454,11 +410,7 @@ elif menu == "商品訊息":
                 uploaded_file = st.file_uploader("選擇上傳檔案 (支援 CSV 或 Excel)", type=["csv", "xlsx"])
                 if uploaded_file and st.button("🚀 執行批量匯入", type="primary"):
                     try:
-                        if uploaded_file.name.endswith('.csv'):
-                            df_new = pd.read_csv(uploaded_file)
-                        else:
-                            df_new = pd.read_excel(uploaded_file, engine='openpyxl')
-                            
+                        df_new = pd.read_csv(uploaded_file) if uploaded_file.name.endswith('.csv') else pd.read_excel(uploaded_file, engine='openpyxl')
                         df_insert = df_new[["編碼", "類別", "品牌", "名稱", "備註"]].fillna("---")
                         with get_db() as conn:
                             cursor = conn.cursor()
@@ -466,13 +418,9 @@ elif menu == "商品訊息":
                                 cursor.execute("SELECT 圖片路徑 FROM products WHERE 編碼=?", (str(row["編碼"]),))
                                 img_res = cursor.fetchone()
                                 existing_img = img_res[0] if img_res else ""
-                                cursor.execute("INSERT OR REPLACE INTO products (編碼, 類別, 品牌, 名稱, 備註, 圖片路徑) VALUES (?,?,?,?,?,?)",
-                                               (str(row["編碼"]), str(row["類別"]), str(row["品牌"]), str(row["名稱"]), str(row["備註"]), existing_img))
+                                cursor.execute("INSERT OR REPLACE INTO products (編碼, 類別, 品牌, 名稱, 備註, 圖片路徑) VALUES (?,?,?,?,?,?)", (str(row["編碼"]), str(row["類別"]), str(row["品牌"]), str(row["名稱"]), str(row["備註"]), existing_img))
                             conn.commit()
-                            
-                        # 寫入批量上傳日誌
                         log_product_change(current_operator, "批量匯入", f"透過 Excel/CSV 檔案批次更新/新增了 {len(df_insert)} 筆商品資料")
-                            
                         st.success("✅ 批量商品資料匯入完成！")
                         time.sleep(1.5)
                         st.rerun()
@@ -481,29 +429,20 @@ elif menu == "商品訊息":
             else:
                 st.error("🚫 您沒有上傳商品的權限")
 
-        # ==========================================
-        # 🌟 全新新增 Tab 4: 商品日誌
-        # ==========================================
-        with tab4:
-            st.subheader("📜 商品異動審查軌跡")
-            st.write("此處會即時顯示所有人員進行「新增、編輯、刪除、批量操作」的歷史紀錄。")
-            
-            with get_db() as conn:
-                df_prod_logs = pd.read_sql("""
-                    SELECT timestamp as 操作時間, operator as 操作人員, 
-                           action_type as 動作類別, details as 變動詳情說明 
-                    FROM product_logs 
-                    ORDER BY id DESC
-                """, conn)
-                
-            if df_prod_logs.empty:
-                st.caption("✨ 目前尚無任何商品更動日誌紀錄。")
-            else:
-                st.dataframe(df_prod_logs, use_container_width=True, hide_index=True)
-                
-                if st.session_state.get('role') == "Admin":
+        # 🌟 僅有 Admin 能展開與觀看的隱藏分頁
+        if is_admin:
+            with tabs[3]:
+                st.subheader("📜 商品異動審查軌跡 (Admin 專屬)")
+                st.write("此處顯示所有人員進行「新增、編輯、刪除、批量操作」的歷史紀錄。")
+                with get_db() as conn:
+                    df_prod_logs = pd.read_sql("SELECT timestamp as 操作時間, operator as 操作人員, action_type as 動作類別, details as 變動詳情說明 FROM product_logs ORDER BY id DESC", conn)
+                    
+                if df_prod_logs.empty:
+                    st.caption("✨ 目前尚無任何商品更動日誌紀錄。")
+                else:
+                    st.dataframe(df_prod_logs, use_container_width=True, hide_index=True)
                     st.write("")
-                    if st.checkbox("⚠️ 啟用清除歷史日誌安全授權 (僅限 Admin)"):
+                    if st.checkbox("⚠️ 啟用清除歷史日誌安全授權"):
                         if st.button("🗑️ 清空所有商品變更日誌紀錄", type="primary"):
                             with get_db() as conn:
                                 conn.execute("DELETE FROM product_logs")
@@ -511,14 +450,14 @@ elif menu == "商品訊息":
                             st.success("日誌紀錄已清空。")
                             time.sleep(1)
                             st.rerun()
-
     else:
         st.error("🚫 您無權限訪問此模組")
 
 elif menu == "商品庫存":
     st.title("🏭 商品庫存與物料倉庫管理")
+    current_operator = st.session_state.get('user', 'admin')
+    is_admin = (st.session_state.get('role') == 'Admin')
 
-    # 取得最新即時換算匯率與現有動態倉庫名單
     with get_db() as conn:
         rate = conn.execute("SELECT value FROM settings WHERE key='exchange_rate'").fetchone()[0]
         wh_df = pd.read_sql("SELECT name FROM warehouses", conn)
@@ -534,17 +473,14 @@ elif menu == "商品庫存":
         st.rerun()
 
     if check_perm(role, "商品庫存", "can_view"):
-        tab_inv, tab_manage, tab_wh, tab_log = st.tabs([
-            "📊 庫存數據總覽", 
-            "🛠️ 庫存批次明細維護 (編輯/刪除)", 
-            "🏢 倉庫位置管理", 
-            "📜 歷史異動軌跡日誌"
-        ])
+        # 🌟 動態隱藏分頁
+        tabs_list = ["📊 庫存數據總覽", "🛠️ 庫存批次明細維護 (編輯/刪除)", "🏢 倉庫位置管理"]
+        if is_admin:
+            tabs_list.append("📜 歷史異動軌跡日誌 (僅管理員可見)")
+            
+        tabs = st.tabs(tabs_list)
         
-        # ==========================================
-        # --- Tab 1: 庫存總覽 ---
-        # ==========================================
-        with tab_inv:
+        with tabs[0]:
             c_wh, c_status = st.columns(2)
             selected_wh = c_wh.selectbox("🔍 篩選特定分倉庫存", ["所有倉庫"] + wh_list, key="inv_wh_filter")
             show_type = c_status.radio("依庫存水位篩選", ["顯示所有", "僅顯示有庫存", "僅顯示缺貨"], horizontal=True, key="inv_status_filter")
@@ -585,7 +521,6 @@ elif menu == "商品庫存":
             
             cols = ['商品圖片', '編碼', '名稱', '類別', '品牌', '總庫存'] + wh_cols + ['平均成本_RMB', '平均成本_TWD', '總庫存金額_RMB', '總庫存金額_TWD']
             filtered_df = df[cols].copy()
-            
             if show_type == "僅顯示有庫存": filtered_df = filtered_df[filtered_df["總庫存"] > 0]
             elif show_type == "僅顯示缺貨": filtered_df = filtered_df[filtered_df["總庫存"] <= 0]
             
@@ -604,32 +539,19 @@ elif menu == "商品庫存":
             with pd.ExcelWriter(output, engine='openpyxl') as writer:
                 filtered_df.drop(columns=['商品圖片']).to_excel(writer, index=False, sheet_name='Inventory')
             
-            # 🌟 新增權限阻擋：沒有下載權限不能按
             if check_perm(role, "商品庫存", "can_download"):
                 st.download_button("💾 下載當前篩選庫存報表", data=output.getvalue(), file_name=f"inventory_{selected_wh}.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
             else:
                 st.caption("🔒 您沒有下載庫存報表的權限。")
 
-        # ==========================================
-        # --- Tab 2: 庫存批次明細維護 ---
-        # ==========================================
-        with tab_manage:
+        with tabs[1]:
             st.subheader("🛠️ 原始進貨批次明細修正區")
-            
-            # 🌟 新增權限阻擋：沒有編輯權限不能操作
             if not check_perm(role, "商品庫存", "can_edit"):
                 st.warning("🔒 您的權限僅能查看明細，無法執行修正或刪除作業。")
             else:
                 st.write("不論是手動匯入或是由採購單點收進來的個別紀錄，皆會在下方展開。您可以選取對應的序號進行精準修正或刪除。")
-                
                 with get_db() as conn:
-                    df_raw_inv = pd.read_sql("""
-                        SELECT i.id as 流水號, i.編碼, p.名稱 as 商品名稱, i.倉庫位置, 
-                               i.數量, i.單支成本_RMB as '單支成本(RMB)', i.採購廠商, i.進貨日期
-                        FROM inventory i
-                        LEFT JOIN products p ON i.編碼 = p.編碼
-                        ORDER BY i.id DESC
-                    """, conn)
+                    df_raw_inv = pd.read_sql("SELECT i.id as 流水號, i.編碼, p.名稱 as 商品名稱, i.倉庫位置, i.數量, i.單支成本_RMB as '單支成本(RMB)', i.採購廠商, i.進貨日期 FROM inventory i LEFT JOIN products p ON i.編碼 = p.編碼 ORDER BY i.id DESC", conn)
                     
                 if df_raw_inv.empty:
                     st.info("目前庫存流水表中無任何原始資料。")
@@ -644,7 +566,6 @@ elif menu == "商品庫存":
                         old_row = df_raw_inv[df_raw_inv['流水號'] == select_id].iloc[0]
                         with st.form(f"edit_inventory_form_{select_id}"):
                             st.info(f"正在維護流水號 ID: {select_id} ｜ 原品項：{old_row['編碼']} - {old_row['商品名稱']}")
-                            
                             m_c1, m_c2 = st.columns(2)
                             edit_code = m_c1.selectbox("更正商品編碼", all_products, index=all_products.index(old_row['編碼']) if old_row['編碼'] in all_products else 0)
                             edit_wh = m_c2.selectbox("更正存放倉庫位置", wh_list, index=wh_list.index(old_row['倉庫位置']) if old_row['倉庫位置'] in wh_list else 0)
@@ -653,28 +574,19 @@ elif menu == "商品庫存":
                             edit_qty = m_c3.number_input("修正後數量", min_value=0, step=1, value=int(old_row['數量']))
                             edit_cost = m_c4.number_input("修正後人民幣單價", min_value=0.0, step=0.1, value=float(old_row['單支成本(RMB)']))
                             edit_vendor = m_c5.text_input("更正採購廠商", value=str(old_row['採購廠商']))
-                            
                             edit_date = st.date_input("修正進貨日期", value=pd.to_datetime(old_row['進貨日期']))
                             
                             col_btn1, col_btn2 = st.columns(2)
                             save_submit = col_btn1.form_submit_button("💾 儲存此筆更正變更", type="primary", use_container_width=True)
                             delete_submit = col_btn2.form_submit_button("🗑️ 徹底刪除此筆庫存紀錄", use_container_width=True)
                             
-                            current_operator = st.session_state.get('user', 'admin')
-                            
                             if save_submit:
                                 calc_amt_rmb = edit_qty * edit_cost
                                 try:
                                     with get_db() as conn:
-                                        conn.execute("""
-                                            UPDATE inventory 
-                                            SET 編碼=?, 倉庫位置=?, 數量=?, 單支成本_RMB=?, 採購廠商=?, 採購金額_RMB=?, 進貨日期=?
-                                            WHERE id=?
-                                        """, (edit_code, edit_wh, edit_qty, edit_cost, edit_vendor.strip(), calc_amt_rmb, str(edit_date), select_id))
+                                        conn.execute("UPDATE inventory SET 編碼=?, 倉庫位置=?, 數量=?, 單支成本_RMB=?, 採購廠商=?, 採購金額_RMB=?, 進貨日期=? WHERE id=?", (edit_code, edit_wh, edit_qty, edit_cost, edit_vendor.strip(), calc_amt_rmb, str(edit_date), select_id))
                                         conn.commit()
-                                    
-                                    log_details = (f"修改流水號 {select_id}。原資料:[品項:{old_row['編碼']},數量:{old_row['數量']},倉:{old_row['倉庫位置']}] "
-                                                   f"➡️ 新資料:[品項:{edit_code},數量:{edit_qty},倉:{edit_wh},單價:{edit_cost} RMB]")
+                                    log_details = f"修改流水號 {select_id}。原資料:[品項:{old_row['編碼']},數量:{old_row['數量']},倉:{old_row['倉庫位置']}] ➡️ 新資料:[品項:{edit_code},數量:{edit_qty},倉:{edit_wh},單價:{edit_cost} RMB]"
                                     log_inventory_change(current_operator, "修正庫存", log_details)
                                     st.success(f"✅ 流水號 【{select_id}】 庫存明細更正成功！")
                                     time.sleep(1)
@@ -687,7 +599,6 @@ elif menu == "商品庫存":
                                     with get_db() as conn:
                                         conn.execute("DELETE FROM inventory WHERE id=?", (select_id,))
                                         conn.commit()
-                                        
                                     log_details = f"徹底刪除流水號 {select_id} 紀錄。原內含品項:{old_row['編碼']}, 移除數量:{old_row['數量']} 支, 原倉庫:{old_row['倉庫位置']}, 廠商:{old_row['採購廠商']}"
                                     log_inventory_change(current_operator, "刪除庫存", log_details)
                                     st.success(f"🗑️ 庫存流水號 【{select_id}】 已成功從資料庫中移除！")
@@ -696,27 +607,21 @@ elif menu == "商品庫存":
                                 except Exception as e:
                                     st.error(f"❌ 刪除動作失敗：{e}")
 
-        # ==========================================
-        # --- Tab 3: 倉庫位置管理 ---
-        # ==========================================
-        with tab_wh:
+        with tabs[2]:
             st.subheader("🏢 系統倉庫位置管理")
             with get_db() as conn:
                 df_wh_edit = pd.read_sql("SELECT name as 倉庫名稱 FROM warehouses", conn)
                 
-            # 🌟 新增動態權限鎖定表格
             can_edit_wh = check_perm(role, "商品庫存", "can_edit")
-            
             edited_wh = st.data_editor(
                 df_wh_edit, num_rows="dynamic" if can_edit_wh else "fixed", use_container_width=True,
-                disabled=not can_edit_wh,  # 若無編輯權限，則自動反灰不可輸入
+                disabled=not can_edit_wh,
                 column_config={"倉庫名稱": st.column_config.TextColumn("📦 倉庫名稱 (必填，不可重複)", required=True)}
             )
             
             if can_edit_wh:
                 if st.button("💾 儲存所有倉庫設定", type="primary"):
-                    current_whs = edited_wh['倉庫名稱'].dropna().astype(str).tolist()
-                    current_whs = [w.strip() for w in current_whs if w.strip() != '']
+                    current_whs = [w.strip() for w in edited_wh['倉庫名稱'].dropna().astype(str).tolist() if w.strip() != '']
                     if not current_whs:
                         st.error("❌ 系統至少需要保留一個倉庫！")
                     else:
@@ -724,8 +629,7 @@ elif menu == "商品庫存":
                             with get_db() as conn:
                                 cursor = conn.cursor()
                                 cursor.execute("DELETE FROM warehouses")
-                                for w in current_whs:
-                                    cursor.execute("INSERT INTO warehouses (name) VALUES (?)", (w,))
+                                for w in current_whs: cursor.execute("INSERT INTO warehouses (name) VALUES (?)", (w,))
                                 conn.commit()
                             st.success("✅ 倉庫名單已成功更新！系統將自動重載。")
                             time.sleep(1)
@@ -735,29 +639,20 @@ elif menu == "商品庫存":
             else:
                 st.caption("🔒 您沒有編輯倉庫名稱的權限。")
 
-        # ==========================================
-        # --- Tab 4: 日誌 ---
-        # ==========================================
-        with tab_log:
-            st.subheader("📜 庫存操作變動審查軌跡")
-            st.write("此處會即時顯示系統中所有人工進行「修正庫存」或「刪除庫存」的歷史操作紀錄，時間依最新時間排序。")
-            
-            with get_db() as conn:
-                df_logs = pd.read_sql("""
-                    SELECT timestamp as 操作時間, operator as 操作人員, 
-                           action_type as 動作類別, details as 變動詳情說明 
-                    FROM inventory_logs 
-                    ORDER BY id DESC
-                """, conn)
-                
-            if df_logs.empty:
-                st.caption("✨ 目前尚無任何庫存更動日誌紀錄，系統營運正常。")
-            else:
-                st.dataframe(df_logs, use_container_width=True, hide_index=True)
-                
-                if st.session_state.get('role') == "Admin":
+        # 🌟 僅有 Admin 能觀看的庫存異動日誌
+        if is_admin:
+            with tabs[3]:
+                st.subheader("📜 庫存操作變動審查軌跡 (Admin 專屬)")
+                st.write("此處會即時顯示系統中所有人工進行「修正庫存」或「刪除庫存」的歷史操作紀錄，時間依最新時間排序。")
+                with get_db() as conn:
+                    df_logs = pd.read_sql("SELECT timestamp as 操作時間, operator as 操作人員, action_type as 動作類別, details as 變動詳情說明 FROM inventory_logs ORDER BY id DESC", conn)
+                    
+                if df_logs.empty:
+                    st.caption("✨ 目前尚無任何庫存更動日誌紀錄，系統營運正常。")
+                else:
+                    st.dataframe(df_logs, use_container_width=True, hide_index=True)
                     st.write("")
-                    if st.checkbox("⚠️ 啟用清除歷史日誌安全授權"):
+                    if st.checkbox("⚠️ 啟用清除歷史日誌安全授權 (僅限 Admin)"):
                         if st.button("🗑️ 清空所有變更日誌歷史紀錄", type="primary"):
                             with get_db() as conn:
                                 conn.execute("DELETE FROM inventory_logs")
@@ -770,6 +665,8 @@ elif menu == "商品庫存":
 
 elif menu == "採購管理":
     st.title("🛒 採購與進貨管理系統")
+    current_operator = st.session_state.get('user', 'admin')
+    is_admin = (st.session_state.get('role') == 'Admin')
     
     if not check_perm(role, "採購管理", "can_view"):
         st.error("🚫 您無權限訪問此模組")
@@ -778,23 +675,22 @@ elif menu == "採購管理":
     with get_db() as conn:
         rate = conn.execute("SELECT value FROM settings WHERE key='exchange_rate'").fetchone()[0]
 
-    tab1, tab2, tab3 = st.tabs(["📝 新增採購單", "📋 採購單歷史與點收驗收", "📊 批次作業 (導入/導出)"])
-
-    # ==========================================
-    # --- Tab 1: 新增採購單 ---
-    # ==========================================
-    with tab1:
-        st.subheader("✍️ 建立新採購單單據")
+    # 🌟 動態隱藏分頁
+    tabs_list = ["📝 新增採購單", "📋 採購單歷史與點收驗收", "📊 批次作業 (導入/導出)"]
+    if is_admin:
+        tabs_list.append("📜 採購異動日誌 (僅管理員可見)")
         
+    tabs = st.tabs(tabs_list)
+
+    with tabs[0]:
+        st.subheader("✍️ 建立新採購單單據")
         if not check_perm(role, "採購管理", "can_edit"):
             st.warning("🔒 您的權限無法新增採購單。")
         else:
             with get_db() as conn:
-                # 🌟 這裡修改了：多撈取「圖片路徑」
                 prod_df = pd.read_sql("SELECT 編碼, 名稱, 圖片路徑 FROM products ORDER BY 編碼 ASC", conn)
                 wh_df = pd.read_sql("SELECT name FROM warehouses", conn) 
                 
-            # 🌟 這裡修改了：將編碼與名稱合併成新陣列，方便下拉選單辨識防呆
             prod_df['顯示選單'] = prod_df['編碼'] + " | " + prod_df['名稱']
             valid_product_options = prod_df['顯示選單'].tolist()
             valid_warehouses = wh_df['name'].tolist() 
@@ -808,11 +704,9 @@ elif menu == "採購管理":
                 date_input = col_m1.date_input("採購日期")
                 supplier_input = col_m2.text_input("採購廠商 (供應商名稱)", placeholder="例如：法國香氛總倉")
                 warehouse_input = col_m3.selectbox("購入的倉庫", valid_warehouses)
-                staff_input = col_m4.text_input("採購人員", value=st.session_state.get('user', 'admin'))
+                staff_input = col_m4.text_input("採購人員", value=current_operator)
                 
                 st.write("📌 **請於下方表格中挑選採購品項及金額：**")
-                
-                # 🌟 更新 session_state key，避免舊的欄位名稱打架報錯
                 if "po_editor_df_v2" not in st.session_state:
                     st.session_state.po_editor_df_v2 = pd.DataFrame(columns=["挑選商品", "數量", "人民幣單價"])
                     
@@ -825,19 +719,14 @@ elif menu == "採購管理":
                     }
                 )
                 
-                # ==========================================
-                # 🌟 全新實裝：即時圖片預覽防呆牆
-                # ==========================================
                 if not edited_items.empty and not edited_items["挑選商品"].isnull().all():
                     st.write("🖼️ **已選商品圖片確認區** (預防選錯防呆)")
-                    preview_cols = st.columns(6) # 橫向排 6 個，超出會自動換行
+                    preview_cols = st.columns(6)
                     col_idx = 0
                     for _, row in edited_items.iterrows():
                         if pd.notna(row['挑選商品']) and str(row['挑選商品']).strip():
-                            # 將 "編碼 | 名稱" 拆開，只拿回最前面的純編碼
                             raw_code = str(row['挑選商品']).split(" | ")[0].strip()
                             matching_row = prod_df[prod_df['編碼'] == raw_code]
-                            
                             if not matching_row.empty:
                                 img_path = matching_row['圖片路徑'].values[0]
                                 with preview_cols[col_idx % 6]:
@@ -849,7 +738,6 @@ elif menu == "採購管理":
                                 col_idx += 1
                     st.write("") 
                     
-                # 計算總計
                 if not edited_items.empty:
                     edited_items['數量'] = pd.to_numeric(edited_items['數量']).fillna(0).astype(int)
                     edited_items['人民幣單價'] = pd.to_numeric(edited_items['人民幣單價']).fillna(0.0)
@@ -877,21 +765,20 @@ elif menu == "採購管理":
                             order_id = f"PO-{time.strftime('%Y%m%d')}-{int(time.time())%100000:05d}"
                             with get_db() as conn:
                                 cursor = conn.cursor()
-                                cursor.execute("""
-                                    INSERT INTO procurement_orders (order_id, date, supplier, total_qty, total_amount_rmb, total_amount_twd, warehouse, staff, status)
-                                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, '待驗收')
-                                """, (order_id, str(date_input), supplier_input.strip(), total_qty, total_rmb, total_twd, warehouse_input, staff_input))
+                                cursor.execute("INSERT INTO procurement_orders (order_id, date, supplier, total_qty, total_amount_rmb, total_amount_twd, warehouse, staff, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, '待驗收')", 
+                                               (order_id, str(date_input), supplier_input.strip(), total_qty, total_rmb, total_twd, warehouse_input, staff_input))
                                 
                                 for _, row in edited_items.iterrows():
                                     if pd.notna(row['挑選商品']) and str(row['挑選商品']).strip() and row['數量'] > 0:
-                                        # 🌟 儲存時自動把 "編碼 | 名稱" 拆卸，只把純編碼寫入資料庫確保整潔
                                         raw_code = str(row['挑選商品']).split(" | ")[0].strip()
                                         item_total_rmb = int(row['數量']) * float(row['人民幣單價'])
-                                        cursor.execute("""
-                                            INSERT INTO procurement_items (order_id, code, qty, unit_price_rmb, total_price_rmb)
-                                            VALUES (?, ?, ?, ?, ?)
-                                        """, (order_id, raw_code, int(row['數量']), float(row['人民幣單價']), item_total_rmb))
+                                        cursor.execute("INSERT INTO procurement_items (order_id, code, qty, unit_price_rmb, total_price_rmb) VALUES (?, ?, ?, ?, ?)", 
+                                                       (order_id, raw_code, int(row['數量']), float(row['人民幣單價']), item_total_rmb))
                                 conn.commit()
+                            
+                            # 🌟 寫入日誌
+                            log_system_action("採購管理", current_operator, "建立採購單", f"單號: {order_id}，廠商: {supplier_input}，共 {total_qty} 件，金額 {total_rmb:,.2f} RMB")
+                                
                             st.success(f"✅ 採購單 【{order_id}】 建立並保存成功！請至核對頁面辦理點收。")
                             st.session_state.po_editor_df_v2 = pd.DataFrame(columns=["挑選商品", "數量", "人民幣單價"]) 
                             time.sleep(1.5)
@@ -899,19 +786,10 @@ elif menu == "採購管理":
                         except Exception as e:
                             st.error(f"❌ 資料庫寫入異常，單據儲存失敗！錯誤詳情：{str(e)}")
 
-    # ==========================================
-    # --- Tab 2: 點收驗收 ---
-    # ==========================================
-    with tab2:
+    with tabs[1]:
         st.subheader("📋 採購單據維護與點收庫存作業")
         with get_db() as conn:
-            df_orders = pd.read_sql("""
-                SELECT order_id as 採購單號, date as 日期, supplier as 廠商, 
-                       total_qty as 總數量, total_amount_rmb as 人民幣總額, 
-                       total_amount_twd as 台幣總額, warehouse as 購入倉庫, 
-                       staff as 採購人員, status as 狀態 
-                FROM procurement_orders ORDER BY 日期 DESC, order_id DESC
-            """, conn)
+            df_orders = pd.read_sql("SELECT order_id as 採購單號, date as 日期, supplier as 廠商, total_qty as 總數量, total_amount_rmb as 人民幣總額, total_amount_twd as 台幣總額, warehouse as 購入倉庫, staff as 採購人員, status as 狀態 FROM procurement_orders ORDER BY 日期 DESC, order_id DESC", conn)
             
         if df_orders.empty:
             st.info("目前系統中無任何採購歷史紀錄。")
@@ -920,17 +798,10 @@ elif menu == "採購管理":
             st.divider()
             
             selected_po = st.selectbox("🔍 請選取採購單號以展開「詳細明細內容」與辦理進貨點收入庫：", df_orders['採購單號'].tolist())
-            
             if selected_po:
                 order_meta = df_orders[df_orders['採購單號'] == selected_po].iloc[0]
                 with get_db() as conn:
-                    df_items = pd.read_sql("""
-                        SELECT i.code as 編碼, p.名稱 as 名稱, p.圖片路徑, 
-                               i.qty as 數量, i.unit_price_rmb as 單價, i.total_price_rmb as 總金額
-                        FROM procurement_items i
-                        LEFT JOIN products p ON i.code = p.編碼
-                        WHERE i.order_id = ?
-                    """, conn, params=(selected_po,))
+                    df_items = pd.read_sql("SELECT i.code as 編碼, p.名稱 as 名稱, p.圖片路徑, i.qty as 數量, i.unit_price_rmb as 單價, i.total_price_rmb as 總金額 FROM procurement_items i LEFT JOIN products p ON i.code = p.編碼 WHERE i.order_id = ?", conn, params=(selected_po,))
                     
                 st.write(f"📁 **採購單號：** `{selected_po}` ｜ **狀態：** `{order_meta['狀態']}` ｜ **目的地倉庫：** `{order_meta['購入倉庫']}`")
                 
@@ -955,12 +826,14 @@ elif menu == "採購管理":
                                 with get_db() as conn:
                                     cursor = conn.cursor()
                                     for _, item in df_items.iterrows():
-                                        cursor.execute("""
-                                            INSERT INTO inventory (編碼, 倉庫位置, 數量, 單支成本_RMB, 採購廠商, 採購金額_RMB, 進貨日期)
-                                            VALUES (?, ?, ?, ?, ?, ?, ?)
-                                        """, (item['編碼'], order_meta['購入倉庫'], item['數量'], item['單價'], order_meta['廠商'], item['總金額'], order_meta['日期']))
+                                        cursor.execute("INSERT INTO inventory (編碼, 倉庫位置, 數量, 單支成本_RMB, 採購廠商, 採購金額_RMB, 進貨日期) VALUES (?, ?, ?, ?, ?, ?, ?)", 
+                                                       (item['編碼'], order_meta['購入倉庫'], item['數量'], item['單價'], order_meta['廠商'], item['總金額'], order_meta['日期']))
                                     cursor.execute("UPDATE procurement_orders SET status = '已入庫' WHERE order_id = ?", (selected_po,))
                                     conn.commit()
+                                
+                                # 🌟 寫入日誌
+                                log_system_action("採購管理", current_operator, "點收入庫", f"單號: {selected_po} 已成功驗收，並撥入倉庫 {order_meta['購入倉庫']}")
+                                
                                 st.success(f"✅ 點收入庫成功！採購單 {selected_po} 已正式與庫存完成連動，數量已匯入庫存。")
                                 time.sleep(1.5)
                                 st.rerun()
@@ -972,57 +845,32 @@ elif menu == "採購管理":
                     st.write("")
                     st.success("🎉 此採購單已完成點收入庫驗收，商品數量已在『商品庫存管理』核算中。")
 
-    # ==========================================
-    # --- Tab 3: 導入/導出 ---
-    # ==========================================
-    with tab3:
+    with tabs[2]:
         st.subheader("📤 導出公司完整採購報表")
-        
         if not check_perm(role, "採購管理", "can_download"):
             st.warning("🔒 您沒有下載採購報表的權限。")
         else:
             try:
                 with get_db() as conn:
-                    df_report = pd.read_sql("""
-                        SELECT o.order_id as 採購單號, o.date as 日期, o.supplier as 廠商, 
-                               o.warehouse as 購入倉庫, o.staff as 採購人員, o.status as 狀態,
-                               i.code as 商品編碼, i.qty as 採購數量, i.unit_price_rmb as 人民幣單價, i.total_price_rmb as 人民幣總額
-                        FROM procurement_orders o
-                        JOIN procurement_items i ON o.order_id = i.order_id
-                        ORDER BY o.date DESC, o.order_id DESC
-                    """, conn)
-                    
+                    df_report = pd.read_sql("SELECT o.order_id as 採購單號, o.date as 日期, o.supplier as 廠商, o.warehouse as 購入倉庫, o.staff as 採購人員, o.status as 狀態, i.code as 商品編碼, i.qty as 採購數量, i.unit_price_rmb as 人民幣單價, i.total_price_rmb as 人民幣總額 FROM procurement_orders o JOIN procurement_items i ON o.order_id = i.order_id ORDER BY o.date DESC, o.order_id DESC", conn)
                 from io import BytesIO
                 output_excel = BytesIO()
                 with pd.ExcelWriter(output_excel, engine='openpyxl') as writer:
                     df_report.to_excel(writer, index=False, sheet_name='採購明細總表')
-                    
-                st.download_button(
-                    label="💾 點擊下載完整採購歷史明細報表 (Excel 格式)",
-                    data=output_excel.getvalue(),
-                    file_name="procurement_global_report.xlsx",
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                    use_container_width=True
-                )
+                st.download_button(label="💾 點擊下載完整採購歷史明細報表 (Excel 格式)", data=output_excel.getvalue(), file_name="procurement_global_report.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True)
             except Exception as e:
                 st.error(f"❌ 報表導出模組發生例外錯誤：{str(e)}")
 
         st.divider()
         st.subheader("📥 導入外部採購單資料")
-        
         if not check_perm(role, "採購管理", "can_upload"):
             st.warning("🔒 您沒有上傳外部採購單的權限。")
         else:
             st.caption("💡 批次匯入 Excel / CSV 欄位名稱順序必須包含：日期, 廠商, 購入倉庫, 採購人員, 商品編碼, 數量, 人民幣單價")
             uploaded_po = st.file_uploader("選擇您要上傳的批次採購檔案", type=["csv", "xlsx"])
-            
             if uploaded_po and st.button("🚀 執行批量採購單據匯入作業", type="primary"):
                 try:
-                    if uploaded_po.name.endswith('.csv'):
-                        df_imp = pd.read_csv(uploaded_po)
-                    else:
-                        df_imp = pd.read_excel(uploaded_po, engine='openpyxl')
-                        
+                    df_imp = pd.read_csv(uploaded_po) if uploaded_po.name.endswith('.csv') else pd.read_excel(uploaded_po, engine='openpyxl')
                     required_cols = ["日期", "廠商", "購入倉庫", "採購人員", "商品編碼", "數量", "人民幣單價"]
                     
                     if not all(c in df_imp.columns for c in required_cols):
@@ -1040,23 +888,36 @@ elif menu == "採購管理":
                                 g_rmb = float((group['數量'] * group['人民幣單價']).sum())
                                 g_twd = g_rmb * rate
                                 
-                                cursor.execute("""
-                                    INSERT INTO procurement_orders (order_id, date, supplier, total_qty, total_amount_rmb, total_amount_twd, warehouse, staff, status)
-                                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, '待驗收')
-                                """, (order_id, str(base_row['日期']), str(base_row['廠商']), g_qty, g_rmb, g_twd, str(base_row['購入倉庫']), str(base_row['採購人員'])))
+                                cursor.execute("INSERT INTO procurement_orders (order_id, date, supplier, total_qty, total_amount_rmb, total_amount_twd, warehouse, staff, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, '待驗收')", 
+                                               (order_id, str(base_row['日期']), str(base_row['廠商']), g_qty, g_rmb, g_twd, str(base_row['購入倉庫']), str(base_row['採購人員'])))
                                 
                                 for _, row in group.iterrows():
                                     item_rmb = int(row['數量']) * float(row['人民幣單價'])
-                                    cursor.execute("""
-                                        INSERT INTO procurement_items (order_id, code, qty, unit_price_rmb, total_price_rmb)
-                                        VALUES (?, ?, ?, ?, ?)
-                                    """, (order_id, str(row['商品編碼']), int(row['數量']), float(row['人民幣單價']), item_rmb))
+                                    cursor.execute("INSERT INTO procurement_items (order_id, code, qty, unit_price_rmb, total_price_rmb) VALUES (?, ?, ?, ?, ?)", 
+                                                   (order_id, str(row['商品編碼']), int(row['數量']), float(row['人民幣單價']), item_rmb))
                             conn.commit()
+                        
+                        # 🌟 寫入日誌
+                        log_system_action("採購管理", current_operator, "批次匯入採購單", f"從 Excel/CSV 成功匯入外部單據")
+                            
                         st.success("✅ 外部採購單據批次匯入作業成功完成！所有新單據預設為『待驗收』狀態。")
                         time.sleep(1.5)
                         st.rerun()
                 except Exception as e:
                     st.error(f"❌ 批量解析匯入失敗：格式不正確或資料有誤。詳情：{str(e)}")
+
+    # 🌟 僅 Admin 可見的採購日誌分頁
+    if is_admin:
+        with tabs[3]:
+            st.subheader("📜 採購管理日誌 (Admin 專屬)")
+            st.write("顯示新增採購單、點收入庫、匯入等所有操作歷史。")
+            with get_db() as conn:
+                df_sys_logs = pd.read_sql("SELECT timestamp as 操作時間, operator as 操作人員, action_type as 動作類別, details as 變動詳情說明 FROM system_logs WHERE module='採購管理' ORDER BY id DESC", conn)
+                
+            if df_sys_logs.empty:
+                st.caption("✨ 目前尚無採購紀錄日誌。")
+            else:
+                st.dataframe(df_sys_logs, use_container_width=True, hide_index=True)
                 
 elif menu == "訂單明細":
     st.title("🧾 客戶訂單明細")
@@ -1078,13 +939,14 @@ elif menu == "財務報表":
 
 elif menu == "權限管理":
     st.title("🔐 系統權限與帳號管理")
+    current_operator = st.session_state.get('user', 'admin')
     
     if st.session_state.get('user') != 'admin' and role != "Admin": 
         st.error("🚫 僅限總管理員訪問此頁面")
         st.stop()
         
-    # 🌟 修改：將原本的兩個分頁，擴充加入第三個分頁「📜 帳號登入歷程紀錄」
-    t_acct, t_perm, t_login_log = st.tabs(["👥 帳號基本資料管理", "⚙️ 細部模組權限配置", "📜 帳號登入歷程紀錄"])
+    # 🌟 擴充加入第四個分頁「📜 權限變更日誌」
+    t_acct, t_perm, t_login_log, t_audit = st.tabs(["👥 帳號基本資料管理", "⚙️ 細部模組權限配置", "📜 帳號登入歷程紀錄", "📜 權限變更日誌"])
     
     # === Tab A: 帳號管理 ===
     with t_acct:
@@ -1103,8 +965,7 @@ elif menu == "權限管理":
         )
         
         if st.button("💾 儲存帳號基本資料", type="primary"):
-            current_users = edited_users['帳號'].dropna().astype(str).tolist()
-            current_users = [u.strip() for u in current_users if u.strip() != '']
+            current_users = [u.strip() for u in edited_users['帳號'].dropna().astype(str).tolist() if u.strip() != '']
             
             if 'admin' not in current_users:
                 st.error("❌ 系統防護：禁止刪除預設的 'admin' 總帳號！")
@@ -1121,11 +982,12 @@ elif menu == "權限管理":
                             if not u_name or u_name == 'nan': continue
                             
                             u_role = 'Admin' if u_name == 'admin' else 'CS'
-                            cursor.execute("""
-                                INSERT OR REPLACE INTO users (username, password, nickname, role) 
-                                VALUES (?, ?, ?, ?)
-                            """, (u_name, encode_pw(u_pwd), u_nick, u_role))
+                            cursor.execute("INSERT OR REPLACE INTO users (username, password, nickname, role) VALUES (?, ?, ?, ?)", (u_name, encode_pw(u_pwd), u_nick, u_role))
                         conn.commit()
+                        
+                    # 🌟 寫入日誌
+                    log_system_action("權限管理", current_operator, "修改帳號資料", f"更新了系統使用者帳號清單與資訊，當前共有 {len(current_users)} 個帳號")
+                        
                     st.success("✅ 帳號資料更新成功！")
                     time.sleep(1)
                     st.rerun()
@@ -1141,28 +1003,19 @@ elif menu == "權限管理":
         if user_list.empty:
             st.warning("目前系統只有 admin 帳號，請先至『帳號基本資料管理』新增員工帳號。")
         else:
-            # 製作友善的下拉選單選項 (帳號 - 暱稱)
             user_options = [f"{r['username']} ({r['nickname']})" if r['nickname'] else r['username'] for _, r in user_list.iterrows()]
             selected_str = st.selectbox("🔍 請選擇要設定權限的帳號：", user_options)
-            select_u = selected_str.split(" (")[0] # 取出純帳號
+            select_u = selected_str.split(" (")[0]
             
             modules = ["商品訊息", "商品庫存", "採購管理", "訂單明細", "財務報表"]
             with get_db() as conn:
                 df_p = pd.read_sql("SELECT module, can_view, can_edit, can_upload, can_download FROM user_perms WHERE username=?", conn, params=(select_u,))
                 
-            # 建立該員工目前的權限陣列
             perm_records = []
             for m in modules:
                 match = df_p[df_p['module'] == m]
                 if not match.empty:
-                    perm_records.append({
-                        "模組": m,
-                        "👁️ 查看": bool(match.iloc[0]['can_view']),
-                        "✏️ 編輯": bool(match.iloc[0]['can_edit']),
-                        "📤 上傳": bool(match.iloc[0]['can_upload']),
-                        "📥 下載": bool(match.iloc[0]['can_download']),
-                        "🌟 全選/全開": False
-                    })
+                    perm_records.append({"模組": m, "👁️ 查看": bool(match.iloc[0]['can_view']), "✏️ 編輯": bool(match.iloc[0]['can_edit']), "📤 上傳": bool(match.iloc[0]['can_upload']), "📥 下載": bool(match.iloc[0]['can_download']), "🌟 全選/全開": False})
                 else:
                     perm_records.append({"模組": m, "👁️ 查看": False, "✏️ 編輯": False, "📤 上傳": False, "📥 下載": False, "🌟 全選/全開": False})
                     
@@ -1175,54 +1028,46 @@ elif menu == "權限管理":
                     cursor.execute("DELETE FROM user_perms WHERE username=?", (select_u,))
                     
                     for _, row in edited_p.iterrows():
-                        # 若勾選了全開，則覆蓋為全 True
                         if row['🌟 全選/全開']:
                             v, e, u, d = True, True, True, True
                         else:
                             v, e, u, d = row['👁️ 查看'], row['✏️ 編輯'], row['📤 上傳'], row['📥 下載']
                             
-                        cursor.execute("""
-                            INSERT INTO user_perms (username, module, can_view, can_edit, can_upload, can_download)
-                            VALUES (?, ?, ?, ?, ?, ?)
-                        """, (select_u, row['模組'], v, e, u, d))
+                        cursor.execute("INSERT INTO user_perms (username, module, can_view, can_edit, can_upload, can_download) VALUES (?, ?, ?, ?, ?, ?)", (select_u, row['模組'], v, e, u, d))
                     conn.commit()
+                
+                # 🌟 寫入日誌
+                log_system_action("權限管理", current_operator, "修改細部權限", f"更新了帳號 {select_u} 的各模組存取權限")
+                    
                 st.success(f"✅ 帳號 {select_u} 的顆粒化權限已生效！(被設定者需重新整理網頁方可套用)")
                 time.sleep(1.5)
                 st.rerun()
                 
-                
-    # === 🌟 全新新增 Tab C: 登入歷程牆 ===
+    # === Tab C: 登入歷程牆 ===
     with t_login_log:
         st.subheader("📋 員工系統登入審計安全日誌")
-        st.write("此處會即時顯示所有使用者（包含管理員與員工）的登入軌跡，防範帳號遭盜用或異常跨國登入。")
-        
+        st.write("此處會即時顯示所有使用者的登入軌跡，防範帳號遭盜用或異常跨國登入。")
         with get_db() as conn:
-            # 撈出最新的 200 筆登入歷史，按照時間從新到舊排序
-            df_login_data = pd.read_sql("""
-                SELECT username as 登入帳號, login_time as 登入時間, 
-                       ip as "IP 位址", location as 解析地點, device as "操作裝置 / 瀏覽器環境"
-                FROM login_logs 
-                ORDER BY id DESC 
-                LIMIT 200
-            """, conn)
+            df_login_data = pd.read_sql("SELECT username as 登入帳號, login_time as 登入時間, ip as 'IP 位址', location as 解析地點, device as '操作裝置 / 瀏覽器環境' FROM login_logs ORDER BY id DESC LIMIT 200", conn)
             
         if df_login_data.empty:
             st.info("✨ 目前系統尚無任何登入歷程紀錄。")
         else:
-            # 使用大表格精美呈現，並將寬度自動拉滿
-            st.dataframe(
-                df_login_data, 
-                use_container_width=True, 
-                hide_index=True
-            )
-            # 貼心提供歷程下載備份功能
+            st.dataframe(df_login_data, use_container_width=True, hide_index=True)
             from io import BytesIO
             output_log = BytesIO()
             with pd.ExcelWriter(output_log, engine='openpyxl') as writer:
                 df_login_data.to_excel(writer, index=False, sheet_name='Login_Logs')
-            st.download_button(
-                label="📥 下載完整登入歷程備份 (Excel 格式)",
-                data=output_log.getvalue(),
-                file_name=f"login_audit_logs_{time.strftime('%Y%m%d')}.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-            )
+            st.download_button(label="📥 下載完整登入歷程備份 (Excel 格式)", data=output_log.getvalue(), file_name=f"login_audit_logs_{time.strftime('%Y%m%d')}.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+
+    # === 🌟 全新 Tab D: 權限變更歷程 ===
+    with t_audit:
+        st.subheader("📜 系統權限變更日誌")
+        st.write("此處會即時顯示所有關於「帳號增刪修改」與「模組權限調動」的操作歷程。")
+        with get_db() as conn:
+            df_perm_logs = pd.read_sql("SELECT timestamp as 操作時間, operator as 操作人員, action_type as 動作類別, details as 變動詳情說明 FROM system_logs WHERE module='權限管理' ORDER BY id DESC", conn)
+            
+        if df_perm_logs.empty:
+            st.caption("✨ 目前尚無權限變更紀錄。")
+        else:
+            st.dataframe(df_perm_logs, use_container_width=True, hide_index=True)
