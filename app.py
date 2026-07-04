@@ -58,13 +58,15 @@ def init_db_v6():  # 🌟 升級為 v6
         # 1. 建立系統核心表格
         cursor.execute('''CREATE TABLE IF NOT EXISTS users (username TEXT PRIMARY KEY, password TEXT, role TEXT)''')
         
-        # 🌟 安全擴充：為舊的 users 表格加入「暱稱」與「最後活躍時間」欄位
+        # 🌟 安全擴充：為舊的 users 表格加入「暱稱」、「最後活躍時間」與「管理員私密備註」欄位
         cursor.execute("PRAGMA table_info(users)")
         cols = [info[1] for info in cursor.fetchall()]
         if 'nickname' not in cols:
             cursor.execute("ALTER TABLE users ADD COLUMN nickname TEXT DEFAULT ''")
         if 'last_active' not in cols:
             cursor.execute("ALTER TABLE users ADD COLUMN last_active REAL DEFAULT 0")
+        if 'admin_remark' not in cols:
+            cursor.execute("ALTER TABLE users ADD COLUMN admin_remark TEXT DEFAULT ''")
             
         cursor.execute('''CREATE TABLE IF NOT EXISTS permissions (role TEXT, module TEXT, can_view BOOLEAN, can_edit BOOLEAN, can_upload BOOLEAN, can_download BOOLEAN)''')
         
@@ -312,9 +314,21 @@ if 'logged_in' not in st.session_state:
 
 # --- 6. 側邊欄設計 ---
 st.sidebar.title("🏢 強盛集團 ERP")
-# 🌟 側邊欄顯示暱稱
+
+# 🌟 側邊欄顯示與修改暱稱 (僅修改自己的暱稱)
 show_name = st.session_state.get('nickname', st.session_state['user'])
 st.sidebar.info(f"👤 登入者: {show_name} \n🔑 權限組: {st.session_state['role']}")
+
+with st.sidebar.expander("✏️ 修改我的顯示暱稱"):
+    new_nick = st.text_input("輸入新暱稱", value=show_name if show_name != st.session_state['user'] else "")
+    if st.button("更新暱稱", use_container_width=True):
+        with get_db() as conn:
+            conn.execute("UPDATE users SET nickname = ? WHERE username = ?", (new_nick, st.session_state['user']))
+            conn.commit()
+        st.session_state['nickname'] = new_nick
+        st.success("暱稱已更新！")
+        time.sleep(0.5)
+        st.rerun()
 
 # 👇 更改主動登出按鈕邏輯，徹底清除 Cookie 與資料庫紀錄 👇
 if st.sidebar.button("登出系統", use_container_width=True): 
@@ -1091,9 +1105,9 @@ elif menu == "權限管理":
     
     # === Tab A: 帳號管理 ===
     with t_acct:
-        st.info("管理員工帳號與密碼，並可設定『暱稱 / 備註』以利系統日誌追蹤識別。")
+        st.info("管理員工帳號。您可以查看員工自訂的暱稱，並在『私密備註』欄位填寫僅限管理員可見的內部標記。")
         with get_db() as conn:
-            df_users = pd.read_sql("SELECT username as 帳號, password as 密碼, nickname as 暱稱 FROM users", conn)
+            df_users = pd.read_sql("SELECT username as 帳號, password as 密碼, nickname as 員工自訂暱稱, admin_remark as 管理員私密備註 FROM users", conn)
             df_users['密碼'] = df_users['密碼'].apply(decode_pw)
             
         edited_users = st.data_editor(
@@ -1101,7 +1115,8 @@ elif menu == "權限管理":
             column_config={
                 "帳號": st.column_config.TextColumn("👤 登入帳號 (必填不可重複)", required=True),
                 "密碼": st.column_config.TextColumn("🔑 密碼 (明文顯示)", required=True),
-                "暱稱": st.column_config.TextColumn("📝 暱稱 / 職稱備註")
+                "員工自訂暱稱": st.column_config.TextColumn("📝 員工自訂暱稱"),
+                "管理員私密備註": st.column_config.TextColumn("🔒 私密備註 (僅 Admin 可見)")
             }
         )
         
@@ -1114,16 +1129,27 @@ elif menu == "權限管理":
                 try:
                     with get_db() as conn:
                         cursor = conn.cursor()
+                        # 刪除被移除的帳號
                         placeholders = ','.join(['?'] * len(current_users))
                         cursor.execute(f"DELETE FROM users WHERE username NOT IN ({placeholders})", current_users)
                         
+                        # 更新或新增帳號資料
                         for _, row in edited_users.iterrows():
                             u_name, u_pwd = str(row['帳號']).strip(), str(row['密碼']).strip()
-                            u_nick = str(row['暱稱']).strip() if pd.notna(row['暱稱']) else ""
+                            u_nick = str(row['員工自訂暱稱']).strip() if pd.notna(row['員工自訂暱稱']) else ""
+                            u_remark = str(row['管理員私密備註']).strip() if pd.notna(row['管理員私密備註']) else ""
                             if not u_name or u_name == 'nan': continue
                             
                             u_role = 'Admin' if u_name == 'admin' else 'CS'
-                            cursor.execute("INSERT OR REPLACE INTO users (username, password, nickname, role) VALUES (?, ?, ?, ?)", (u_name, encode_pw(u_pwd), u_nick, u_role))
+                            
+                            # 檢查是否存在，避免覆寫掉使用者的 last_active 狀態
+                            cursor.execute("SELECT 1 FROM users WHERE username=?", (u_name,))
+                            if cursor.fetchone():
+                                cursor.execute("UPDATE users SET password=?, nickname=?, admin_remark=?, role=? WHERE username=?", 
+                                               (encode_pw(u_pwd), u_nick, u_remark, u_role, u_name))
+                            else:
+                                cursor.execute("INSERT INTO users (username, password, nickname, admin_remark, role, last_active) VALUES (?, ?, ?, ?, ?, 0)", 
+                                               (u_name, encode_pw(u_pwd), u_nick, u_remark, u_role))
                         conn.commit()
                         
                     # 🌟 寫入日誌
