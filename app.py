@@ -143,9 +143,12 @@ def log_login_event(username):
     location = "未知地點"
     if ip and ip != "127.0.0.1" and not ip.startswith("192.168.") and not ip.startswith("10."):
         try:
+            # 🌟 透過 lang=zh-TW 取得繁體中文，並重新組合為「國家－城市」格式
             response = requests.get(f"http://ip-api.com/json/{ip}?lang=zh-TW", timeout=5).json()
             if response.get("status") == "success":
-                location = f"{response.get('country', '')} · {response.get('regionName', '')} ({response.get('city', '')})"
+                country = response.get('country', '')
+                city = response.get('city', response.get('regionName', ''))
+                location = f"{country}－{city}" if city else country
             else:
                 location = "內部/私人網路區間"
         except Exception:
@@ -1215,16 +1218,56 @@ elif menu == "權限管理":
         st.subheader("📋 員工系統登入審計安全日誌")
         st.write("此處會即時顯示所有使用者的登入軌跡，防範帳號遭盜用或異常跨國登入。")
         with get_db() as conn:
-            df_login_data = pd.read_sql("SELECT username as 登入帳號, login_time as 登入時間, ip as 'IP 位址', location as 解析地點, device as '操作裝置 / 瀏覽器環境' FROM login_logs ORDER BY id DESC LIMIT 200", conn)
+            # 取得原始資料
+            df_login_data = pd.read_sql("SELECT username, login_time, ip, location, device FROM login_logs ORDER BY id DESC LIMIT 200", conn)
             
         if df_login_data.empty:
             st.info("✨ 目前系統尚無任何登入歷程紀錄。")
         else:
-            st.dataframe(df_login_data, use_container_width=True, hide_index=True)
+            # 🌟 1. 將 login_time 拆分為「日期」與「時間」兩欄
+            df_login_data[['日期', '時間']] = df_login_data['login_time'].str.split(' ', n=1, expand=True)
+            
+            # 🌟 2. 自動判斷 User-Agent 轉換為易讀的「設備」與「瀏覽器環境」
+            def parse_user_agent(ua):
+                ua_str = str(ua).lower()
+                
+                # 判斷設備 OS
+                if 'windows' in ua_str: os_name = 'Windows 電腦'
+                elif 'mac os' in ua_str: os_name = 'Mac 電腦'
+                elif 'android' in ua_str: os_name = 'Android 手機/平板'
+                elif 'iphone' in ua_str: os_name = 'iPhone'
+                elif 'ipad' in ua_str: os_name = 'iPad'
+                elif 'linux' in ua_str: os_name = 'Linux'
+                else: os_name = '未知設備'
+                
+                # 判斷瀏覽器
+                if 'edg' in ua_str: browser = 'Edge'
+                elif 'line' in ua_str: browser = 'LINE 內建'
+                elif 'micromessenger' in ua_str: browser = '微信內建'
+                elif 'chrome' in ua_str: browser = 'Chrome'
+                elif 'safari' in ua_str and 'chrome' not in ua_str: browser = 'Safari'
+                elif 'firefox' in ua_str: browser = 'Firefox'
+                else: browser = '其他/未知'
+                
+                return pd.Series([os_name, browser])
+            
+            # 應用解析
+            df_login_data[['設備', '瀏覽器環境']] = df_login_data['device'].apply(parse_user_agent)
+            
+            # 🌟 3. 整理最終要顯示的 DataFrame 欄位順序與中文命名
+            df_display = df_login_data[['username', '日期', '時間', 'ip', 'location', '設備', '瀏覽器環境']].copy()
+            df_display = df_display.rename(columns={
+                'username': '帳號',
+                'ip': 'IP 位址',
+                'location': '位置'
+            })
+            
+            st.dataframe(df_display, use_container_width=True, hide_index=True)
+            
             from io import BytesIO
             output_log = BytesIO()
             with pd.ExcelWriter(output_log, engine='openpyxl') as writer:
-                df_login_data.to_excel(writer, index=False, sheet_name='Login_Logs')
+                df_display.to_excel(writer, index=False, sheet_name='Login_Logs')
             st.download_button(label="📥 下載完整登入歷程備份 (Excel 格式)", data=output_log.getvalue(), file_name=f"login_audit_logs_{time.strftime('%Y%m%d')}.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
     # === 🌟 全新 Tab D: 權限變更歷程 ===
