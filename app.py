@@ -134,30 +134,50 @@ def log_system_action(module, operator, action_type, details):
 def log_login_event(username):
     try:
         headers = st.context.headers
-        ip_raw = headers.get("X-Forwarded-For", "127.0.0.1")
-        ip = ip_raw.split(",")[0].strip()
+        ip_raw = headers.get("X-Forwarded-For", "")
+        if ip_raw:
+            ip = ip_raw.split(",")[0].strip()
+        else:
+            ip = "127.0.0.1"
         device = headers.get("User-Agent", "未知裝置/瀏覽器")
     except Exception:
         ip, device = "127.0.0.1", "本地運行環境/無法辨識裝置"
 
     location = "未知地點"
-    if ip and ip != "127.0.0.1" and not ip.startswith("192.168.") and not ip.startswith("10."):
-        try:
-            # 🌟 透過 lang=zh-TW 取得繁體中文，並重新組合為「國家－城市」格式
-            response = requests.get(f"http://ip-api.com/json/{ip}?lang=zh-TW", timeout=5).json()
-            if response.get("status") == "success":
-                country = response.get('country', '')
-                city = response.get('city', response.get('regionName', ''))
-                location = f"{country}－{city}" if city else country
-            else:
-                location = "內部/私人網路區間"
-        except Exception:
-            location = "地理定位查詢超時"
-    else:
-        location = "區域網路/本機端測試 (Localhost)"
+    
+    # 判斷是否為本地端或私人網段 (包含 IPv6 的 ::1)
+    is_local = not ip or ip == "127.0.0.1" or ip == "::1" or ip.startswith("192.168.") or ip.startswith("10.")
+
+    try:
+        if is_local:
+            # 🌟 如果是本機端測試，不帶特定 IP，讓 API 自動偵測你目前上網的真實 Public IP
+            api_url = "http://ip-api.com/json/?lang=zh-TW"
+        else:
+            # 🌟 如果是實際上線部署，帶入抓取到的訪客真實 IP
+            api_url = f"http://ip-api.com/json/{ip}?lang=zh-TW"
+            
+        response = requests.get(api_url, timeout=5).json()
+        
+        if response.get("status") == "success":
+            if is_local:
+                # 把本機的 127.0.0.1 替換成 API 查到的真實對外 IP
+                ip = response.get('query', ip) 
+                
+            country = response.get('country', '')
+            city = response.get('city', response.get('regionName', ''))
+            location = f"{country}－{city}" if city else country
+            
+            # 如果是本機測試，可以在地點後方加個小標記方便辨識
+            if is_local:
+                location += " (本機測試)"
+        else:
+            location = "內部/私人網路區間"
+    except Exception:
+        location = "地理定位查詢超時"
 
     with get_db() as conn:
-        conn.execute("INSERT INTO login_logs (username, login_time, ip, location, device) VALUES (?, ?, ?, ?, ?)", (username, time.strftime('%Y-%m-%d %H:%M:%S'), ip, location, device))
+        conn.execute("INSERT INTO login_logs (username, login_time, ip, location, device) VALUES (?, ?, ?, ?, ?)", 
+                     (username, time.strftime('%Y-%m-%d %H:%M:%S'), ip, location, device))
         conn.commit()
 
 # --- 🌟 4. 全新顆粒化權限檢查工具 ---
