@@ -330,12 +330,35 @@ if st.sidebar.button("登出系統", use_container_width=True):
     
 st.sidebar.divider()
 
+# 🌟 先取得當前使用者的角色，才能進行權限判斷
+role = st.session_state['role']
+
+# 👇 1. 動態根據權限生成側邊欄選單 👇
+available_modules = ["首頁"]  # 首頁預設大家都看得到
+
+# 逐一檢查各大模組的「查看(can_view)」權限，有權限才加入選單
+if check_perm(role, "商品訊息", "can_view"):
+    available_modules.append("商品訊息")
+if check_perm(role, "商品庫存", "can_view"):
+    available_modules.append("商品庫存")
+if check_perm(role, "採購管理", "can_view"):
+    available_modules.append("採購管理")
+if check_perm(role, "訂單明細", "can_view"):
+    available_modules.append("訂單明細")
+if check_perm(role, "財務報表", "can_view"):
+    available_modules.append("財務報表")
+
+# 🌟 2. 權限管理模組，強制只有 Admin 總管理員才看得見
+if role == "Admin" or st.session_state.get('user') == 'admin':
+    available_modules.append("權限管理")
+
+# 👇 3. 將過濾後的可用清單渲染到側邊欄 👇
 menu = st.sidebar.radio(
     "請選擇功能模組：", 
-    ["首頁", "商品訊息", "商品庫存", "採購管理", "訂單明細", "財務報表", "權限管理"],
+    available_modules,
     key="main_menu"
 )
-role = st.session_state['role']
+# 👆 動態選單替換結束 👆
 
 # --- 7. 各大模組骨架預覽 ---
 
