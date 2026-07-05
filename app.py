@@ -147,7 +147,7 @@ def get_db():
     
 # --- 3. 初始化資料庫與預設權限 ---
 @st.cache_resource
-def init_db_v6():  # 🌟 升級為 v6
+def init_db_v7():  # 🌟 升級為 v7，確保系統重新整理時會建立新表
     with get_db() as conn:
         cursor = conn.cursor()
         
@@ -206,9 +206,30 @@ def init_db_v6():  # 🌟 升級為 v6
         # 🌟 9. 新增：全局系統操作日誌表 (供採購、訂單、權限等共用)
         cursor.execute('''CREATE TABLE IF NOT EXISTS system_logs (id INTEGER PRIMARY KEY AUTOINCREMENT, timestamp TEXT, module TEXT, operator TEXT, action_type TEXT, details TEXT)''')
         
+        # 🌟 10. 全新：客戶訂單明細表 (涵蓋 17 個專屬欄位，訂單編號為唯一主鍵)
+        cursor.execute('''CREATE TABLE IF NOT EXISTS customer_orders (
+            訂單編號 TEXT PRIMARY KEY,
+            訂單日期 DATE,
+            訂單連結 TEXT,
+            姓名 TEXT,
+            電話 TEXT,
+            門市 TEXT,
+            店號 TEXT,
+            品項內容 TEXT,
+            下單總數 INTEGER,
+            包裹應收 REAL,
+            商品成本 REAL,
+            物流運費 REAL,
+            出貨成本 REAL,
+            訂單損益 REAL,
+            物流編號 TEXT,
+            取貨狀態 TEXT DEFAULT '待出貨',
+            取貨日期 DATE
+        )''')
+
         conn.commit()
         
-init_db_v6()
+init_db_v7()
 
 # --- 日誌自動寫入工具群 ---
 def log_inventory_change(operator, action_type, details):
@@ -1195,12 +1216,131 @@ elif menu == "採購管理":
                 
 elif menu == "訂單明細":
     st.title("🧾 客戶訂單明細")
-    if check_perm(role, "訂單明細", "can_view"):
-        t1, t2, t3 = st.tabs(["📄 訂單列表", "🚚 出貨與物流狀態", "🔙 退換貨處理"])
-        with t1: st.info("匯入或手動建立客戶訂單，包含訂購人資訊與明細。")
-        with t2: st.info("追蹤超商/宅配等物流交寄狀態，出貨後自動扣除『商品庫存』。")
-        with t3: st.info("處理客訴退回，退回的商品可選擇是否重新加回庫存。")
-    else: st.error("🚫 您無權限訪問此模組")
+    current_operator = st.session_state.get('user', 'admin')
+    
+    if not check_perm(role, "訂單明細", "can_view"):
+        st.error("🚫 您無權限訪問此模組")
+        st.stop()
+
+    t1, t2 = st.tabs(["📄 訂單總表與追蹤", "📥 批次匯入與建檔"])
+
+    with t1:
+        st.info("在此查看並管理所有客戶訂單。你可以直接在下方表格中修改「取貨狀態」、「物流編號」等資訊，編輯完記得點擊最下方儲存。")
+        with get_db() as conn:
+            # 撈取所有 17 個欄位，依日期降冪排序
+            df_orders = pd.read_sql("SELECT * FROM customer_orders ORDER BY 訂單日期 DESC", conn)
+
+        if df_orders.empty:
+            st.warning("目前尚無任何訂單資料。請至「批次匯入與建檔」上傳 Excel/CSV，或手動建立第一筆訂單。")
+        
+        can_edit = check_perm(role, "訂單明細", "can_edit")
+        
+        # 針對特定欄位進行視覺優化與防呆
+        col_cfg = {
+            "訂單編號": st.column_config.TextColumn("訂單編號 (主鍵)", required=True),
+            "訂單連結": st.column_config.LinkColumn("🔗 訂單連結"),
+            "包裹應收": st.column_config.NumberColumn("包裹應收", format="$ %.2f"),
+            "商品成本": st.column_config.NumberColumn("商品成本", format="$ %.2f"),
+            "物流運費": st.column_config.NumberColumn("物流運費", format="$ %.2f"),
+            "出貨成本": st.column_config.NumberColumn("出貨成本", format="$ %.2f"),
+            "訂單損益": st.column_config.NumberColumn("訂單損益", format="$ %.2f"),
+            "下單總數": st.column_config.NumberColumn("下單總數", step=1),
+            "取貨狀態": st.column_config.SelectboxColumn("狀態", options=["待出貨", "配送中", "已抵達", "已取貨", "未取退回", "取消", "退換貨處理中"])
+        }
+
+        # 展開可動態編輯的 Data Editor (支援新增行、修改行)
+        edited_orders = st.data_editor(
+            df_orders if not df_orders.empty else pd.DataFrame(columns=["訂單日期", "訂單編號", "訂單連結", "姓名", "電話", "門市", "店號", "品項內容", "下單總數", "包裹應收", "商品成本", "物流運費", "出貨成本", "訂單損益", "物流編號", "取貨狀態", "取貨日期"]),
+            disabled=not can_edit,
+            hide_index=True,
+            use_container_width=True,
+            num_rows="dynamic" if can_edit else "fixed",
+            column_config=col_cfg,
+            key="orders_editor"
+        )
+
+        if can_edit and st.button("💾 儲存訂單變更", type="primary"):
+            try:
+                with get_db() as conn:
+                    cursor = conn.cursor()
+                    for _, row in edited_orders.iterrows():
+                        # 若未填寫訂單編號，則忽略該筆資料
+                        if pd.isna(row['訂單編號']) or str(row['訂單編號']).strip() == "":
+                            continue 
+                        
+                        # 自動把數值的空缺補為 0
+                        row = row.fillna({'下單總數': 0, '包裹應收': 0.0, '商品成本': 0.0, '物流運費': 0.0, '出貨成本': 0.0, '訂單損益': 0.0})
+                        
+                        # INSERT OR REPLACE：只要「訂單編號」存在就覆蓋更新，不存在就新增
+                        cursor.execute("""
+                            INSERT OR REPLACE INTO customer_orders 
+                            (訂單編號, 訂單日期, 訂單連結, 姓名, 電話, 門市, 店號, 品項內容, 下單總數, 包裹應收, 商品成本, 物流運費, 出貨成本, 訂單損益, 物流編號, 取貨狀態, 取貨日期)
+                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """, (
+                            str(row['訂單編號']).strip(), str(row.get('訂單日期', '')), str(row.get('訂單連結', '')),
+                            str(row.get('姓名', '')), str(row.get('電話', '')), str(row.get('門市', '')), str(row.get('店號', '')),
+                            str(row.get('品項內容', '')), int(row['下單總數']), float(row['包裹應收']), float(row['商品成本']),
+                            float(row['物流運費']), float(row['出貨成本']), float(row['訂單損益']), str(row.get('物流編號', '')),
+                            str(row.get('取貨狀態', '待出貨')), str(row.get('取貨日期', ''))
+                        ))
+                    conn.commit()
+                log_system_action("訂單明細", current_operator, "更新訂單資料", "透過編輯器儲存了訂單總表變更")
+                st.success("✅ 訂單資料已成功保存！")
+                time.sleep(1)
+                st.rerun()
+            except Exception as e:
+                st.error(f"❌ 儲存失敗：{str(e)}")
+
+    with t2:
+        st.subheader("📥 批量導入外部訂單資料")
+        if not check_perm(role, "訂單明細", "can_upload"):
+            st.warning("🔒 您沒有上傳外部訂單的權限。")
+        else:
+            st.caption("💡 支援 Excel 或 CSV 格式。系統會以「訂單編號」為基準，若匯入的編號已存在，將自動覆蓋更新原本資料。")
+            st.caption("📌 建議欄位名稱包含（可不全有）：訂單日期, 訂單編號, 訂單連結, 姓名, 電話, 門市, 店號, 品項內容, 下單總數, 包裹應收, 商品成本, 物流運費, 出貨成本, 訂單損益, 物流編號, 取貨狀態, 取貨日期")
+            uploaded_order = st.file_uploader("選擇訂單檔案", type=["csv", "xlsx"], key="order_uploader")
+            
+            if uploaded_order and st.button("🚀 執行訂單匯入", type="primary"):
+                try:
+                    df_imp = pd.read_csv(uploaded_order) if uploaded_order.name.endswith('.csv') else pd.read_excel(uploaded_order, engine='openpyxl')
+                    
+                    # 處理數值欄位的 NaN，轉為 0
+                    df_imp = df_imp.fillna({
+                        '下單總數': 0, '包裹應收': 0.0, '商品成本': 0.0,
+                        '物流運費': 0.0, '出貨成本': 0.0, '訂單損益': 0.0
+                    })
+                    # 處理文字欄位的 NaN，轉為空字串
+                    df_imp = df_imp.fillna("")
+
+                    with get_db() as conn:
+                        cursor = conn.cursor()
+                        count = 0
+                        for _, row in df_imp.iterrows():
+                            # 沒有訂單編號的資料直接跳過
+                            if not str(row.get('訂單編號', '')).strip():
+                                continue
+                            
+                            cursor.execute("""
+                                INSERT OR REPLACE INTO customer_orders 
+                                (訂單編號, 訂單日期, 訂單連結, 姓名, 電話, 門市, 店號, 品項內容, 下單總數, 包裹應收, 商品成本, 物流運費, 出貨成本, 訂單損益, 物流編號, 取貨狀態, 取貨日期)
+                                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            """, (
+                                str(row.get('訂單編號', '')).strip(), str(row.get('訂單日期', '')), str(row.get('訂單連結', '')),
+                                str(row.get('姓名', '')), str(row.get('電話', '')), str(row.get('門市', '')),
+                                str(row.get('店號', '')), str(row.get('品項內容', '')), int(row.get('下單總數', 0)),
+                                float(row.get('包裹應收', 0)), float(row.get('商品成本', 0)), float(row.get('物流運費', 0)),
+                                float(row.get('出貨成本', 0)), float(row.get('訂單損益', 0)), str(row.get('物流編號', '')),
+                                str(row.get('取貨狀態', '待出貨')), str(row.get('取貨日期', ''))
+                            ))
+                            count += 1
+                        conn.commit()
+                        
+                    log_system_action("訂單明細", current_operator, "匯入訂單資料", f"成功批次匯入了 {count} 筆訂單")
+                    st.success(f"✅ 成功匯入 / 更新 {count} 筆訂單資料！")
+                    time.sleep(1.5)
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"❌ 匯入失敗，請確認檔案格式是否正確。詳情：{str(e)}")
 
 elif menu == "財務報表":
     st.title("📈 財務與利潤分析")
