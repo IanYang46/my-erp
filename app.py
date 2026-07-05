@@ -1226,6 +1226,10 @@ elif menu == "訂單明細":
 
     with t1:
         st.info("在此查看並管理所有客戶訂單。你可以直接在下方表格中修改「取貨狀態」、「物流編號」等資訊，編輯完記得點擊最下方儲存。")
+        
+        # 🌟 1. 加入展開/縮起詳細欄位的切換開關 (預設為縮起狀態 False)
+        show_all_cols = st.toggle("🔍 展開顯示所有詳細欄位", value=False)
+        
         with get_db() as conn:
             df_orders = pd.read_sql("SELECT * FROM customer_orders ORDER BY 訂單日期 DESC", conn)
 
@@ -1246,6 +1250,14 @@ elif menu == "訂單明細":
             "取貨狀態": st.column_config.SelectboxColumn("狀態", options=["待出貨", "配送中", "已抵達", "已取貨", "未取退回", "取消", "退換貨處理中"])
         }
 
+        # 🌟 2. 判斷開關狀態，決定要渲染的欄位清單
+        if show_all_cols:
+            # 展開：顯示所有欄位
+            display_cols = ["訂單日期", "訂單編號", "訂單連結", "姓名", "電話", "門市", "店號", "品項內容", "下單總數", "包裹應收", "商品成本", "物流運費", "出貨成本", "訂單損益", "物流編號", "取貨狀態", "取貨日期"]
+        else:
+            # 縮起：只顯示你指定的核心欄位
+            display_cols = ["訂單編號", "訂單日期", "姓名", "品項內容", "包裹應收", "出貨成本", "訂單損益", "物流編號", "取貨狀態"]
+
         edited_orders = st.data_editor(
             df_orders if not df_orders.empty else pd.DataFrame(columns=["訂單日期", "訂單編號", "訂單連結", "姓名", "電話", "門市", "店號", "品項內容", "下單總數", "包裹應收", "商品成本", "物流運費", "出貨成本", "訂單損益", "物流編號", "取貨狀態", "取貨日期"]),
             disabled=not can_edit,
@@ -1253,6 +1265,7 @@ elif menu == "訂單明細":
             use_container_width=True,
             num_rows="dynamic" if can_edit else "fixed",
             column_config=col_cfg,
+            column_order=display_cols,  # 🌟 3. 將決定好的清單傳入 column_order 進行過濾
             key="orders_editor"
         )
 
