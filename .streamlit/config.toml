@@ -1,6 +1,6 @@
 [theme]
-primaryColor = "#2563EB"
-backgroundColor = "#F4F6F9"
-secondaryBackgroundColor = "#0F172A"
-textColor = "#334155"
+primaryColor = "#2563EB"          
+backgroundColor = "#F4F6F9"      
+secondaryBackgroundColor = "#FFFFFF"  # 🌟 改回純白，讓輸入框與元件背景變明亮
+textColor = "#0F172A"                 # 🌟 文字加深為極黑深藍，大幅提升閱讀清晰度
 font = "sans serif"
