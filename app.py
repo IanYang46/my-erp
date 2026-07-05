@@ -24,7 +24,7 @@ def decode_pw(pw_encoded):
 if not os.path.exists("product_images"): os.makedirs("product_images")
 st.set_page_config(page_title="強盛集團 ERP", layout="wide", initial_sidebar_state="expanded")
 
-# 👇 覆蓋開始：升級為企業級專業 ERP 視覺視覺語法 (高對比修正版) 👇
+# 👇 覆蓋開始：升級為企業級專業 ERP 視覺視覺語法 (修復側邊欄按鈕字體隱形問題) 👇
 enterprise_erp_style = """
             <style>
             /* 1. 隱藏 Streamlit 官方浮水印與徽章 */
@@ -45,9 +45,17 @@ enterprise_erp_style = """
                 background-color: #0F172A !important; 
                 border-right: 1px solid #1E293B !important;
             }
-            /* 🌟 確保側邊欄裡面所有的字，絕對是白色 (高對比) */
+            /* 🌟 確保側邊欄大部分字體是白色 */
             [data-testid="stSidebar"] * {
                 color: #F8FAFC !important;
+            }
+            /* 🌟 排除條款：強制按鈕與輸入框內的字體維持深黑色 (解決白底白字) */
+            [data-testid="stSidebar"] button[kind="secondary"] * {
+                color: #0F172A !important;
+            }
+            [data-testid="stSidebar"] div[data-baseweb="input"] input, 
+            [data-testid="stSidebar"] div[data-baseweb="select"] * {
+                color: #0F172A !important;
             }
             [data-testid="stSidebar"] hr {
                 border-color: #334155 !important;
@@ -94,21 +102,25 @@ enterprise_erp_style = """
                 font-weight: 700 !important;
             }
 
-            /* 7. 系統按鈕 (st.button) */
+            /* 7. 系統按鈕 (st.button) 結構優化 */
             button[kind="primary"] {
                 background-color: #2563EB !important;
-                color: #FFFFFF !important;
                 border-radius: 4px !important;
                 border: none !important;
+            }
+            button[kind="primary"] * {
+                color: #FFFFFF !important;
                 font-weight: 600 !important;
             }
             button[kind="primary"]:hover { background-color: #1D4ED8 !important; }
             
             button[kind="secondary"] {
                 background-color: #FFFFFF !important;
-                color: #0F172A !important;
                 border: 1px solid #CBD5E1 !important;
                 border-radius: 4px !important;
+            }
+            button[kind="secondary"] * {
+                color: #0F172A !important;
                 font-weight: 500 !important;
             }
             button[kind="secondary"]:hover {
@@ -116,7 +128,7 @@ enterprise_erp_style = """
                 background-color: #F8FAFC !important;
             }
 
-            /* 🌟 8. 確保所有輸入框的文字是深色，背景是白色 */
+            /* 8. 確保所有輸入框的文字是深色，背景是白色 */
             div[data-baseweb="input"] input, 
             div[data-baseweb="select"] div,
             textarea {
