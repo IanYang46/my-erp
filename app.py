@@ -27,9 +27,8 @@ st.set_page_config(page_title="強盛集團 ERP", layout="wide", initial_sidebar
 # 👇 替換成這段加強版隱藏語法 👇
 hide_st_style = """
             <style>
-            /* 1. 隱藏右上角漢堡選單與預設 Header */
+            /* 1. 隱藏右上角預設的三個點選單與工具列，但保留 Header 讓手機可以叫出側邊欄 */
             #MainMenu {visibility: hidden;} 
-            header {visibility: hidden;}    
             [data-testid="stToolbar"] {visibility: hidden !important;}
 
             /* 2. 隱藏底部 Made with Streamlit 網頁文字浮水印 */
