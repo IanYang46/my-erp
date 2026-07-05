@@ -24,7 +24,7 @@ def decode_pw(pw_encoded):
 if not os.path.exists("product_images"): os.makedirs("product_images")
 st.set_page_config(page_title="強盛集團 ERP", layout="wide", initial_sidebar_state="expanded")
 
-# 👇 覆蓋開始：升級為企業級專業 ERP 視覺視覺語法 👇
+# 👇 覆蓋開始：升級為企業級專業 ERP 視覺視覺語法 (高對比修正版) 👇
 enterprise_erp_style = """
             <style>
             /* 1. 隱藏 Streamlit 官方浮水印與徽章 */
@@ -34,58 +34,50 @@ enterprise_erp_style = """
             .viewerBadge_container__1QSob { display: none !important; }
             .styles_viewerBadge__1yB5_ { display: none !important; }
             
-            /* 2. 全域字體與專業商務背景 (淺灰藍，突顯白色數據卡片) */
+            /* 2. 全域字體與專業商務背景 */
             html, body, [data-testid="stAppViewContainer"] {
                 font-family: "Inter", "Segoe UI", "SF Pro Display", "Microsoft JhengHei", sans-serif !important;
                 background-color: #F4F6F9 !important;
-                color: #334155 !important;
             }
             
             /* 3. 側邊欄 (Sidebar) 企業化高階深色調 */
             [data-testid="stSidebar"] {
-                background-color: #0F172A !important; /* 深石墨藍 */
+                background-color: #0F172A !important; 
                 border-right: 1px solid #1E293B !important;
             }
-            /* 側邊欄所有文字改為經理級白/亮灰 */
-            [data-testid="stSidebar"] .stText, 
-            [data-testid="stSidebar"] p, 
-            [data-testid="stSidebar"] h1, 
-            [data-testid="stSidebar"] h2, 
-            [data-testid="stSidebar"] h3,
-            [data-testid="stSidebar"] span {
-                color: #F1F5F9 !important;
+            /* 🌟 確保側邊欄裡面所有的字，絕對是白色 (高對比) */
+            [data-testid="stSidebar"] * {
+                color: #F8FAFC !important;
             }
-            /* 側邊欄 Divider 線條淡化 */
             [data-testid="stSidebar"] hr {
                 border-color: #334155 !important;
             }
 
-            /* 4. 頂部功能標籤頁 (Tabs) 扁平商務化優化 */
+            /* 4. 頂部功能標籤頁 (Tabs) */
             button[data-baseweb="tab"] {
                 font-size: 14px !important;
                 font-weight: 600 !important;
-                color: #64748B !important;
+                color: #475569 !important;
                 border-bottom: 2px solid transparent !important;
                 padding: 10px 16px !important;
-                transition: all 0.2s ease;
             }
             button[data-baseweb="tab"][aria-selected="true"] {
-                color: #2563EB !important; /* 正統商務藍 */
+                color: #2563EB !important; 
                 border-bottom: 2px solid #2563EB !important;
                 background-color: rgba(37, 99, 235, 0.04) !important;
             }
 
-            /* 5. 卡片式容器升級 (st.container 邊框精細化) */
+            /* 5. 卡片式容器升級 (st.container) */
             div[data-testid="stElementContainer"] > div[style*="border"] {
                 background-color: #FFFFFF !important;
                 border: 1px solid #E2E8F0 !important;
                 border-radius: 6px !important;
-                box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05), 0 1px 2px rgba(0, 0, 0, 0.03) !important;
+                box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05) !important;
                 padding: 18px !important;
                 margin-bottom: 12px !important;
             }
 
-            /* 6. 核心數據指標 (st.metric) 卡片商務化 */
+            /* 6. 核心數據指標 (st.metric) */
             div[data-testid="stMetric"] {
                 background-color: #FFFFFF !important;
                 border: 1px solid #E2E8F0 !important;
@@ -94,47 +86,42 @@ enterprise_erp_style = """
                 box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05) !important;
             }
             div[data-testid="stMetricLabel"] > div {
-                color: #64748B !important; /* 標題沉穩灰 */
-                font-size: 13px !important;
+                color: #475569 !important; 
                 font-weight: 600 !important;
-                letter-spacing: 0.5px;
             }
             div[data-testid="stMetricValue"] > div {
-                color: #0F172A !important; /* 數據醒目黑 */
-                font-size: 24px !important;
+                color: #0F172A !important; 
                 font-weight: 700 !important;
             }
 
-            /* 7. 系統按鈕 (st.button) 優化 */
-            /* 主要確認按鈕 */
+            /* 7. 系統按鈕 (st.button) */
             button[kind="primary"] {
                 background-color: #2563EB !important;
                 color: #FFFFFF !important;
                 border-radius: 4px !important;
                 border: none !important;
                 font-weight: 600 !important;
-                font-size: 14px !important;
-                box-shadow: 0 1px 2px rgba(37, 99, 235, 0.2) !important;
             }
-            button[kind="primary"]:hover {
-                background-color: #1D4ED8 !important;
-            }
-            /* 次要/常規按鈕 */
+            button[kind="primary"]:hover { background-color: #1D4ED8 !important; }
+            
             button[kind="secondary"] {
                 background-color: #FFFFFF !important;
-                color: #475569 !important;
+                color: #0F172A !important;
                 border: 1px solid #CBD5E1 !important;
                 border-radius: 4px !important;
-                font-size: 14px !important;
+                font-weight: 500 !important;
             }
             button[kind="secondary"]:hover {
                 border-color: #94A3B8 !important;
-                color: #0F172A !important;
                 background-color: #F8FAFC !important;
             }
 
-            /* 8. 輸入框與下拉選單緊湊化 */
-            div[data-baseweb="input"], div[data-baseweb="select"] {
+            /* 🌟 8. 確保所有輸入框的文字是深色，背景是白色 */
+            div[data-baseweb="input"] input, 
+            div[data-baseweb="select"] div,
+            textarea {
+                color: #0F172A !important;
+                background-color: #FFFFFF !important;
                 border-radius: 4px !important;
             }
             </style>
