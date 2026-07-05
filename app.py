@@ -1227,7 +1227,6 @@ elif menu == "訂單明細":
     with t1:
         st.info("在此查看並管理所有客戶訂單。你可以直接在下方表格中修改「取貨狀態」、「物流編號」等資訊，編輯完記得點擊最下方儲存。")
         with get_db() as conn:
-            # 撈取所有 17 個欄位，依日期降冪排序
             df_orders = pd.read_sql("SELECT * FROM customer_orders ORDER BY 訂單日期 DESC", conn)
 
         if df_orders.empty:
@@ -1235,7 +1234,6 @@ elif menu == "訂單明細":
         
         can_edit = check_perm(role, "訂單明細", "can_edit")
         
-        # 針對特定欄位進行視覺優化與防呆
         col_cfg = {
             "訂單編號": st.column_config.TextColumn("訂單編號 (主鍵)", required=True),
             "訂單連結": st.column_config.LinkColumn("🔗 訂單連結"),
@@ -1248,7 +1246,6 @@ elif menu == "訂單明細":
             "取貨狀態": st.column_config.SelectboxColumn("狀態", options=["待出貨", "配送中", "已抵達", "已取貨", "未取退回", "取消", "退換貨處理中"])
         }
 
-        # 展開可動態編輯的 Data Editor (支援新增行、修改行)
         edited_orders = st.data_editor(
             df_orders if not df_orders.empty else pd.DataFrame(columns=["訂單日期", "訂單編號", "訂單連結", "姓名", "電話", "門市", "店號", "品項內容", "下單總數", "包裹應收", "商品成本", "物流運費", "出貨成本", "訂單損益", "物流編號", "取貨狀態", "取貨日期"]),
             disabled=not can_edit,
@@ -1264,14 +1261,11 @@ elif menu == "訂單明細":
                 with get_db() as conn:
                     cursor = conn.cursor()
                     for _, row in edited_orders.iterrows():
-                        # 若未填寫訂單編號，則忽略該筆資料
                         if pd.isna(row['訂單編號']) or str(row['訂單編號']).strip() == "":
                             continue 
                         
-                        # 自動把數值的空缺補為 0
                         row = row.fillna({'下單總數': 0, '包裹應收': 0.0, '商品成本': 0.0, '物流運費': 0.0, '出貨成本': 0.0, '訂單損益': 0.0})
                         
-                        # INSERT OR REPLACE：只要「訂單編號」存在就覆蓋更新，不存在就新增
                         cursor.execute("""
                             INSERT OR REPLACE INTO customer_orders 
                             (訂單編號, 訂單日期, 訂單連結, 姓名, 電話, 門市, 店號, 品項內容, 下單總數, 包裹應收, 商品成本, 物流運費, 出貨成本, 訂單損益, 物流編號, 取貨狀態, 取貨日期)
@@ -1296,51 +1290,91 @@ elif menu == "訂單明細":
         if not check_perm(role, "訂單明細", "can_upload"):
             st.warning("🔒 您沒有上傳外部訂單的權限。")
         else:
-            st.caption("💡 支援 Excel 或 CSV 格式。系統會以「訂單編號」為基準，若匯入的編號已存在，將自動覆蓋更新原本資料。")
-            st.caption("📌 建議欄位名稱包含（可不全有）：訂單日期, 訂單編號, 訂單連結, 姓名, 電話, 門市, 店號, 品項內容, 下單總數, 包裹應收, 商品成本, 物流運費, 出貨成本, 訂單損益, 物流編號, 取貨狀態, 取貨日期")
+            st.caption("💡 系統會自動過濾外部格式的欄位，並將相同「訂單編號」的複數品項自動合併為一筆單據。")
             uploaded_order = st.file_uploader("選擇訂單檔案", type=["csv", "xlsx"], key="order_uploader")
             
             if uploaded_order and st.button("🚀 執行訂單匯入", type="primary"):
                 try:
                     df_imp = pd.read_csv(uploaded_order) if uploaded_order.name.endswith('.csv') else pd.read_excel(uploaded_order, engine='openpyxl')
                     
-                    # 處理數值欄位的 NaN，轉為 0
-                    df_imp = df_imp.fillna({
-                        '下單總數': 0, '包裹應收': 0.0, '商品成本': 0.0,
-                        '物流運費': 0.0, '出貨成本': 0.0, '訂單損益': 0.0
-                    })
-                    # 處理文字欄位的 NaN，轉為空字串
-                    df_imp = df_imp.fillna("")
-
-                    with get_db() as conn:
-                        cursor = conn.cursor()
-                        count = 0
-                        for _, row in df_imp.iterrows():
-                            # 沒有訂單編號的資料直接跳過
-                            if not str(row.get('訂單編號', '')).strip():
-                                continue
-                            
-                            cursor.execute("""
-                                INSERT OR REPLACE INTO customer_orders 
-                                (訂單編號, 訂單日期, 訂單連結, 姓名, 電話, 門市, 店號, 品項內容, 下單總數, 包裹應收, 商品成本, 物流運費, 出貨成本, 訂單損益, 物流編號, 取貨狀態, 取貨日期)
-                                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                            """, (
-                                str(row.get('訂單編號', '')).strip(), str(row.get('訂單日期', '')), str(row.get('訂單連結', '')),
-                                str(row.get('姓名', '')), str(row.get('電話', '')), str(row.get('門市', '')),
-                                str(row.get('店號', '')), str(row.get('品項內容', '')), int(row.get('下單總數', 0)),
-                                float(row.get('包裹應收', 0)), float(row.get('商品成本', 0)), float(row.get('物流運費', 0)),
-                                float(row.get('出貨成本', 0)), float(row.get('訂單損益', 0)), str(row.get('物流編號', '')),
-                                str(row.get('取貨狀態', '待出貨')), str(row.get('取貨日期', ''))
-                            ))
-                            count += 1
-                        conn.commit()
+                    # 1. 自動欄位對應
+                    col_mapping = {
+                        '訂單編號': '訂單編號',
+                        '建立日期': '訂單日期',
+                        '顧客': '姓名',
+                        '產品': '品項內容',
+                        '數量': '下單總數',
+                        '總計金額': '包裹應收',
+                        '顧客電話': '電話',
+                        '運送超商': '門市',
+                        '超商代號': '店號'
+                    }
+                    df_imp = df_imp.rename(columns=col_mapping)
+                    
+                    if '訂單編號' not in df_imp.columns:
+                        st.error("❌ 匯入失敗：檔案中找不到『訂單編號』欄位。")
+                    else:
+                        # 排除空值資料
+                        df_imp = df_imp[df_imp['訂單編號'].astype(str).str.strip() != ""]
                         
-                    log_system_action("訂單明細", current_operator, "匯入訂單資料", f"成功批次匯入了 {count} 筆訂單")
-                    st.success(f"✅ 成功匯入 / 更新 {count} 筆訂單資料！")
-                    time.sleep(1.5)
-                    st.rerun()
+                        # 清理數值欄位
+                        if '下單總數' in df_imp.columns:
+                            df_imp['下單總數'] = pd.to_numeric(df_imp['下單總數'], errors='coerce').fillna(0)
+                        if '包裹應收' in df_imp.columns:
+                            if df_imp['包裹應收'].dtype == object:
+                                df_imp['包裹應收'] = df_imp['包裹應收'].astype(str).str.replace(',', '')
+                            df_imp['包裹應收'] = pd.to_numeric(df_imp['包裹應收'], errors='coerce').fillna(0.0)
+                            
+                        df_imp = df_imp.fillna("")
+
+                        # 2. 合併同訂單編號的多筆品項
+                        agg_funcs = {}
+                        for col in df_imp.columns:
+                            if col == '訂單編號':
+                                continue
+                            elif col == '品項內容':
+                                agg_funcs[col] = lambda x: '、'.join([str(i) for i in x if str(i).strip() != ""])
+                            elif col == '下單總數':
+                                agg_funcs[col] = 'sum'
+                            elif col == '包裹應收':
+                                agg_funcs[col] = 'first' # 金額通常在每列都相同，取第一筆即可
+                            else:
+                                agg_funcs[col] = 'first'
+                                
+                        df_grouped = df_imp.groupby('訂單編號', as_index=False).agg(agg_funcs)
+
+                        # 3. 寫入資料庫
+                        with get_db() as conn:
+                            cursor = conn.cursor()
+                            count = 0
+                            for _, row in df_grouped.iterrows():
+                                cursor.execute("""
+                                    INSERT INTO customer_orders 
+                                    (訂單編號, 訂單日期, 姓名, 電話, 門市, 店號, 品項內容, 下單總數, 包裹應收, 商品成本, 物流運費, 出貨成本, 訂單損益, 物流編號, 取貨狀態, 取貨日期)
+                                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0.0, 0.0, 0.0, 0.0, '', '待出貨', '')
+                                    ON CONFLICT(訂單編號) DO UPDATE SET
+                                        訂單日期 = excluded.訂單日期,
+                                        姓名 = excluded.姓名,
+                                        電話 = excluded.電話,
+                                        門市 = excluded.門市,
+                                        店號 = excluded.店號,
+                                        品項內容 = excluded.品項內容,
+                                        下單總數 = excluded.下單總數,
+                                        包裹應收 = excluded.包裹應收;
+                                """, (
+                                    str(row['訂單編號']).strip(), str(row.get('訂單日期', '')), str(row.get('姓名', '')),
+                                    str(row.get('電話', '')), str(row.get('門市', '')), str(row.get('店號', '')),
+                                    str(row.get('品項內容', '')), int(row.get('下單總數', 0)), float(row.get('包裹應收', 0.0))
+                                ))
+                                count += 1
+                            conn.commit()
+                            
+                        log_system_action("訂單明細", current_operator, "匯入訂單資料", f"成功批次合併與匯入了 {count} 筆訂單")
+                        st.success(f"✅ 成功匯入並智能合併為 {count} 筆獨立訂單！")
+                        time.sleep(1.5)
+                        st.rerun()
                 except Exception as e:
-                    st.error(f"❌ 匯入失敗，請確認檔案格式是否正確。詳情：{str(e)}")
+                    st.error(f"❌ 匯入失敗，詳情：{str(e)}")
 
 elif menu == "財務報表":
     st.title("📈 財務與利潤分析")
