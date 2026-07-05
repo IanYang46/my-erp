@@ -24,17 +24,13 @@ def decode_pw(pw_encoded):
 if not os.path.exists("product_images"): os.makedirs("product_images")
 st.set_page_config(page_title="強盛集團 ERP", layout="wide", initial_sidebar_state="expanded")
 
-# 👇 替換成這段加強版隱藏語法 👇
+# 👇 最安全的隱藏語法（保留上方，確保手機版側邊欄按鈕正常顯示） 👇
 hide_st_style = """
             <style>
-            /* 1. 隱藏右上角預設的三個點選單與工具列，但保留 Header 讓手機可以叫出側邊欄 */
-            #MainMenu {visibility: hidden;} 
-            [data-testid="stToolbar"] {visibility: hidden !important;}
-
-            /* 2. 隱藏底部 Made with Streamlit 網頁文字浮水印 */
+            /* 1. 隱藏底部 Made with Streamlit 網頁文字浮水印 */
             footer {visibility: hidden;}    
 
-            /* 🌟 3. 強制隱藏 Streamlit Cloud 右下角的 "Hosted with Streamlit" 徽章與頭像 */
+            /* 2. 強制隱藏 Streamlit Cloud 右下角的 "Hosted with Streamlit" 徽章與頭像 */
             div[class^="viewerBadge_container"] { display: none !important; }
             div[class^="styles_viewerBadge"] { display: none !important; }
             .viewerBadge_container__1QSob { display: none !important; }
