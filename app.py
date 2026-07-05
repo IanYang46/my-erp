@@ -1372,7 +1372,8 @@ elif menu == "訂單明細":
                             if col == '訂單編號':
                                 continue
                             elif col == '品項內容':
-                                agg_funcs[col] = lambda x: '、'.join([str(i) for i in x if str(i).strip() != ""])
+                                # 🌟 改為用換行符號 (\n) 串接，並自動幫每個品項加上項目符號 (•) 讓它像清單一樣
+                                agg_funcs[col] = lambda x: '\n'.join([f"• {str(i).strip()}" for i in x if str(i).strip() != ""])
                             elif col == '下單總數':
                                 agg_funcs[col] = 'sum'
                             elif col == '包裹應收':
