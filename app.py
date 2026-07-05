@@ -1233,22 +1233,32 @@ elif menu == "訂單明細":
         with get_db() as conn:
             df_orders = pd.read_sql("SELECT * FROM customer_orders ORDER BY 訂單日期 DESC", conn)
 
-        # 👇 新增：處理電話/店號自動補 0，以及品項換行的美化邏輯 👇
+        # 👇 新增：處理電話自動補 0、全家店號專屬補 0，以及品項換行的美化邏輯 👇
         if not df_orders.empty:
-            def fix_missing_zero(val):
-                # 避免 Excel 匯入時將數字變為小數點 (例如 91234567.0)，先過濾掉 .0
+            def fix_phone(val):
+                # 處理電話：自動補 0 (去除 .0)
                 s = str(val).replace('.0', '').strip()
                 if s and s not in ['nan', 'None', '']:
-                    # 判斷如果不是 0 開頭，就自動補 0
                     return '0' + s if not s.startswith('0') else s
                 return ""
 
-            df_orders['電話'] = df_orders['電話'].apply(fix_missing_zero)
-            df_orders['店號'] = df_orders['店號'].apply(fix_missing_zero)
+            def fix_store_id(row):
+                # 處理店號：先過濾掉 .0
+                s = str(row['店號']).replace('.0', '').strip()
+                if s and s not in ['nan', 'None', '']:
+                    # 只有當「門市」名稱包含「全家」，且開頭不是 0 的時候，才自動補 0
+                    if '全家' in str(row['門市']) and not s.startswith('0'):
+                        return '0' + s
+                    return s
+                return ""
+
+            df_orders['電話'] = df_orders['電話'].apply(fix_phone)
+            # 店號改用 apply(axis=1) 傳入整列，這樣才能同時判斷「門市」與「店號」
+            df_orders['店號'] = df_orders.apply(fix_store_id, axis=1)
             # 將原本用「、」串接的品項，轉換為換行符號 (\n)，讓表格內能直接分列斷行
             df_orders['品項內容'] = df_orders['品項內容'].astype(str).str.replace('、', '\n')
         # 👆 美化邏輯結束 👆
-
+        
         if df_orders.empty:
             st.warning("目前尚無任何訂單資料。請至「批次匯入與建檔」上傳 Excel/CSV，或手動建立第一筆訂單。")
 
