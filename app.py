@@ -1252,14 +1252,13 @@ elif menu == "訂單明細":
             df_orders['電話'] = df_orders['電話'].apply(fix_phone)
             df_orders['店號'] = df_orders.apply(fix_store_id, axis=1)
 
-            # 🌟 放棄傳統換行，改用 Python List 讓 Streamlit 渲染成「精美標籤 (Chips)」
-            def to_list(val):
-                # 將舊資料的換行或頓號切開，轉換成乾淨的陣列
-                items = str(val).replace('\n', '、').replace('•', '').split('、')
-                return [i.strip() for i in items if i.strip() and i.strip() not in ['nan', 'None']]
-            
-            df_orders['品項內容'] = df_orders['品項內容'].apply(to_list)
-        # 👆 美化邏輯結束 👆
+            # 🌟 恢復傳統文字模式，保留使用者的原始換行與長篇幅資料
+            def clean_text(val):
+                if pd.isna(val) or str(val).strip() in ['nan', 'None']:
+                    return ""
+                return str(val)
+            df_orders['品項內容'] = df_orders['品項內容'].apply(clean_text)
+            # 👆 美化邏輯結束 👆
 
         if df_orders.empty:
             st.warning("目前尚無任何訂單資料。請至「批次匯入與建檔」上傳 Excel/CSV，或手動建立第一筆訂單。")
@@ -1277,7 +1276,7 @@ elif menu == "訂單明細":
             "訂單損益": st.column_config.NumberColumn("訂單損益", format="$ %.2f"),
             "下單總數": st.column_config.NumberColumn("下單總數", step=1),
             "取貨狀態": st.column_config.SelectboxColumn("狀態", options=["待出貨", "配送中", "已抵達", "已取貨", "未取退回", "取消", "退換貨處理中"]),
-            "品項內容": st.column_config.ListColumn("📦 品項內容 (標籤展示)") # 🌟 關鍵：用 ListColumn 顯示
+            "品項內容": st.column_config.TextColumn("📦 品項內容 (支援換行與長文)") # 🌟 關鍵：用 ListColumn 顯示
         }
 
         # 🌟 2. 判斷開關狀態，決定要渲染的欄位清單
@@ -1307,12 +1306,8 @@ elif menu == "訂單明細":
                         
                         row = row.fillna({'下單總數': 0, '包裹應收': 0.0, '商品成本': 0.0, '物流運費': 0.0, '出貨成本': 0.0, '訂單損益': 0.0})
                         
-                        # 🌟 將 List 型態的品項內容轉回字串，才能順利寫入資料庫
-                        item_content = row.get('品項內容', [])
-                        if isinstance(item_content, list):
-                            item_content_str = '、'.join([str(i) for i in item_content])
-                        else:
-                            item_content_str = str(item_content)
+                        # 🌟 直接讀取文字內容寫入資料庫
+                        item_content_str = str(row.get('品項內容', ''))
                         
                         cursor.execute("""
                             INSERT OR REPLACE INTO customer_orders 
