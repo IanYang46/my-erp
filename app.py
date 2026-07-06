@@ -1227,9 +1227,6 @@ elif menu == "訂單明細":
     with t1:
         st.info("在此查看並管理所有客戶訂單。您可以在下方總表中快速修改「取貨狀態」、「物流編號」，若需【檢視完整詳細資料與換行編輯品項】，請使用表格下方的「單筆訂單完整詳細檢視與編輯」區。")
         
-        # 🌟 1. 加入展開/縮起詳細欄位的切換開關 (預設為縮起狀態 False)
-        show_all_cols = st.toggle("🔍 展開顯示所有詳細欄位", value=False)
-        
         with get_db() as conn:
             df_orders = pd.read_sql("SELECT * FROM customer_orders ORDER BY 訂單日期 DESC", conn)
 
@@ -1252,7 +1249,6 @@ elif menu == "訂單明細":
             df_orders['電話'] = df_orders['電話'].apply(fix_phone)
             df_orders['店號'] = df_orders.apply(fix_store_id, axis=1)
 
-            # 🌟 新增：專門給上方表格顯示用的「品項預覽」，將換行符號替換成「 ｜ 」符號，清楚區隔品項
             def clean_and_preview(val):
                 if pd.isna(val) or str(val).strip() in ['nan', 'None']:
                     return ""
@@ -1265,28 +1261,54 @@ elif menu == "訂單明細":
 
         can_edit = check_perm(role, "訂單明細", "can_edit")
         
-        # 👇 修正：將金額欄位標示為台幣，並將「出貨成本」與「訂單損益」鎖定 (disabled=True)，交由系統自動計算
+        # 🌟 新增：表格上方的全域搜尋與展開按鈕
+        c_search, c_toggle = st.columns([3, 1])
+        with c_search:
+            search_kw = st.text_input("🔍 搜尋訂單 (輸入訂單編號、姓名、電話或物流編號過濾)", "")
+        with c_toggle:
+            st.write("") # 為了與搜尋框對齊
+            st.write("")
+            show_all_cols = st.toggle("🔍 展開顯示所有詳細欄位", value=False)
+
+        # 🌟 新增：根據搜尋框內容過濾資料
+        if not df_orders.empty and search_kw.strip():
+            mask = (
+                df_orders['訂單編號'].astype(str).str.contains(search_kw, case=False, na=False) |
+                df_orders['姓名'].astype(str).str.contains(search_kw, case=False, na=False) |
+                df_orders['電話'].astype(str).str.contains(search_kw, case=False, na=False) |
+                df_orders['物流編號'].astype(str).str.contains(search_kw, case=False, na=False)
+            )
+            df_display = df_orders[mask].copy()
+        else:
+            df_display = df_orders.copy()
+
+        # 🌟 新增：插入用於勾選刪除的空白欄位
+        if not df_display.empty:
+            df_display.insert(0, "🗑️ 勾選", False)
+        
+        # 欄位設定
         col_cfg = {
+            "🗑️ 勾選": st.column_config.CheckboxColumn("🗑️ 刪除", default=False),
             "訂單編號": st.column_config.TextColumn("訂單編號", disabled=True),
             "訂單連結": st.column_config.LinkColumn("🔗 訂單連結"),
-            "包裹應收": st.column_config.NumberColumn("包裹應收 (台幣)", format="$ %.0f"),
-            "商品成本": st.column_config.NumberColumn("商品成本 (台幣)", format="$ %.0f"),
-            "物流運費": st.column_config.NumberColumn("物流運費 (台幣)", format="$ %.0f"),
-            "出貨成本": st.column_config.NumberColumn("出貨成本 (自動核算)", format="$ %.0f", disabled=True),
-            "訂單損益": st.column_config.NumberColumn("訂單損益 (自動核算)", format="$ %.0f", disabled=True),
+            "包裹應收": st.column_config.NumberColumn("包裹應收", format="$ %.0f"),
+            "商品成本": st.column_config.NumberColumn("商品成本", format="$ %.0f"),
+            "物流運費": st.column_config.NumberColumn("物流運費", format="$ %.0f"),
+            "出貨成本": st.column_config.NumberColumn("出貨成本", format="$ %.0f", disabled=True),
+            "訂單損益": st.column_config.NumberColumn("訂單損益", format="$ %.0f", disabled=True),
             "下單總數": st.column_config.NumberColumn("下單總數", step=1),
             "取貨狀態": st.column_config.SelectboxColumn("狀態", options=["待出貨", "配送中", "已抵達", "已取貨", "未取退回", "取消", "退換貨處理中"]),
             "品項預覽": st.column_config.TextColumn("📦 品項內容 (預覽)", disabled=True) 
         }
 
-        # 🌟 2. 判斷開關狀態，決定要渲染的欄位清單
+        # 判斷開關狀態，決定要渲染的欄位清單 (最前方加入 🗑️ 勾選)
         if show_all_cols:
-            display_cols = ["訂單日期", "訂單編號", "訂單連結", "姓名", "電話", "門市", "店號", "品項預覽", "下單總數", "包裹應收", "商品成本", "物流運費", "出貨成本", "訂單損益", "物流編號", "取貨狀態", "取貨日期"]
+            display_cols = ["🗑️ 勾選", "訂單日期", "訂單編號", "訂單連結", "姓名", "電話", "門市", "店號", "品項預覽", "下單總數", "包裹應收", "商品成本", "物流運費", "出貨成本", "訂單損益", "物流編號", "取貨狀態", "取貨日期"]
         else:
-            display_cols = ["訂單編號", "訂單日期", "姓名", "品項預覽", "包裹應收", "出貨成本", "訂單損益", "物流編號", "取貨狀態"]
+            display_cols = ["🗑️ 勾選", "訂單編號", "訂單日期", "姓名", "品項預覽", "包裹應收", "出貨成本", "訂單損益", "物流編號", "取貨狀態"]
 
         edited_orders = st.data_editor(
-            df_orders if not df_orders.empty else pd.DataFrame(columns=display_cols),
+            df_display if not df_display.empty else pd.DataFrame(columns=display_cols),
             disabled=not can_edit,
             hide_index=True,
             use_container_width=True,
@@ -1296,49 +1318,90 @@ elif menu == "訂單明細":
             key="orders_editor"
         )
 
-        if can_edit and st.button("💾 儲存上方總表狀態變更", type="primary"):
-            try:
-                with get_db() as conn:
-                    cursor = conn.cursor()
-                    for _, row in edited_orders.iterrows():
-                        if pd.isna(row['訂單編號']) or str(row['訂單編號']).strip() == "":
-                            continue 
-                        
-                        row = row.fillna({'下單總數': 0, '包裹應收': 0.0, '商品成本': 0.0, '物流運費': 0.0})
-                        
-                        # 🌟 自動計算核心邏輯：出貨成本 = 商品成本 + 運費；訂單損益 = 應收 - 出貨成本
-                        calc_ship_cost = float(row['商品成本']) + float(row['物流運費'])
-                        calc_profit = float(row['包裹應收']) - calc_ship_cost
-                        
-                        cursor.execute("""
-                            UPDATE customer_orders SET 
-                            訂單日期=?, 訂單連結=?, 姓名=?, 電話=?, 門市=?, 店號=?, 
-                            下單總數=?, 包裹應收=?, 商品成本=?, 物流運費=?, 出貨成本=?, 訂單損益=?, 
-                            物流編號=?, 取貨狀態=?, 取貨日期=?
-                            WHERE 訂單編號=?
-                        """, (
-                            str(row.get('訂單日期', '')), str(row.get('訂單連結', '')),
-                            str(row.get('姓名', '')), str(row.get('電話', '')), str(row.get('門市', '')), str(row.get('店號', '')),
-                            int(row['下單總數']), float(row['包裹應收']), float(row['商品成本']),
-                            float(row['物流運費']), calc_ship_cost, calc_profit, 
-                            str(row.get('物流編號', '')), str(row.get('取貨狀態', '待出貨')), str(row.get('取貨日期', '')),
-                            str(row['訂單編號']).strip()
-                        ))
-                    conn.commit()
-                log_system_action("訂單明細", current_operator, "更新訂單資料", "透過總表儲存了訂單狀態，並由系統重新核算了所有台幣成本與損益")
-                st.success("✅ 總表狀態資料已成功保存！(出貨成本與損益已自動重新核算)")
-                time.sleep(1)
-                st.rerun()
-            except Exception as e:
-                st.error(f"❌ 儲存失敗：{str(e)}")
+        # 🌟 處理儲存與刪除的雙按鈕邏輯
+        if can_edit:
+            c_save, c_del = st.columns(2)
+            
+            # 抓取目前被勾選的訂單清單
+            to_delete = []
+            if not edited_orders.empty and "🗑️ 勾選" in edited_orders.columns:
+                to_delete = edited_orders[edited_orders["🗑️ 勾選"] == True]['訂單編號'].tolist()
+
+            with c_save:
+                if st.button("💾 儲存上方總表狀態變更", type="primary", use_container_width=True):
+                    try:
+                        with get_db() as conn:
+                            cursor = conn.cursor()
+                            for _, row in edited_orders.iterrows():
+                                if pd.isna(row['訂單編號']) or str(row['訂單編號']).strip() == "":
+                                    continue 
+                                
+                                row = row.fillna({'下單總數': 0, '包裹應收': 0.0, '商品成本': 0.0, '物流運費': 0.0})
+                                
+                                calc_ship_cost = float(row['商品成本']) + float(row['物流運費'])
+                                calc_profit = float(row['包裹應收']) - calc_ship_cost
+                                
+                                cursor.execute("""
+                                    UPDATE customer_orders SET 
+                                    訂單日期=?, 訂單連結=?, 姓名=?, 電話=?, 門市=?, 店號=?, 
+                                    下單總數=?, 包裹應收=?, 商品成本=?, 物流運費=?, 出貨成本=?, 訂單損益=?, 
+                                    物流編號=?, 取貨狀態=?, 取貨日期=?
+                                    WHERE 訂單編號=?
+                                """, (
+                                    str(row.get('訂單日期', '')), str(row.get('訂單連結', '')),
+                                    str(row.get('姓名', '')), str(row.get('電話', '')), str(row.get('門市', '')), str(row.get('店號', '')),
+                                    int(row['下單總數']), float(row['包裹應收']), float(row['商品成本']),
+                                    float(row['物流運費']), calc_ship_cost, calc_profit, 
+                                    str(row.get('物流編號', '')), str(row.get('取貨狀態', '待出貨')), str(row.get('取貨日期', '')),
+                                    str(row['訂單編號']).strip()
+                                ))
+                            conn.commit()
+                        log_system_action("訂單明細", current_operator, "更新訂單資料", "透過總表儲存了訂單狀態，並自動重新核算了成本與損益")
+                        st.success("✅ 總表狀態資料已成功保存！")
+                        time.sleep(1)
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"❌ 儲存失敗：{str(e)}")
+
+            with c_del:
+                # 若有勾選，則顯示刪除按鈕
+                if len(to_delete) > 0:
+                    if st.button(f"⚠️ 確認刪除已勾選的 {len(to_delete)} 筆訂單", type="primary", use_container_width=True):
+                        try:
+                            with get_db() as conn:
+                                cursor = conn.cursor()
+                                placeholders = ','.join(['?'] * len(to_delete))
+                                cursor.execute(f"DELETE FROM customer_orders WHERE 訂單編號 IN ({placeholders})", tuple(to_delete))
+                                conn.commit()
+                            log_system_action("訂單明細", current_operator, "刪除訂單資料", f"刪除了 {len(to_delete)} 筆訂單")
+                            st.success(f"✅ 成功刪除 {len(to_delete)} 筆訂單！")
+                            time.sleep(1)
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"❌ 刪除失敗：{str(e)}")
 
         st.divider()
 
         # 👇 單筆訂單完整詳細檢視與獨立編輯區 👇
         st.subheader("🔍 單筆訂單完整詳細檢視與編輯")
         if not df_orders.empty:
-            order_list = df_orders['訂單編號'].tolist()
-            selected_order = st.selectbox("請選擇要查看或編輯的訂單編號：", order_list)
+            
+            # 🌟 新增：客製化選單選項，讓 Streamlit 內建搜尋更好找
+            detail_options = {}
+            for _, row in df_orders.iterrows():
+                logi_info = row.get('物流編號', '').strip()
+                logi_str = f" ｜ 物流: {logi_info}" if logi_info else ""
+                # 將標籤命名為 "[訂單號] 姓名 ｜ 物流: XXX"
+                label = f"[{row['訂單編號']}] {row.get('姓名', '')}{logi_str}"
+                detail_options[label] = row['訂單編號']
+            
+            # Streamlit 的 selectbox 本身支援點擊後直接打字搜尋
+            selected_label = st.selectbox(
+                "💡 支援直接點擊此處，用鍵盤打字搜尋「物流單號」、「姓名」或「訂單編號」：", 
+                options=list(detail_options.keys())
+            )
+            
+            selected_order = detail_options.get(selected_label)
             
             if selected_order:
                 target_order = df_orders[df_orders['訂單編號'] == selected_order].iloc[0]
@@ -1388,7 +1451,7 @@ elif menu == "訂單明細":
                     if can_edit:
                         if st.form_submit_button("💾 儲存這筆訂單的所有完整變更", type="primary", use_container_width=True):
                             try:
-                                # 🌟 自動重算單筆訂單的 出貨成本 與 訂單損益
+                                # 自動重算單筆訂單的 出貨成本 與 訂單損益
                                 calc_single_ship_cost = edit_cost + edit_shipping
                                 calc_single_profit = edit_revenue - calc_single_ship_cost
                                 
@@ -1464,7 +1527,6 @@ elif menu == "訂單明細":
                             if col == '訂單編號':
                                 continue
                             elif col == '品項內容':
-                                # 🌟 改為用換行符號 (\n) 串接，並自動幫每個品項加上項目符號 (•) 讓它像清單一樣
                                 agg_funcs[col] = lambda x: '\n'.join([f"• {str(i).strip()}" for i in x if str(i).strip() != ""])
                             elif col == '下單總數':
                                 agg_funcs[col] = 'sum'
