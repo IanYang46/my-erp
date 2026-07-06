@@ -1225,13 +1225,7 @@ elif menu == "訂單明細":
     t1, t2 = st.tabs(["📄 訂單總表與追蹤", "📥 批次匯入與建檔"])
 
     with t1:
-        st.info("在此查看並管理所有客戶訂單。您可以在下方總表中快速修改「取貨狀態」、「物流編號」，若需【換行檢視與編輯品項內容】，請使用表格下方的「單筆訂單詳細檢視與編輯」區。")
-        
-        # 🌟 1. 加入展開/縮起詳細欄位的切換開關 (預設為縮起狀態 False)
-        show_all_cols = st.toggle("🔍 展開顯示所有詳細欄位", value=False)
-        
-        with get_db() as conn:
-            st.info("在此查看並管理所有客戶訂單。您可以在下方總表中快速修改「取貨狀態」、「物流編號」，若需【檢視完整詳細資料與換行編輯品項】，請使用表格下方的「單筆訂單完整詳細檢視與編輯」區。")
+        st.info("在此查看並管理所有客戶訂單。您可以在下方總表中快速修改「取貨狀態」、「物流編號」，若需【檢視完整詳細資料與換行編輯品項】，請使用表格下方的「單筆訂單完整詳細檢視與編輯」區。")
         
         # 🌟 1. 加入展開/縮起詳細欄位的切換開關 (預設為縮起狀態 False)
         show_all_cols = st.toggle("🔍 展開顯示所有詳細欄位", value=False)
@@ -1273,7 +1267,7 @@ elif menu == "訂單明細":
         
         # 👇 修改：將品項預覽設為 disabled，防止在上方表格單行編輯破壞格式
         col_cfg = {
-            "訂單編號": st.column_config.TextColumn("訂單編號 (主鍵)", disabled=True),
+            "訂單編號": st.column_config.TextColumn("訂單編號", disabled=True),
             "訂單連結": st.column_config.LinkColumn("🔗 訂單連結"),
             "包裹應收": st.column_config.NumberColumn("包裹應收", format="$ %.2f"),
             "商品成本": st.column_config.NumberColumn("商品成本", format="$ %.2f"),
@@ -1282,7 +1276,7 @@ elif menu == "訂單明細":
             "訂單損益": st.column_config.NumberColumn("訂單損益", format="$ %.2f"),
             "下單總數": st.column_config.NumberColumn("下單總數", step=1),
             "取貨狀態": st.column_config.SelectboxColumn("狀態", options=["待出貨", "配送中", "已抵達", "已取貨", "未取退回", "取消", "退換貨處理中"]),
-            "品項預覽": st.column_config.TextColumn("📦 品項內容 (表格預覽)", disabled=True) 
+            "品項預覽": st.column_config.TextColumn("📦 品項內容 (預覽)", disabled=True) 
         }
 
         # 🌟 2. 判斷開關狀態，決定要渲染的欄位清單 (改用「品項預覽」欄位)
