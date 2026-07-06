@@ -1225,13 +1225,15 @@ elif menu == "訂單明細":
     t1, t2 = st.tabs(["📄 訂單總表與追蹤", "📥 批次匯入與建檔"])
 
     with t1:
-        st.info("在此查看並管理所有客戶訂單。你可以直接在下方表格中修改「取貨狀態」、「物流編號」等資訊，編輯完記得點擊最下方儲存。")
+        st.info("在此查看並管理所有客戶訂單。您可以在下方總表中快速修改「取貨狀態」、「物流編號」，若需【換行檢視與編輯品項內容】，請使用表格下方的「單筆訂單詳細檢視與編輯」區。")
         
-        # 1. 先從資料庫把資料抓出來 (為了讓上面的查看器能讀到清單)
+        # 🌟 1. 加入展開/縮起詳細欄位的切換開關 (預設為縮起狀態 False)
+        show_all_cols = st.toggle("🔍 展開顯示所有詳細欄位", value=False)
+        
         with get_db() as conn:
             df_orders = pd.read_sql("SELECT * FROM customer_orders ORDER BY 訂單日期 DESC", conn)
 
-        # 處理電話與店號補 0、以及文字清理邏輯
+        # 👇 處理電話自動補 0、全家店號專屬補 0，以及文字清理邏輯 👇
         if not df_orders.empty:
             def fix_phone(val):
                 s = str(val).replace('.0', '').strip()
@@ -1250,6 +1252,7 @@ elif menu == "訂單明細":
             df_orders['電話'] = df_orders['電話'].apply(fix_phone)
             df_orders['店號'] = df_orders.apply(fix_store_id, axis=1)
 
+            # 清理文字空值
             def clean_text(val):
                 if pd.isna(val) or str(val).strip() in ['nan', 'None']:
                     return ""
@@ -1258,27 +1261,12 @@ elif menu == "訂單明細":
 
         if df_orders.empty:
             st.warning("目前尚無任何訂單資料。請至「批次匯入與建檔」上傳 Excel/CSV，或手動建立第一筆訂單。")
-            
-        # 👇 🌟 新增功能：專屬的「下拉式品項查看器」，解決表格無法換行的痛點 👇
-        if not df_orders.empty:
-            with st.expander("🔍 點擊展開：快速查看單筆訂單的【完整換行品項內容】", expanded=False):
-                # 建立下拉式選單，讓使用者搜尋/選擇訂單
-                view_id = st.selectbox("請選擇或搜尋要查看的訂單編號：", df_orders['訂單編號'].tolist())
-                if view_id:
-                    # 抓出該訂單的完整品項文字
-                    detail_content = df_orders[df_orders['訂單編號'] == view_id]['品項內容'].iloc[0]
-                    st.markdown(f"**📦 訂單 {view_id} 的完整品項：**")
-                    # 使用 code 區塊，能夠 100% 完美呈現原始文字的換行排版
-                    st.code(detail_content, language="text")
-        # 👆 新增結束 👆
 
-        # 🌟 展開/縮起詳細欄位的切換開關
-        show_all_cols = st.toggle("🔍 展開顯示所有詳細欄位", value=False)
         can_edit = check_perm(role, "訂單明細", "can_edit")
         
-        # 👇 將品項內容恢復為 TextColumn，這樣點兩下彈出的視窗就可以正常編輯多行文字
+        # 👇 修改：將品項內容設為 disabled，防止在表格內單行編輯破壞換行格式
         col_cfg = {
-            "訂單編號": st.column_config.TextColumn("訂單編號 (主鍵)", required=True),
+            "訂單編號": st.column_config.TextColumn("訂單編號 (主鍵)", disabled=True),
             "訂單連結": st.column_config.LinkColumn("🔗 訂單連結"),
             "包裹應收": st.column_config.NumberColumn("包裹應收", format="$ %.2f"),
             "商品成本": st.column_config.NumberColumn("商品成本", format="$ %.2f"),
@@ -1287,27 +1275,27 @@ elif menu == "訂單明細":
             "訂單損益": st.column_config.NumberColumn("訂單損益", format="$ %.2f"),
             "下單總數": st.column_config.NumberColumn("下單總數", step=1),
             "取貨狀態": st.column_config.SelectboxColumn("狀態", options=["待出貨", "配送中", "已抵達", "已取貨", "未取退回", "取消", "退換貨處理中"]),
-            "品項內容": st.column_config.TextColumn("📦 品項內容 (雙擊單元格可編輯)") # 🌟 恢復為純文字設定
+            "品項內容": st.column_config.TextColumn("📦 品項內容 (請至下方詳細區編輯)", disabled=True) 
         }
 
-        # 🌟 判斷開關狀態，決定要渲染的欄位清單
+        # 🌟 2. 判斷開關狀態，決定要渲染的欄位清單
         if show_all_cols:
             display_cols = ["訂單日期", "訂單編號", "訂單連結", "姓名", "電話", "門市", "店號", "品項內容", "下單總數", "包裹應收", "商品成本", "物流運費", "出貨成本", "訂單損益", "物流編號", "取貨狀態", "取貨日期"]
         else:
             display_cols = ["訂單編號", "訂單日期", "姓名", "品項內容", "包裹應收", "出貨成本", "訂單損益", "物流編號", "取貨狀態"]
 
         edited_orders = st.data_editor(
-            df_orders if not df_orders.empty else pd.DataFrame(columns=["訂單日期", "訂單編號", "訂單連結", "姓名", "電話", "門市", "店號", "品項內容", "下單總數", "包裹應收", "商品成本", "物流運費", "出貨成本", "訂單損益", "物流編號", "取貨狀態", "取貨日期"]),
+            df_orders if not df_orders.empty else pd.DataFrame(columns=display_cols),
             disabled=not can_edit,
             hide_index=True,
             use_container_width=True,
-            num_rows="dynamic" if can_edit else "fixed",
+            num_rows="fixed", # 改為 fixed，避免主鍵衝突
             column_config=col_cfg,
             column_order=display_cols,
             key="orders_editor"
         )
 
-        if can_edit and st.button("💾 儲存訂單變更", type="primary"):
+        if can_edit and st.button("💾 儲存上方總表狀態變更", type="primary"):
             try:
                 with get_db() as conn:
                     cursor = conn.cursor()
@@ -1316,8 +1304,6 @@ elif menu == "訂單明細":
                             continue 
                         
                         row = row.fillna({'下單總數': 0, '包裹應收': 0.0, '商品成本': 0.0, '物流運費': 0.0, '出貨成本': 0.0, '訂單損益': 0.0})
-                        
-                        # 🌟 直接讀取文字內容寫入資料庫
                         item_content_str = str(row.get('品項內容', ''))
                         
                         cursor.execute("""
@@ -1332,12 +1318,48 @@ elif menu == "訂單明細":
                             str(row.get('取貨狀態', '待出貨')), str(row.get('取貨日期', ''))
                         ))
                     conn.commit()
-                log_system_action("訂單明細", current_operator, "更新訂單資料", "透過編輯器儲存了訂單總表變更")
-                st.success("✅ 訂單資料已成功保存！")
+                log_system_action("訂單明細", current_operator, "更新訂單資料", "透過總表儲存了訂單狀態變更")
+                st.success("✅ 總表狀態資料已成功保存！")
                 time.sleep(1)
                 st.rerun()
             except Exception as e:
                 st.error(f"❌ 儲存失敗：{str(e)}")
+
+        st.divider()
+
+        # 👇 全新功能：單筆訂單詳細檢視與獨立編輯區 👇
+        st.subheader("🔍 單筆訂單詳細檢視與編輯")
+        if not df_orders.empty:
+            order_list = df_orders['訂單編號'].tolist()
+            selected_order = st.selectbox("請選擇要查看或修改品項的訂單編號：", order_list)
+            
+            if selected_order:
+                target_order = df_orders[df_orders['訂單編號'] == selected_order].iloc[0]
+                
+                st.markdown(f"**訂單編號：** `{selected_order}` ｜ **顧客姓名：** `{target_order['姓名']}` ｜ **門市：** `{target_order['門市']}`")
+                
+                with st.form(f"detail_edit_form_{selected_order}"):
+                    # 使用 text_area 完美支援多行呈現與直接換行編輯
+                    new_items = st.text_area(
+                        "📦 品項內容 (支援直接在此處換行編輯)", 
+                        value=target_order['品項內容'], 
+                        height=200
+                    )
+                    
+                    if can_edit:
+                        if st.form_submit_button("💾 儲存此筆訂單品項變更", type="primary"):
+                            try:
+                                with get_db() as conn:
+                                    conn.execute("UPDATE customer_orders SET 品項內容 = ? WHERE 訂單編號 = ?", (new_items, selected_order))
+                                    conn.commit()
+                                log_system_action("訂單明細", current_operator, "編輯單筆品項", f"修改了訂單 {selected_order} 的品項內容")
+                                st.success(f"✅ 訂單 {selected_order} 的品項更新成功！")
+                                time.sleep(1)
+                                st.rerun()
+                            except Exception as e:
+                                st.error(f"❌ 更新失敗：{str(e)}")
+                    else:
+                        st.form_submit_button("🔒 您無權限編輯品項", disabled=True)
 
     with t2:
         st.subheader("📥 批量導入外部訂單資料")
