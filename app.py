@@ -1265,21 +1265,21 @@ elif menu == "訂單明細":
 
         can_edit = check_perm(role, "訂單明細", "can_edit")
         
-        # 👇 修改：將品項預覽設為 disabled，防止在上方表格單行編輯破壞格式
+        # 👇 修正：將金額欄位標示為台幣，並將「出貨成本」與「訂單損益」鎖定 (disabled=True)，交由系統自動計算
         col_cfg = {
             "訂單編號": st.column_config.TextColumn("訂單編號", disabled=True),
             "訂單連結": st.column_config.LinkColumn("🔗 訂單連結"),
-            "包裹應收": st.column_config.NumberColumn("包裹應收", format="$ %.2f"),
-            "商品成本": st.column_config.NumberColumn("商品成本", format="$ %.2f"),
-            "物流運費": st.column_config.NumberColumn("物流運費", format="$ %.2f"),
-            "出貨成本": st.column_config.NumberColumn("出貨成本", format="$ %.2f"),
-            "訂單損益": st.column_config.NumberColumn("訂單損益", format="$ %.2f"),
+            "包裹應收": st.column_config.NumberColumn("包裹應收 (台幣)", format="$ %.0f"),
+            "商品成本": st.column_config.NumberColumn("商品成本 (台幣)", format="$ %.0f"),
+            "物流運費": st.column_config.NumberColumn("物流運費 (台幣)", format="$ %.0f"),
+            "出貨成本": st.column_config.NumberColumn("出貨成本 (自動核算)", format="$ %.0f", disabled=True),
+            "訂單損益": st.column_config.NumberColumn("訂單損益 (自動核算)", format="$ %.0f", disabled=True),
             "下單總數": st.column_config.NumberColumn("下單總數", step=1),
             "取貨狀態": st.column_config.SelectboxColumn("狀態", options=["待出貨", "配送中", "已抵達", "已取貨", "未取退回", "取消", "退換貨處理中"]),
             "品項預覽": st.column_config.TextColumn("📦 品項內容 (預覽)", disabled=True) 
         }
 
-        # 🌟 2. 判斷開關狀態，決定要渲染的欄位清單 (改用「品項預覽」欄位)
+        # 🌟 2. 判斷開關狀態，決定要渲染的欄位清單
         if show_all_cols:
             display_cols = ["訂單日期", "訂單編號", "訂單連結", "姓名", "電話", "門市", "店號", "品項預覽", "下單總數", "包裹應收", "商品成本", "物流運費", "出貨成本", "訂單損益", "物流編號", "取貨狀態", "取貨日期"]
         else:
@@ -1304,9 +1304,12 @@ elif menu == "訂單明細":
                         if pd.isna(row['訂單編號']) or str(row['訂單編號']).strip() == "":
                             continue 
                         
-                        row = row.fillna({'下單總數': 0, '包裹應收': 0.0, '商品成本': 0.0, '物流運費': 0.0, '出貨成本': 0.0, '訂單損益': 0.0})
+                        row = row.fillna({'下單總數': 0, '包裹應收': 0.0, '商品成本': 0.0, '物流運費': 0.0})
                         
-                        # 🌟 修正儲存邏輯：只更新非品項的欄位，確保原本的換行品項內容在資料庫中完美保留
+                        # 🌟 自動計算核心邏輯：出貨成本 = 商品成本 + 運費；訂單損益 = 應收 - 出貨成本
+                        calc_ship_cost = float(row['商品成本']) + float(row['物流運費'])
+                        calc_profit = float(row['包裹應收']) - calc_ship_cost
+                        
                         cursor.execute("""
                             UPDATE customer_orders SET 
                             訂單日期=?, 訂單連結=?, 姓名=?, 電話=?, 門市=?, 店號=?, 
@@ -1317,13 +1320,13 @@ elif menu == "訂單明細":
                             str(row.get('訂單日期', '')), str(row.get('訂單連結', '')),
                             str(row.get('姓名', '')), str(row.get('電話', '')), str(row.get('門市', '')), str(row.get('店號', '')),
                             int(row['下單總數']), float(row['包裹應收']), float(row['商品成本']),
-                            float(row['物流運費']), float(row['出貨成本']), float(row['訂單損益']), 
+                            float(row['物流運費']), calc_ship_cost, calc_profit, 
                             str(row.get('物流編號', '')), str(row.get('取貨狀態', '待出貨')), str(row.get('取貨日期', '')),
                             str(row['訂單編號']).strip()
                         ))
                     conn.commit()
-                log_system_action("訂單明細", current_operator, "更新訂單資料", "透過總表儲存了訂單狀態變更")
-                st.success("✅ 總表狀態資料已成功保存！")
+                log_system_action("訂單明細", current_operator, "更新訂單資料", "透過總表儲存了訂單狀態，並由系統重新核算了所有台幣成本與損益")
+                st.success("✅ 總表狀態資料已成功保存！(出貨成本與損益已自動重新核算)")
                 time.sleep(1)
                 st.rerun()
             except Exception as e:
@@ -1331,7 +1334,7 @@ elif menu == "訂單明細":
 
         st.divider()
 
-        # 👇 升級版：單筆訂單完整詳細檢視與獨立編輯區 👇
+        # 👇 單筆訂單完整詳細檢視與獨立編輯區 👇
         st.subheader("🔍 單筆訂單完整詳細檢視與編輯")
         if not df_orders.empty:
             order_list = df_orders['訂單編號'].tolist()
@@ -1362,13 +1365,18 @@ elif menu == "訂單明細":
                     edit_status = c8.selectbox("取貨狀態", options=status_opts, index=status_opts.index(current_status))
 
                     # 展開所有的財務資料
-                    st.markdown("##### 💰 金額與成本核算")
-                    c9, c10, c11, c12, c13 = st.columns(5)
+                    st.markdown("##### 💰 金額與成本核算 (金額皆為台幣 TWD)")
+                    st.info("💡 系統提示：您不需手動輸入「出貨成本」，系統會自動將「商品成本 + 物流運費」加總；並自動以「包裹應收 - 出貨成本」核算出「訂單損益」。")
+                    c9, c10, c11, c12 = st.columns(4)
                     edit_qty = c9.number_input("下單總數", value=int(target_order.get('下單總數', 0)), step=1)
                     edit_revenue = c10.number_input("包裹應收", value=float(target_order.get('包裹應收', 0.0)), step=10.0)
                     edit_cost = c11.number_input("商品成本", value=float(target_order.get('商品成本', 0.0)), step=10.0)
                     edit_shipping = c12.number_input("物流運費", value=float(target_order.get('物流運費', 0.0)), step=10.0)
-                    edit_ship_cost = c13.number_input("出貨成本", value=float(target_order.get('出貨成本', 0.0)), step=10.0)
+                    
+                    # 顯示當前的資料庫運算結果
+                    db_ship_cost = float(target_order.get('出貨成本', 0.0))
+                    db_profit = float(target_order.get('訂單損益', 0.0))
+                    st.caption(f"📝 目前存檔狀態 👉 系統結算之出貨總成本：**{db_ship_cost:,.0f}** ｜ 訂單最終損益：**{db_profit:,.0f}**")
 
                     # 使用 text_area 完美支援多行呈現與直接換行編輯，顯示原始含換行的品項
                     new_items = st.text_area(
@@ -1380,8 +1388,9 @@ elif menu == "訂單明細":
                     if can_edit:
                         if st.form_submit_button("💾 儲存這筆訂單的所有完整變更", type="primary", use_container_width=True):
                             try:
-                                # 自動重算訂單損益：包裹應收 - 商品成本 - 物流運費 - 出貨成本
-                                calc_profit = edit_revenue - edit_cost - edit_shipping - edit_ship_cost
+                                # 🌟 自動重算單筆訂單的 出貨成本 與 訂單損益
+                                calc_single_ship_cost = edit_cost + edit_shipping
+                                calc_single_profit = edit_revenue - calc_single_ship_cost
                                 
                                 with get_db() as conn:
                                     conn.execute("""
@@ -1394,12 +1403,12 @@ elif menu == "訂單明細":
                                     """, (
                                         edit_date, edit_name, edit_phone, edit_link,
                                         edit_store, edit_store_id, edit_logistics, edit_status,
-                                        edit_qty, edit_revenue, edit_cost, edit_shipping, edit_ship_cost, calc_profit,
+                                        edit_qty, edit_revenue, edit_cost, edit_shipping, calc_single_ship_cost, calc_single_profit,
                                         new_items, selected_order
                                     ))
                                     conn.commit()
-                                log_system_action("訂單明細", current_operator, "編輯單筆完整訂單", f"全面更新了訂單 {selected_order} 的詳細資訊")
-                                st.success(f"✅ 訂單 {selected_order} 的完整資訊已更新成功！損益已自動核算為 {calc_profit}。")
+                                log_system_action("訂單明細", current_operator, "編輯單筆完整訂單", f"全面更新了訂單 {selected_order} 的詳細資訊與核算")
+                                st.success(f"✅ 訂單 {selected_order} 的完整資訊已更新成功！出貨成本自動結算為 {calc_single_ship_cost:,.0f}，損益為 {calc_single_profit:,.0f}。")
                                 time.sleep(1.5)
                                 st.rerun()
                             except Exception as e:
