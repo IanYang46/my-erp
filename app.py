@@ -1222,55 +1222,132 @@ elif menu == "訂單明細":
         st.error("🚫 您無權限訪問此模組")
         st.stop()
 
+    # 🌟 1. 取得資料庫資料 (移到最上方，讓數據看板與總表皆能共用)
+    with get_db() as conn:
+        df_orders = pd.read_sql("SELECT * FROM customer_orders ORDER BY 訂單日期 DESC", conn)
+
+    # 🌟 2. 資料預處理與美化
+    if not df_orders.empty:
+        # 電話與店號自動補 0
+        def fix_phone(val):
+            s = str(val).replace('.0', '').strip()
+            if s and s not in ['nan', 'None', '']:
+                return '0' + s if not s.startswith('0') else s
+            return ""
+
+        def fix_store_id(row):
+            s = str(row['店號']).replace('.0', '').strip()
+            if s and s not in ['nan', 'None', '']:
+                if '全家' in str(row['門市']) and not s.startswith('0'):
+                    return '0' + s
+                return s
+            return ""
+
+        df_orders['電話'] = df_orders['電話'].apply(fix_phone)
+        df_orders['店號'] = df_orders.apply(fix_store_id, axis=1)
+
+        # 處理品項預覽
+        def clean_and_preview(val):
+            if pd.isna(val) or str(val).strip() in ['nan', 'None']:
+                return ""
+            return str(val)
+        df_orders['品項內容_原始'] = df_orders['品項內容'].apply(clean_and_preview)
+        df_orders['品項預覽'] = df_orders['品項內容_原始'].apply(lambda x: x.replace('\n', ' ｜ '))
+        
+        # 確保財務欄位為數值型態，方便看板進行運算
+        for col in ['包裹應收', '商品成本', '物流運費', '出貨成本', '訂單損益']:
+            df_orders[col] = pd.to_numeric(df_orders[col], errors='coerce').fillna(0.0)
+
+    # 🌟 3. 新增：最上方的營運數據看板
+    st.subheader("📊 營運數據看板")
+    c_time, c_custom = st.columns([1, 2])
+    time_filter = c_time.selectbox("📅 選擇統計區間", ["全部", "今日", "本月", "本季", "今年", "自訂區間"])
+    
+    df_dash = df_orders.copy()
+    if not df_dash.empty:
+        df_dash['訂單日期_dt'] = pd.to_datetime(df_dash['訂單日期'], errors='coerce')
+        now = pd.Timestamp.today()
+        
+        if time_filter == "今日":
+            df_dash = df_dash[df_dash['訂單日期_dt'].dt.date == now.date()]
+        elif time_filter == "本月":
+            df_dash = df_dash[(df_dash['訂單日期_dt'].dt.year == now.year) & (df_dash['訂單日期_dt'].dt.month == now.month)]
+        elif time_filter == "本季":
+            current_quarter = (now.month - 1) // 3 + 1
+            df_dash = df_dash[(df_dash['訂單日期_dt'].dt.year == now.year) & (df_dash['訂單日期_dt'].dt.quarter == current_quarter)]
+        elif time_filter == "今年":
+            df_dash = df_dash[df_dash['訂單日期_dt'].dt.year == now.year]
+        elif time_filter == "自訂區間":
+            dates = c_custom.date_input("選擇自訂日期區間", [])
+            if len(dates) == 2:
+                df_dash = df_dash[(df_dash['訂單日期_dt'].dt.date >= dates[0]) & (df_dash['訂單日期_dt'].dt.date <= dates[1])]
+    
+    # 計算各項指標
+    total_orders = len(df_dash)
+    total_revenue = df_dash['包裹應收'].sum() if not df_dash.empty else 0
+    total_cost = df_dash['商品成本'].sum() if not df_dash.empty else 0
+    total_shipping = df_dash['物流運費'].sum() if not df_dash.empty else 0
+    total_est_profit = df_dash['訂單損益'].sum() if not df_dash.empty else 0
+    
+    picked_up = len(df_dash[df_dash['取貨狀態'] == '已取貨']) if not df_dash.empty else 0
+    returned = len(df_dash[df_dash['取貨狀態'] == '退換貨處理中']) if not df_dash.empty else 0
+    cancelled = len(df_dash[df_dash['取貨狀態'] == '取消']) if not df_dash.empty else 0
+    unclaimed = len(df_dash[df_dash['取貨狀態'] == '未取退回']) if not df_dash.empty else 0
+    
+    # 實際利潤 = 已取貨的預估利潤 - 未取退回損失的運費
+    actual_profit = 0
+    if not df_dash.empty:
+        profit_from_picked = df_dash[df_dash['取貨狀態'] == '已取貨']['訂單損益'].sum()
+        loss_from_unclaimed = df_dash[df_dash['取貨狀態'] == '未取退回']['物流運費'].sum()
+        actual_profit = profit_from_picked - loss_from_unclaimed
+
+    # 渲染看板 UI (加上簡單的框線背景)
+    st.markdown("""
+    <style>
+    div[data-testid="metric-container"] {
+        background-color: #f8f9fa;
+        border: 1px solid #e9ecef;
+        padding: 10px;
+        border-radius: 8px;
+    }
+    </style>
+    """, unsafe_allow_html=True)
+    
+    m1, m2, m3, m4, m5 = st.columns(5)
+    m1.metric("📦 總訂單數", f"{total_orders:,}")
+    m2.metric("💰 總營業額", f"${total_revenue:,.0f}")
+    m3.metric("🛒 總成本", f"${total_cost:,.0f}")
+    m4.metric("🚚 總運費", f"${total_shipping:,.0f}")
+    m5.metric("📈 總預估利潤", f"${total_est_profit:,.0f}")
+    
+    m6, m7, m8, m9, m10 = st.columns(5)
+    m6.metric("✅ 總取件數", f"{picked_up:,}")
+    m7.metric("❌ 總未取退回", f"{unclaimed:,}")
+    m8.metric("🔄 總退貨數", f"{returned:,}")
+    m9.metric("🚫 總取消數", f"{cancelled:,}")
+    m10.metric("💎 總實際利潤", f"${actual_profit:,.0f}", help="實際利潤 = (已成功取貨的訂單損益) - (未取退回所損失的物流運費)")
+
+    st.divider()
+    
+    can_edit = check_perm(role, "訂單明細", "can_edit")
     t1, t2 = st.tabs(["📄 訂單總表與追蹤", "📥 批次匯入與建檔"])
 
     with t1:
         st.info("在此查看並管理所有客戶訂單。您可以在下方總表中快速修改「取貨狀態」、「物流編號」，若需【檢視完整詳細資料與換行編輯品項】，請使用表格下方的「單筆訂單完整詳細檢視與編輯」區。")
-        
-        with get_db() as conn:
-            df_orders = pd.read_sql("SELECT * FROM customer_orders ORDER BY 訂單日期 DESC", conn)
-
-        # 👇 處理電話自動補 0、全家店號專屬補 0，以及文字預覽美化邏輯 👇
-        if not df_orders.empty:
-            def fix_phone(val):
-                s = str(val).replace('.0', '').strip()
-                if s and s not in ['nan', 'None', '']:
-                    return '0' + s if not s.startswith('0') else s
-                return ""
-
-            def fix_store_id(row):
-                s = str(row['店號']).replace('.0', '').strip()
-                if s and s not in ['nan', 'None', '']:
-                    if '全家' in str(row['門市']) and not s.startswith('0'):
-                        return '0' + s
-                    return s
-                return ""
-
-            df_orders['電話'] = df_orders['電話'].apply(fix_phone)
-            df_orders['店號'] = df_orders.apply(fix_store_id, axis=1)
-
-            def clean_and_preview(val):
-                if pd.isna(val) or str(val).strip() in ['nan', 'None']:
-                    return ""
-                return str(val)
-            df_orders['品項內容_原始'] = df_orders['品項內容'].apply(clean_and_preview)
-            df_orders['品項預覽'] = df_orders['品項內容_原始'].apply(lambda x: x.replace('\n', ' ｜ '))
 
         if df_orders.empty:
             st.warning("目前尚無任何訂單資料。請至「批次匯入與建檔」上傳 Excel/CSV，或手動建立第一筆訂單。")
 
-        can_edit = check_perm(role, "訂單明細", "can_edit")
-        
-        # 🌟 新增：表格上方的全域搜尋與展開按鈕
+        # 🌟 表格上方的全域搜尋與展開按鈕
         c_search, c_toggle = st.columns([3, 1])
         with c_search:
             search_kw = st.text_input("🔍 搜尋訂單 (輸入訂單編號、姓名、電話或物流編號過濾)", "")
         with c_toggle:
-            st.write("") # 為了與搜尋框對齊
+            st.write("") 
             st.write("")
             show_all_cols = st.toggle("🔍 展開顯示所有詳細欄位", value=False)
 
-        # 🌟 新增：根據搜尋框內容過濾資料
+        # 根據搜尋框內容過濾資料
         if not df_orders.empty and search_kw.strip():
             mask = (
                 df_orders['訂單編號'].astype(str).str.contains(search_kw, case=False, na=False) |
@@ -1282,11 +1359,10 @@ elif menu == "訂單明細":
         else:
             df_display = df_orders.copy()
 
-        # 🌟 新增：插入用於勾選刪除的空白欄位
+        # 插入用於勾選刪除的空白欄位
         if not df_display.empty:
             df_display.insert(0, "🗑️ 勾選", False)
         
-        # 欄位設定
         col_cfg = {
             "🗑️ 勾選": st.column_config.CheckboxColumn("🗑️ 刪除", default=False),
             "訂單編號": st.column_config.TextColumn("訂單編號", disabled=True),
@@ -1301,7 +1377,7 @@ elif menu == "訂單明細":
             "品項預覽": st.column_config.TextColumn("📦 品項內容 (預覽)", disabled=True) 
         }
 
-        # 判斷開關狀態，決定要渲染的欄位清單 (最前方加入 🗑️ 勾選)
+        # 判斷開關狀態
         if show_all_cols:
             display_cols = ["🗑️ 勾選", "訂單日期", "訂單編號", "訂單連結", "姓名", "電話", "門市", "店號", "品項預覽", "下單總數", "包裹應收", "商品成本", "物流運費", "出貨成本", "訂單損益", "物流編號", "取貨狀態", "取貨日期"]
         else:
@@ -1312,7 +1388,7 @@ elif menu == "訂單明細":
             disabled=not can_edit,
             hide_index=True,
             use_container_width=True,
-            num_rows="fixed", # 固定列數，避免主鍵操作衝突
+            num_rows="fixed", 
             column_config=col_cfg,
             column_order=display_cols,
             key="orders_editor"
@@ -1322,7 +1398,6 @@ elif menu == "訂單明細":
         if can_edit:
             c_save, c_del = st.columns(2)
             
-            # 抓取目前被勾選的訂單清單
             to_delete = []
             if not edited_orders.empty and "🗑️ 勾選" in edited_orders.columns:
                 to_delete = edited_orders[edited_orders["🗑️ 勾選"] == True]['訂單編號'].tolist()
@@ -1364,7 +1439,6 @@ elif menu == "訂單明細":
                         st.error(f"❌ 儲存失敗：{str(e)}")
 
             with c_del:
-                # 若有勾選，則顯示刪除按鈕
                 if len(to_delete) > 0:
                     if st.button(f"⚠️ 確認刪除已勾選的 {len(to_delete)} 筆訂單", type="primary", use_container_width=True):
                         try:
@@ -1386,16 +1460,13 @@ elif menu == "訂單明細":
         st.subheader("🔍 單筆訂單完整詳細檢視與編輯")
         if not df_orders.empty:
             
-            # 🌟 新增：客製化選單選項，讓 Streamlit 內建搜尋更好找
             detail_options = {}
             for _, row in df_orders.iterrows():
                 logi_info = row.get('物流編號', '').strip()
                 logi_str = f" ｜ 物流: {logi_info}" if logi_info else ""
-                # 將標籤命名為 "[訂單號] 姓名 ｜ 物流: XXX"
                 label = f"[{row['訂單編號']}] {row.get('姓名', '')}{logi_str}"
                 detail_options[label] = row['訂單編號']
             
-            # Streamlit 的 selectbox 本身支援點擊後直接打字搜尋
             selected_label = st.selectbox(
                 "💡 支援直接點擊此處，用鍵盤打字搜尋「物流單號」、「姓名」或「訂單編號」：", 
                 options=list(detail_options.keys())
@@ -1409,14 +1480,12 @@ elif menu == "訂單明細":
                 with st.form(f"detail_edit_form_{selected_order}"):
                     st.markdown(f"### 🧾 訂單編號：`{selected_order}`")
                     
-                    # 展開所有的客戶與基本資料
                     c1, c2, c3, c4 = st.columns(4)
                     edit_date = c1.text_input("訂單日期", value=target_order.get('訂單日期', ''))
                     edit_name = c2.text_input("顧客姓名", value=target_order.get('姓名', ''))
                     edit_phone = c3.text_input("聯絡電話", value=target_order.get('電話', ''))
                     edit_link = c4.text_input("訂單連結", value=target_order.get('訂單連結', ''))
 
-                    # 展開所有的物流資料
                     c5, c6, c7, c8 = st.columns(4)
                     edit_store = c5.text_input("取件門市", value=target_order.get('門市', ''))
                     edit_store_id = c6.text_input("門市店號", value=target_order.get('店號', ''))
@@ -1427,7 +1496,6 @@ elif menu == "訂單明細":
                     if current_status not in status_opts: status_opts.append(current_status)
                     edit_status = c8.selectbox("取貨狀態", options=status_opts, index=status_opts.index(current_status))
 
-                    # 展開所有的財務資料
                     st.markdown("##### 💰 金額與成本核算 (金額皆為台幣 TWD)")
                     st.info("💡 系統提示：您不需手動輸入「出貨成本」，系統會自動將「商品成本 + 物流運費」加總；並自動以「包裹應收 - 出貨成本」核算出「訂單損益」。")
                     c9, c10, c11, c12 = st.columns(4)
@@ -1436,12 +1504,10 @@ elif menu == "訂單明細":
                     edit_cost = c11.number_input("商品成本", value=float(target_order.get('商品成本', 0.0)), step=10.0)
                     edit_shipping = c12.number_input("物流運費", value=float(target_order.get('物流運費', 0.0)), step=10.0)
                     
-                    # 顯示當前的資料庫運算結果
                     db_ship_cost = float(target_order.get('出貨成本', 0.0))
                     db_profit = float(target_order.get('訂單損益', 0.0))
                     st.caption(f"📝 目前存檔狀態 👉 系統結算之出貨總成本：**{db_ship_cost:,.0f}** ｜ 訂單最終損益：**{db_profit:,.0f}**")
 
-                    # 使用 text_area 完美支援多行呈現與直接換行編輯，顯示原始含換行的品項
                     new_items = st.text_area(
                         "📦 品項內容 (支援直接在此處換行編輯)", 
                         value=target_order.get('品項內容_原始', ''), 
@@ -1451,7 +1517,6 @@ elif menu == "訂單明細":
                     if can_edit:
                         if st.form_submit_button("💾 儲存這筆訂單的所有完整變更", type="primary", use_container_width=True):
                             try:
-                                # 自動重算單筆訂單的 出貨成本 與 訂單損益
                                 calc_single_ship_cost = edit_cost + edit_shipping
                                 calc_single_profit = edit_revenue - calc_single_ship_cost
                                 
@@ -1491,7 +1556,6 @@ elif menu == "訂單明細":
                 try:
                     df_imp = pd.read_csv(uploaded_order) if uploaded_order.name.endswith('.csv') else pd.read_excel(uploaded_order, engine='openpyxl')
                     
-                    # 1. 自動欄位對應
                     col_mapping = {
                         '訂單編號': '訂單編號',
                         '建立日期': '訂單日期',
@@ -1508,10 +1572,8 @@ elif menu == "訂單明細":
                     if '訂單編號' not in df_imp.columns:
                         st.error("❌ 匯入失敗：檔案中找不到『訂單編號』欄位。")
                     else:
-                        # 排除空值資料
                         df_imp = df_imp[df_imp['訂單編號'].astype(str).str.strip() != ""]
                         
-                        # 清理數值欄位
                         if '下單總數' in df_imp.columns:
                             df_imp['下單總數'] = pd.to_numeric(df_imp['下單總數'], errors='coerce').fillna(0)
                         if '包裹應收' in df_imp.columns:
@@ -1521,7 +1583,6 @@ elif menu == "訂單明細":
                             
                         df_imp = df_imp.fillna("")
 
-                        # 2. 合併同訂單編號的多筆品項
                         agg_funcs = {}
                         for col in df_imp.columns:
                             if col == '訂單編號':
@@ -1531,13 +1592,12 @@ elif menu == "訂單明細":
                             elif col == '下單總數':
                                 agg_funcs[col] = 'sum'
                             elif col == '包裹應收':
-                                agg_funcs[col] = 'first' # 金額通常在每列都相同，取第一筆即可
+                                agg_funcs[col] = 'first' 
                             else:
                                 agg_funcs[col] = 'first'
                                 
                         df_grouped = df_imp.groupby('訂單編號', as_index=False).agg(agg_funcs)
 
-                        # 3. 寫入資料庫
                         with get_db() as conn:
                             cursor = conn.cursor()
                             count = 0
