@@ -1227,13 +1227,11 @@ elif menu == "訂單明細":
     with t1:
         st.info("在此查看並管理所有客戶訂單。你可以直接在下方表格中修改「取貨狀態」、「物流編號」等資訊，編輯完記得點擊最下方儲存。")
         
-        # 🌟 1. 加入展開/縮起詳細欄位的切換開關 (預設為縮起狀態 False)
-        show_all_cols = st.toggle("🔍 展開顯示所有詳細欄位", value=False)
-        
+        # 1. 先從資料庫把資料抓出來 (為了讓上面的查看器能讀到清單)
         with get_db() as conn:
             df_orders = pd.read_sql("SELECT * FROM customer_orders ORDER BY 訂單日期 DESC", conn)
 
-        # 👇 新增：處理電話自動補 0、全家店號專屬補 0，以及品項換行的美化邏輯 👇
+        # 處理電話與店號補 0、以及文字清理邏輯
         if not df_orders.empty:
             def fix_phone(val):
                 s = str(val).replace('.0', '').strip()
@@ -1252,20 +1250,33 @@ elif menu == "訂單明細":
             df_orders['電話'] = df_orders['電話'].apply(fix_phone)
             df_orders['店號'] = df_orders.apply(fix_store_id, axis=1)
 
-            # 🌟 恢復傳統文字模式，保留使用者的原始換行與長篇幅資料
             def clean_text(val):
                 if pd.isna(val) or str(val).strip() in ['nan', 'None']:
                     return ""
                 return str(val)
             df_orders['品項內容'] = df_orders['品項內容'].apply(clean_text)
-            # 👆 美化邏輯結束 👆
 
         if df_orders.empty:
             st.warning("目前尚無任何訂單資料。請至「批次匯入與建檔」上傳 Excel/CSV，或手動建立第一筆訂單。")
+            
+        # 👇 🌟 新增功能：專屬的「下拉式品項查看器」，解決表格無法換行的痛點 👇
+        if not df_orders.empty:
+            with st.expander("🔍 點擊展開：快速查看單筆訂單的【完整換行品項內容】", expanded=False):
+                # 建立下拉式選單，讓使用者搜尋/選擇訂單
+                view_id = st.selectbox("請選擇或搜尋要查看的訂單編號：", df_orders['訂單編號'].tolist())
+                if view_id:
+                    # 抓出該訂單的完整品項文字
+                    detail_content = df_orders[df_orders['訂單編號'] == view_id]['品項內容'].iloc[0]
+                    st.markdown(f"**📦 訂單 {view_id} 的完整品項：**")
+                    # 使用 code 區塊，能夠 100% 完美呈現原始文字的換行排版
+                    st.code(detail_content, language="text")
+        # 👆 新增結束 👆
 
+        # 🌟 展開/縮起詳細欄位的切換開關
+        show_all_cols = st.toggle("🔍 展開顯示所有詳細欄位", value=False)
         can_edit = check_perm(role, "訂單明細", "can_edit")
         
-        # 👇 修改：將品項內容改為 ListColumn
+        # 👇 將品項內容恢復為 TextColumn，這樣點兩下彈出的視窗就可以正常編輯多行文字
         col_cfg = {
             "訂單編號": st.column_config.TextColumn("訂單編號 (主鍵)", required=True),
             "訂單連結": st.column_config.LinkColumn("🔗 訂單連結"),
@@ -1276,10 +1287,10 @@ elif menu == "訂單明細":
             "訂單損益": st.column_config.NumberColumn("訂單損益", format="$ %.2f"),
             "下單總數": st.column_config.NumberColumn("下單總數", step=1),
             "取貨狀態": st.column_config.SelectboxColumn("狀態", options=["待出貨", "配送中", "已抵達", "已取貨", "未取退回", "取消", "退換貨處理中"]),
-            "品項內容": st.column_config.TextColumn("📦 品項內容 (支援換行與長文)") # 🌟 關鍵：用 ListColumn 顯示
+            "品項內容": st.column_config.TextColumn("📦 品項內容 (雙擊單元格可編輯)") # 🌟 恢復為純文字設定
         }
 
-        # 🌟 2. 判斷開關狀態，決定要渲染的欄位清單
+        # 🌟 判斷開關狀態，決定要渲染的欄位清單
         if show_all_cols:
             display_cols = ["訂單日期", "訂單編號", "訂單連結", "姓名", "電話", "門市", "店號", "品項內容", "下單總數", "包裹應收", "商品成本", "物流運費", "出貨成本", "訂單損益", "物流編號", "取貨狀態", "取貨日期"]
         else:
