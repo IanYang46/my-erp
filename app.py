@@ -417,7 +417,7 @@ if 'logged_in' not in st.session_state:
             user = st.text_input("帳號", autocomplete="username")
             pw = st.text_input("密碼", type="password", autocomplete="current-password")
             
-            keep_logged_in = st.checkbox("保持登入狀態", value=True)
+            keep_logged_in = st.checkbox("記住帳號密碼", value=True)
             
             if st.form_submit_button("登入"):
                 with get_db() as conn:
