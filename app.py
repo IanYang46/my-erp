@@ -1446,7 +1446,7 @@ elif menu == "訂單明細":
         # 🚀 終極解決方案：不再與 Streamlit 的底層 CSS 渲染機制打架
         # 改用我們已經算好的 is_repeat，轉換成一個極度顯眼的專屬標籤欄位
         if not df_display.empty:
-            df_display['⚠️ 警示'] = df_display['is_repeat'].apply(lambda x: '🚨 重複客' if x else '')
+            df_display['⚠️ 警示'] = df_display['is_repeat'].apply(lambda x: '🚨 重複' if x else '')
 
         if show_all_cols:
             display_cols = ["🗑️ 勾選", "⚠️ 警示", "訂單日期", "訂單編號", "訂單連結", "姓名", "電話", "信箱", "門市", "店號", "品項預覽", "下單總數", "包裹應收", "商品成本", "物流運費", "出貨成本", "訂單損益", "物流編號", "取貨狀態", "取貨日期", "顧客備註", "商家備註"]
@@ -1580,7 +1580,7 @@ elif menu == "訂單明細":
                     
                     c14, c15 = st.columns(2)
                     edit_cust_note = c14.text_area("👤 顧客備註", value=target_order.get('顧客備註', ''))
-                    edit_merch_note = c15.text_area("🏪 內部商家備註", value=target_order.get('商家備註', ''))
+                    edit_merch_note = c15.text_area("🏪 商家備註", value=target_order.get('商家備註', ''))
 
                     if can_edit:
                         if st.form_submit_button("💾 儲存這筆訂單的所有完整變更", type="primary", use_container_width=True):
