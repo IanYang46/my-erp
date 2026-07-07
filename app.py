@@ -49,15 +49,14 @@ enterprise_erp_style = """
             [data-testid="stSidebar"] * {
                 color: #F8FAFC !important;
             }
-            /* 🌟 排除條款：強制按鈕與輸入框內的字體維持深黑色 (解決白底白字) */
+            /* 🌟 排除條款：強制一般按鈕維持深黑色 */
             [data-testid="stSidebar"] button[kind="secondary"] * {
                 color: #0F172A !important;
             }
-            /* 🌟 修正重點：確保側邊欄輸入框內的所有元素(包含 +- 號的 SVG 圖示)皆為深色 */
-            [data-testid="stSidebar"] div[data-baseweb="input"] *, 
+            /* 🌟 確保側邊欄輸入框、下拉選單的文字與背景不被全域白色覆蓋 */
+            [data-testid="stSidebar"] div[data-baseweb="input"] input, 
             [data-testid="stSidebar"] div[data-baseweb="select"] * {
                 color: #0F172A !important;
-                fill: #0F172A !important; 
             }
             [data-testid="stSidebar"] hr {
                 border-color: #334155 !important;
@@ -130,7 +129,7 @@ enterprise_erp_style = """
                 background-color: #F8FAFC !important;
             }
 
-            /* 8. 確保所有輸入框的文字與圖示是深色，背景是白色 */
+            /* 8. 確保所有輸入框的文字是深色，背景是白色 */
             div[data-baseweb="input"],
             div[data-baseweb="input"] input, 
             div[data-baseweb="select"] div,
@@ -139,9 +138,18 @@ enterprise_erp_style = """
                 background-color: #FFFFFF !important;
                 border-radius: 4px !important;
             }
-            /* 針對全域輸入框內的 SVG (+/- 號圖示) 加強防護 */
-            div[data-baseweb="input"] svg {
+            
+            /* 🌟 終極修正：暴力鎖定所有 Streamlit 的 + / - 按鈕 (包含 SVG, Button, Div 結構)，強制顯示深黑色！ */
+            [data-testid="stNumberInputStepDown"], 
+            [data-testid="stNumberInputStepUp"],
+            [data-testid="stNumberInputStepDown"] svg, 
+            [data-testid="stNumberInputStepUp"] svg,
+            div[data-baseweb="input"] button,
+            div[data-baseweb="input"] button svg,
+            div[data-baseweb="input"] div[role="button"],
+            div[data-baseweb="input"] div[role="button"] svg {
                 fill: #0F172A !important;
+                color: #0F172A !important;
             }
             </style>
             """
