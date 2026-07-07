@@ -1443,30 +1443,32 @@ elif menu == "訂單明細":
             # 預設把信箱、顧客備註、商家備註拿掉，讓它們「縮起來」
             display_cols = ["🗑️ 勾選", "訂單編號", "訂單日期", "姓名", "電話", "品項預覽", "包裹應收", "出貨成本", "訂單損益", "物流編號", "取貨狀態"]
 
-        # 🚀 關鍵修正：放棄容易報錯的 axis=1，改用 Pandas 官方推薦的「指定單一欄位上色法」
+        # 🚀 關鍵修正 1：先確保資料表只保留我們指定的欄位順序
         if not df_display.empty:
             df_display = df_display[display_cols]
             
-            # 確保轉為純字典，避免 Pandas 版本衝突與底層查詢失敗
             dict_names = name_counts.to_dict()
             dict_phones = phone_counts.to_dict()
             dict_emails = email_counts.to_dict()
 
-            def highlight_names(s):
-                return ['background-color: #ffcc00; color: #000000;' if v and dict_names.get(v, 0) > 1 else '' for v in s]
-            def highlight_phones(s):
-                return ['background-color: #ffcc00; color: #000000;' if v and dict_phones.get(v, 0) > 1 else '' for v in s]
-            def highlight_emails(s):
-                return ['background-color: #ffcc00; color: #000000;' if v and dict_emails.get(v, 0) > 1 else '' for v in s]
+            def color_repeat(val, count_dict):
+                return 'background-color: #ffcc00; color: #000000;' if val and count_dict.get(val, 0) > 1 else ''
 
             styled_df = df_display.style
-            # 針對特定欄位各別渲染，Streamlit 就能百分之百準確吃到顏色
-            if '姓名' in df_display.columns: styled_df = styled_df.apply(highlight_names, subset=['姓名'])
-            if '電話' in df_display.columns: styled_df = styled_df.apply(highlight_phones, subset=['電話'])
-            if '信箱' in df_display.columns: styled_df = styled_df.apply(highlight_emails, subset=['信箱'])
+            
+            # 自動適應 Pandas 新舊版本，使用最穩定的單格上色 (map / applymap)
+            if hasattr(styled_df, "map"):
+                if '姓名' in df_display.columns: styled_df = styled_df.map(lambda x: color_repeat(x, dict_names), subset=['姓名'])
+                if '電話' in df_display.columns: styled_df = styled_df.map(lambda x: color_repeat(x, dict_phones), subset=['電話'])
+                if '信箱' in df_display.columns: styled_df = styled_df.map(lambda x: color_repeat(x, dict_emails), subset=['信箱'])
+            else:
+                if '姓名' in df_display.columns: styled_df = styled_df.applymap(lambda x: color_repeat(x, dict_names), subset=['姓名'])
+                if '電話' in df_display.columns: styled_df = styled_df.applymap(lambda x: color_repeat(x, dict_phones), subset=['電話'])
+                if '信箱' in df_display.columns: styled_df = styled_df.applymap(lambda x: color_repeat(x, dict_emails), subset=['信箱'])
         else:
             styled_df = pd.DataFrame(columns=display_cols)
 
+        # 🚀 關鍵修正 2：移除 column_order 參數 (Streamlit Bug：若套用 Style 又指定 column_order 會導致顏色被系統強制清除！)
         edited_orders = st.data_editor(
             styled_df,
             disabled=not can_edit,
@@ -1474,7 +1476,6 @@ elif menu == "訂單明細":
             use_container_width=True,
             num_rows="fixed", 
             column_config=col_cfg,
-            column_order=display_cols,
             key="orders_editor"
         )
 
