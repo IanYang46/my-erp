@@ -1374,9 +1374,11 @@ elif menu == "訂單明細":
         else:
             df_display = df_orders.copy()
 
-        # 插入用於勾選刪除的空白欄位
+        # 🌟 插入全選功能與勾選刪除欄位
         if not df_display.empty:
-            df_display.insert(0, "🗑️ 勾選", False)
+            # 建立全選按鈕，並將其布林值傳入預設勾選狀態
+            select_all = st.checkbox("☑️ 全選下方所有顯示的訂單 (搭配搜尋功能可批次全選刪除)")
+            df_display.insert(0, "🗑️ 勾選", select_all)
         
         col_cfg = {
             "🗑️ 勾選": st.column_config.CheckboxColumn("🗑️ 刪除", default=False),
