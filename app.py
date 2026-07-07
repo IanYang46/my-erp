@@ -1468,6 +1468,7 @@ elif menu == "訂單明細":
             "物流運費": st.column_config.NumberColumn("物流運費", format="$ %.0f"),
             "出貨成本": st.column_config.NumberColumn("出貨成本", format="$ %.0f", disabled=True),
             "訂單損益": st.column_config.NumberColumn("訂單損益", format="$ %.0f", disabled=True),
+            "下單總數": st.column_config.NumberColumn("下單總數", step=1),
             "取貨狀態": st.column_config.SelectboxColumn("狀態", options=["待出貨", "配送中", "已抵達", "已取貨", "未取退回", "取消", "退換貨處理中"]),
             "品項預覽": st.column_config.TextColumn("📦 品項內容 (預覽)", disabled=True),
             "信箱": st.column_config.TextColumn("📧 信箱"),
@@ -1476,9 +1477,10 @@ elif menu == "訂單明細":
         }
 
         if show_all_cols:
-            display_cols = ["🗑️ 勾選", "⚠️ 警示", "訂單日期", "訂單編號", "訂單連結", "姓名", "電話", "信箱", "門市", "店號", "品項預覽", "包裹應收", "商品成本", "物流運費", "出貨成本", "訂單損益", "物流編號", "取貨狀態", "取貨日期", "顧客備註", "商家備註"]
+            display_cols = ["🗑️ 勾選", "訂單日期", "訂單編號", "訂單連結", "姓名", "電話", "信箱", "門市", "店號", "品項預覽", "下單總數", "包裹應收", "商品成本", "物流運費", "出貨成本", "訂單損益", "物流編號", "取貨狀態", "取貨日期", "顧客備註", "商家備註"]
         else:
-            display_cols = ["🗑️ 勾選", "⚠️ 警示", "訂單編號", "訂單日期", "姓名", "電話", "品項預覽", "包裹應收", "出貨成本", "訂單損益", "物流編號", "取貨狀態"]
+            # 預設把信箱、顧客備註、商家備註拿掉，讓它們「縮起來」
+            display_cols = ["🗑️ 勾選", "訂單編號", "訂單日期", "姓名", "電話", "品項預覽", "包裹應收", "出貨成本", "訂單損益", "物流編號", "取貨狀態"]
 
         # 🚀 終極解決方案：不再與 Streamlit 的底層 CSS 渲染機制打架
         # 改用我們已經算好的 is_repeat，轉換成一個極度顯眼的專屬標籤欄位
@@ -1521,7 +1523,7 @@ elif menu == "訂單明細":
                             cursor = conn.cursor()
                             for _, row in edited_orders.iterrows():
                                 if pd.isna(row['訂單編號']) or str(row['訂單編號']).strip() == "": continue 
-                                row = row.fillna({'包裹應收': 0.0, '商品成本': 0.0, '物流運費': 0.0})
+                                row = row.fillna({'下單總數': 0, '包裹應收': 0.0, '商品成本': 0.0, '物流運費': 0.0})
                                 
                                 calc_ship_cost = float(row['商品成本']) + float(row['物流運費'])
                                 calc_profit = float(row['包裹應收']) - calc_ship_cost
@@ -1529,14 +1531,14 @@ elif menu == "訂單明細":
                                 cursor.execute("""
                                     UPDATE customer_orders SET 
                                     訂單日期=?, 訂單連結=?, 姓名=?, 電話=?, 信箱=?, 門市=?, 店號=?, 
-                                    包裹應收=?, 商品成本=?, 物流運費=?, 出貨成本=?, 訂單損益=?, 
+                                    下單總數=?, 包裹應收=?, 商品成本=?, 物流運費=?, 出貨成本=?, 訂單損益=?, 
                                     物流編號=?, 取貨狀態=?, 取貨日期=?, 顧客備註=?, 商家備註=?
                                     WHERE 訂單編號=?
                                 """, (
                                     str(row.get('訂單日期', '')), str(row.get('訂單連結', '')),
                                     str(row.get('姓名', '')), str(row.get('電話', '')), str(row.get('信箱', '')),
                                     str(row.get('門市', '')), str(row.get('店號', '')),
-                                    float(row['包裹應收']), float(row['商品成本']),
+                                    int(row['下單總數']), float(row['包裹應收']), float(row['商品成本']),
                                     float(row['物流運費']), calc_ship_cost, calc_profit, 
                                     str(row.get('物流編號', '')), str(row.get('取貨狀態', '待出貨')), str(row.get('取貨日期', '')),
                                     str(row.get('顧客備註', '')), str(row.get('商家備註', '')),
@@ -1603,10 +1605,11 @@ elif menu == "訂單明細":
                     edit_status = c9.selectbox("取貨狀態", options=status_opts, index=status_opts.index(current_status))
 
                     st.markdown("##### 💰 金額與成本核算 (金額皆為台幣 TWD)")
-                    c10, c11, c12 = st.columns(3) # 改為3欄
-                    edit_revenue = c10.number_input("包裹應收", value=float(target_order.get('包裹應收', 0.0)), step=10.0)
-                    edit_cost = c11.number_input("商品成本", value=float(target_order.get('商品成本', 0.0)), step=10.0)
-                    edit_shipping = c12.number_input("物流運費", value=float(target_order.get('物流運費', 0.0)), step=10.0)
+                    c10, c11, c12, c13 = st.columns(4)
+                    edit_qty = c10.number_input("下單總數", value=int(target_order.get('下單總數', 0)), step=1)
+                    edit_revenue = c11.number_input("包裹應收", value=float(target_order.get('包裹應收', 0.0)), step=10.0)
+                    edit_cost = c12.number_input("商品成本", value=float(target_order.get('商品成本', 0.0)), step=10.0)
+                    edit_shipping = c13.number_input("物流運費", value=float(target_order.get('物流運費', 0.0)), step=10.0)
                     
                     db_ship_cost = float(target_order.get('出貨成本', 0.0))
                     db_profit = float(target_order.get('訂單損益', 0.0))
@@ -1629,13 +1632,13 @@ elif menu == "訂單明細":
                                         UPDATE customer_orders SET 
                                         訂單日期=?, 姓名=?, 電話=?, 信箱=?, 訂單連結=?, 
                                         門市=?, 店號=?, 物流編號=?, 取貨狀態=?,
-                                        包裹應收=?, 商品成本=?, 物流運費=?, 出貨成本=?, 訂單損益=?,
+                                        下單總數=?, 包裹應收=?, 商品成本=?, 物流運費=?, 出貨成本=?, 訂單損益=?,
                                         品項內容=?, 顧客備註=?, 商家備註=?
                                         WHERE 訂單編號=?
                                     """, (
                                         edit_date, edit_name, edit_phone, edit_email, edit_link,
                                         edit_store, edit_store_id, edit_logistics, edit_status,
-                                        edit_revenue, edit_cost, edit_shipping, calc_single_ship_cost, calc_single_profit,
+                                        edit_qty, edit_revenue, edit_cost, edit_shipping, calc_single_ship_cost, calc_single_profit,
                                         new_items, edit_cust_note, edit_merch_note, selected_order
                                     ))
                                     conn.commit()
