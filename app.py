@@ -1409,14 +1409,15 @@ elif menu == "訂單明細":
         # 定義高亮重複客的風格套用函數 (僅針對姓名、電話、信箱個別上色)
         def highlight_repeats(row):
             styles = [''] * len(row)
-            cols = row.index
-            for i, col in enumerate(cols):
-                if col == '姓名' and row['姓名'] and name_counts.get(row['姓名'], 0) > 1:
-                    styles[i] = 'background-color: rgba(255, 193, 7, 0.4)'
-                elif col == '電話' and row['電話'] and phone_counts.get(row['電話'], 0) > 1:
-                    styles[i] = 'background-color: rgba(255, 193, 7, 0.4)'
-                elif col == '信箱' and row['信箱'] and email_counts.get(row['信箱'], 0) > 1:
-                    styles[i] = 'background-color: rgba(255, 193, 7, 0.4)'
+            for i, col in enumerate(row.index):
+                val = row.get(col, '')
+                # 若該格有值，且在重複次數統計中大於 1，則標記黃底黑字 (加上黑字確保暗黑模式也看得清楚)
+                if col == '姓名' and val and name_counts.get(val, 0) > 1:
+                    styles[i] = 'background-color: #ffcc00; color: #000000;'
+                elif col == '電話' and val and phone_counts.get(val, 0) > 1:
+                    styles[i] = 'background-color: #ffcc00; color: #000000;'
+                elif col == '信箱' and val and email_counts.get(val, 0) > 1:
+                    styles[i] = 'background-color: #ffcc00; color: #000000;'
             return styles
 
         col_cfg = {
@@ -1442,7 +1443,12 @@ elif menu == "訂單明細":
             # 預設把信箱、顧客備註、商家備註拿掉，讓它們「縮起來」
             display_cols = ["🗑️ 勾選", "訂單編號", "訂單日期", "姓名", "電話", "品項預覽", "包裹應收", "出貨成本", "訂單損益", "物流編號", "取貨狀態"]
 
-        styled_df = df_display.style.apply(highlight_repeats, axis=1) if not df_display.empty else pd.DataFrame(columns=display_cols)
+        # 🚀 關鍵修正：先過濾出要顯示的欄位，再套用顏色！(避免 Streamlit 樣式與欄位對不齊而失效)
+        if not df_display.empty:
+            df_display = df_display[display_cols]
+            styled_df = df_display.style.apply(highlight_repeats, axis=1)
+        else:
+            styled_df = pd.DataFrame(columns=display_cols)
 
         edited_orders = st.data_editor(
             styled_df,
