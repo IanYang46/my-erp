@@ -1717,10 +1717,10 @@ elif menu == "權限管理":
         edited_users = st.data_editor(
             df_users, num_rows="dynamic", use_container_width=True,
             column_config={
-                "帳號": st.column_config.TextColumn("👤 登入帳號 (必填不可重複)", required=True),
-                "密碼": st.column_config.TextColumn("🔑 密碼 (明文顯示)", required=True),
-                "員工自訂暱稱": st.column_config.TextColumn("📝 員工自訂暱稱"),
-                "管理員私密備註": st.column_config.TextColumn("🔒 私密備註 (僅 Admin 可見)")
+                "帳號": st.column_config.TextColumn("👤 登入帳號", required=True),
+                "密碼": st.column_config.TextColumn("🔑 密碼", required=True),
+                "員工自訂暱稱": st.column_config.TextColumn("📝 自訂暱稱"),
+                "管理員私密備註": st.column_config.TextColumn("🔒 備註")
             }
         )
         
