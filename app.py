@@ -472,8 +472,20 @@ st.sidebar.title("🏢 強盛集團 ERP")
 
 # 🌟 側邊欄顯示與修改暱稱 (僅修改自己的暱稱)
 show_name = st.session_state.get('nickname', st.session_state['user'])
-# 這裡加上了兩個換行符號 \n\n，確保它絕對會拆成兩行，並加上粗體讓視覺更好看
-st.sidebar.info(f"👤 登入者： **{show_name}**\n\n🔑 權限組： **{st.session_state['role']}**")
+
+# 使用 HTML 與 Flexbox 確保圖示與文字絕對對齊，並帶有質感的提示框背景
+st.sidebar.markdown(f"""
+<div style="background-color: rgba(37,99,235,0.1); padding: 12px 16px; border-radius: 6px; border: 1px solid rgba(37,99,235,0.3); margin-bottom: 15px;">
+    <div style="display: flex; align-items: center; margin-bottom: 6px;">
+        <span style="min-width: 32px; font-size: 16px;">👤</span>
+        <span style="font-size: 15px;">登入者： <b>{show_name}</b></span>
+    </div>
+    <div style="display: flex; align-items: center;">
+        <span style="min-width: 32px; font-size: 16px;">🔑</span>
+        <span style="font-size: 15px;">權限組： <b>{st.session_state['role']}</b></span>
+    </div>
+</div>
+""", unsafe_allow_html=True)
 
 with st.sidebar.expander("✏️ 修改我的顯示暱稱"):
     new_nick = st.text_input("輸入新暱稱", value=show_name if show_name != st.session_state['user'] else "")
