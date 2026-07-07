@@ -472,7 +472,8 @@ st.sidebar.title("🏢 強盛集團 ERP")
 
 # 🌟 側邊欄顯示與修改暱稱 (僅修改自己的暱稱)
 show_name = st.session_state.get('nickname', st.session_state['user'])
-st.sidebar.info(f"👤 登入者: {show_name} \n🔑 權限組: {st.session_state['role']}")
+# 這裡加上了兩個換行符號 \n\n，確保它絕對會拆成兩行，並加上粗體讓視覺更好看
+st.sidebar.info(f"👤 登入者： **{show_name}**\n\n🔑 權限組： **{st.session_state['role']}**")
 
 with st.sidebar.expander("✏️ 修改我的顯示暱稱"):
     new_nick = st.text_input("輸入新暱稱", value=show_name if show_name != st.session_state['user'] else "")
