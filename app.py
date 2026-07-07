@@ -1354,30 +1354,37 @@ elif menu == "訂單明細":
             st.warning("目前尚無任何訂單資料。請至「批次匯入與建檔」上傳 Excel/CSV，或手動建立第一筆訂單。")
 
         # 🌟 表格上方的全域搜尋與展開按鈕
-        c_search, c_toggle = st.columns([3, 1])
+        c_search, c_status, c_toggle = st.columns([2, 1, 1.2])
         with c_search:
-            search_kw = st.text_input("🔍 搜尋訂單 (輸入訂單編號、姓名、電話或物流編號過濾)", "")
+            search_kw = st.text_input("🔍 搜尋訂單 (輸入姓名、電話或單號)", "")
+        with c_status:
+            status_filter = st.selectbox("📌 狀態篩選", ["全部", "待出貨", "配送中", "已抵達", "已取貨", "未取退回", "取消", "退換貨處理中"])
         with c_toggle:
             st.write("") 
             st.write("")
             show_all_cols = st.toggle("🔍 展開顯示所有詳細欄位", value=False)
 
-        # 根據搜尋框內容過濾資料
-        if not df_orders.empty and search_kw.strip():
-            mask = (
-                df_orders['訂單編號'].astype(str).str.contains(search_kw, case=False, na=False) |
-                df_orders['姓名'].astype(str).str.contains(search_kw, case=False, na=False) |
-                df_orders['電話'].astype(str).str.contains(search_kw, case=False, na=False) |
-                df_orders['物流編號'].astype(str).str.contains(search_kw, case=False, na=False)
-            )
-            df_display = df_orders[mask].copy()
-        else:
-            df_display = df_orders.copy()
+        # 根據搜尋框與狀態內容過濾資料
+        df_display = df_orders.copy()
+        if not df_display.empty:
+            # 1. 先進行狀態過濾
+            if status_filter != "全部":
+                df_display = df_display[df_display['取貨狀態'] == status_filter]
+                
+            # 2. 再進行關鍵字搜尋過濾
+            if search_kw.strip():
+                mask = (
+                    df_display['訂單編號'].astype(str).str.contains(search_kw, case=False, na=False) |
+                    df_display['姓名'].astype(str).str.contains(search_kw, case=False, na=False) |
+                    df_display['電話'].astype(str).str.contains(search_kw, case=False, na=False) |
+                    df_display['物流編號'].astype(str).str.contains(search_kw, case=False, na=False)
+                )
+                df_display = df_display[mask]
 
         # 🌟 插入全選功能與勾選刪除欄位
         if not df_display.empty:
-            # 建立全選按鈕，並將其布林值傳入預設勾選狀態
-            select_all = st.checkbox("☑️ 全選下方所有顯示的訂單 (搭配搜尋功能可批次全選刪除)")
+            # 建立全選按鈕，並貼心顯示目前過濾出的筆數
+            select_all = st.checkbox(f"☑️ 全選下方所有顯示的 {len(df_display)} 筆訂單")
             df_display.insert(0, "🗑️ 勾選", select_all)
         
         col_cfg = {
