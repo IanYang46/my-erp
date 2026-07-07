@@ -53,9 +53,11 @@ enterprise_erp_style = """
             [data-testid="stSidebar"] button[kind="secondary"] * {
                 color: #0F172A !important;
             }
-            [data-testid="stSidebar"] div[data-baseweb="input"] input, 
+            /* 🌟 修正重點：確保側邊欄輸入框內的所有元素(包含 +- 號的 SVG 圖示)皆為深色 */
+            [data-testid="stSidebar"] div[data-baseweb="input"] *, 
             [data-testid="stSidebar"] div[data-baseweb="select"] * {
                 color: #0F172A !important;
+                fill: #0F172A !important; 
             }
             [data-testid="stSidebar"] hr {
                 border-color: #334155 !important;
@@ -116,8 +118,8 @@ enterprise_erp_style = """
             
             button[kind="secondary"] {
                 background-color: #FFFFFF !important;
-                border: 1px solid #CBD5E1 !important;
                 border-radius: 4px !important;
+                border: 1px solid #CBD5E1 !important;
             }
             button[kind="secondary"] * {
                 color: #0F172A !important;
@@ -128,13 +130,18 @@ enterprise_erp_style = """
                 background-color: #F8FAFC !important;
             }
 
-            /* 8. 確保所有輸入框的文字是深色，背景是白色 */
+            /* 8. 確保所有輸入框的文字與圖示是深色，背景是白色 */
+            div[data-baseweb="input"],
             div[data-baseweb="input"] input, 
             div[data-baseweb="select"] div,
             textarea {
                 color: #0F172A !important;
                 background-color: #FFFFFF !important;
                 border-radius: 4px !important;
+            }
+            /* 針對全域輸入框內的 SVG (+/- 號圖示) 加強防護 */
+            div[data-baseweb="input"] svg {
+                fill: #0F172A !important;
             }
             </style>
             """
