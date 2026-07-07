@@ -1377,7 +1377,7 @@ elif menu == "訂單明細":
     t1, t2 = st.tabs(["📄 訂單總表與追蹤", "📥 批次匯入與建檔"])
 
     with t1:
-        st.info("💡 **自動防護偵測**：若整行底色呈現「橘黃色」，代表該顧客 (依姓名、電話或信箱) 在系統內有 **2筆以上** 訂單紀錄，方便您一眼識別常客或惡意未取顧客。您可以利用右側卷軸查看顧客及商家備註。")
+        st.info("💡 **自動防護偵測**：若「姓名」、「電話」或「信箱」欄位呈現橘黃底色，代表該顧客在系統內有 **2筆以上** 紀錄，方便一眼識別常客或惡意未取顧客。若要查看備註與信箱，請開啟上方「展開顯示所有詳細欄位」。")
 
         if df_orders.empty:
             st.warning("目前尚無任何訂單資料。請至「批次匯入與建檔」上傳 Excel/CSV。")
@@ -1406,10 +1406,18 @@ elif menu == "訂單明細":
             select_all = st.checkbox(f"☑️ 全選下方所有顯示的 {len(df_display)} 筆訂單")
             df_display.insert(0, "🗑️ 勾選", select_all)
         
-        # 定義高亮重複客的風格套用函數
+        # 定義高亮重複客的風格套用函數 (僅針對姓名、電話、信箱個別上色)
         def highlight_repeats(row):
-            color = 'background-color: rgba(255, 193, 7, 0.25)' if row.get('is_repeat', False) else ''
-            return [color] * len(row)
+            styles = [''] * len(row)
+            cols = row.index
+            for i, col in enumerate(cols):
+                if col == '姓名' and row['姓名'] and name_counts.get(row['姓名'], 0) > 1:
+                    styles[i] = 'background-color: rgba(255, 193, 7, 0.4)'
+                elif col == '電話' and row['電話'] and phone_counts.get(row['電話'], 0) > 1:
+                    styles[i] = 'background-color: rgba(255, 193, 7, 0.4)'
+                elif col == '信箱' and row['信箱'] and email_counts.get(row['信箱'], 0) > 1:
+                    styles[i] = 'background-color: rgba(255, 193, 7, 0.4)'
+            return styles
 
         col_cfg = {
             "🗑️ 勾選": st.column_config.CheckboxColumn("🗑️ 刪除", default=False),
@@ -1431,7 +1439,8 @@ elif menu == "訂單明細":
         if show_all_cols:
             display_cols = ["🗑️ 勾選", "訂單日期", "訂單編號", "訂單連結", "姓名", "電話", "信箱", "門市", "店號", "品項預覽", "下單總數", "包裹應收", "商品成本", "物流運費", "出貨成本", "訂單損益", "物流編號", "取貨狀態", "取貨日期", "顧客備註", "商家備註"]
         else:
-            display_cols = ["🗑️ 勾選", "訂單編號", "訂單日期", "姓名", "電話", "信箱", "品項預覽", "包裹應收", "出貨成本", "訂單損益", "物流編號", "取貨狀態", "顧客備註", "商家備註"]
+            # 預設把信箱、顧客備註、商家備註拿掉，讓它們「縮起來」
+            display_cols = ["🗑️ 勾選", "訂單編號", "訂單日期", "姓名", "電話", "品項預覽", "包裹應收", "出貨成本", "訂單損益", "物流編號", "取貨狀態"]
 
         styled_df = df_display.style.apply(highlight_repeats, axis=1) if not df_display.empty else pd.DataFrame(columns=display_cols)
 
