@@ -491,8 +491,8 @@ st.sidebar.markdown(f"""
         <span style="font-size: 15px;">登入者： <b>{show_name}</b></span>
     </div>
     <div style="display: flex; align-items: center;">
-        <span style="min-width: 32px; font-size: 16px;">🔑</span>
-        <span style="font-size: 15px;">權限組： <b>{st.session_state['role']}</b></span>
+        <span style="min-width: 32px; font-size: 16px;">🆔</span>
+        <span style="font-size: 15px;">帳號： <b>{st.session_state['user']}</b></span>
     </div>
 </div>
 """, unsafe_allow_html=True)
