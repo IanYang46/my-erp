@@ -1154,7 +1154,10 @@ elif menu == "採購管理":
                 if order_meta['狀態'] == '待驗收':
                     st.write("")
                     if check_perm(role, "採購管理", "can_edit"):
-                        if st.button(f"🚚 點收完成！確認將單號 {selected_po} 的商品數量正式撥入『商品庫存』", type="primary", use_container_width=True):
+                        # 🌟 新增：將按鈕拆分為左右兩欄 (7:3 比例)
+                        c_recv, c_del = st.columns([7, 3])
+                        
+                        if c_recv.button(f"🚚 點收完成！確認將單號 {selected_po} 的商品數量正式撥入『商品庫存』", type="primary", use_container_width=True):
                             try:
                                 with get_db() as conn:
                                     cursor = conn.cursor()
@@ -1172,12 +1175,41 @@ elif menu == "採購管理":
                                 st.rerun()
                             except Exception as e:
                                 st.error(f"❌ 庫存撥配連動過程中發生異常錯誤：{str(e)}")
+                                
+                        # 🌟 新增：刪除待驗收採購單的按鈕與邏輯
+                        if c_del.button("🗑️ 刪除此採購單", use_container_width=True):
+                            try:
+                                with get_db() as conn:
+                                    conn.execute("DELETE FROM procurement_orders WHERE order_id = ?", (selected_po,))
+                                    conn.execute("DELETE FROM procurement_items WHERE order_id = ?", (selected_po,))
+                                    conn.commit()
+                                log_system_action("採購管理", current_operator, "刪除採購單", f"刪除了尚未驗收的採購單: {selected_po}")
+                                st.success(f"🗑️ 採購單 {selected_po} 已成功刪除！")
+                                time.sleep(1.5)
+                                st.rerun()
+                            except Exception as e:
+                                st.error(f"❌ 刪除失敗：{str(e)}")
                     else:
-                        st.warning("🔒 您的權限僅能查看明細，無法執行點收入庫作業。")
+                        st.warning("🔒 您的權限僅能查看明細，無法執行點收入庫或刪除作業。")
                 else:
                     st.write("")
                     st.success("🎉 此採購單已完成點收入庫驗收，商品數量已在『商品庫存管理』核算中。")
-
+                    
+                    # 🌟 新增：允許刪除已入庫的歷史紀錄，但給予防呆提示
+                    if check_perm(role, "採購管理", "can_edit"):
+                        if st.button("🗑️ 刪除此歷史採購單紀錄", use_container_width=True):
+                            try:
+                                with get_db() as conn:
+                                    conn.execute("DELETE FROM procurement_orders WHERE order_id = ?", (selected_po,))
+                                    conn.execute("DELETE FROM procurement_items WHERE order_id = ?", (selected_po,))
+                                    conn.commit()
+                                log_system_action("採購管理", current_operator, "刪除歷史採購單", f"刪除了已入庫的歷史採購單: {selected_po}")
+                                st.success(f"🗑️ 歷史採購單 {selected_po} 已成功刪除！(⚠️ 提醒：這不會影響已經撥入庫存的商品數量)")
+                                time.sleep(2)
+                                st.rerun()
+                            except Exception as e:
+                                st.error(f"❌ 刪除失敗：{str(e)}")
+                                
     with tabs[2]:
         st.subheader("📤 導出公司完整採購報表")
         if not check_perm(role, "採購管理", "can_download"):
