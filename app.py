@@ -1414,8 +1414,10 @@ elif menu == "訂單明細":
         if df_orders.empty:
             st.warning("目前尚無任何訂單資料。請至「批次匯入與建檔」上傳 Excel/CSV。")
 
-        c_search, c_status, c_toggle = st.columns([2, 1, 1.2])
+        # 🌟 修改：新增 c_date 欄位，調整為 4 等分排版
+        c_search, c_date, c_status, c_toggle = st.columns([2, 1.5, 1.2, 1.2])
         with c_search: search_kw = st.text_input("🔍 搜尋訂單 (輸入姓名、電話、信箱或單號)", "")
+        with c_date: date_filter = st.date_input("📅 日期篩選 (可選單日或區間)", value=[])
         with c_status: status_filter = st.selectbox("📌 狀態篩選", ["全部", "待出貨", "配送中", "已抵達", "已取貨", "未取退回", "取消", "退換貨處理中"])
         with c_toggle:
             st.write(""); st.write("")
@@ -1423,7 +1425,20 @@ elif menu == "訂單明細":
 
         df_display = df_orders.copy()
         if not df_display.empty:
-            if status_filter != "全部": df_display = df_display[df_display['取貨狀態'] == status_filter]
+            # 1. 執行日期篩選 (支援單日與區間)
+            if len(date_filter) > 0:
+                df_display['_temp_date'] = pd.to_datetime(df_display['訂單日期'], errors='coerce')
+                if len(date_filter) == 1:
+                    df_display = df_display[df_display['_temp_date'].dt.date == date_filter[0]]
+                elif len(date_filter) == 2:
+                    df_display = df_display[(df_display['_temp_date'].dt.date >= date_filter[0]) & (df_display['_temp_date'].dt.date <= date_filter[1])]
+                df_display = df_display.drop(columns=['_temp_date'])
+
+            # 2. 執行狀態篩選
+            if status_filter != "全部": 
+                df_display = df_display[df_display['取貨狀態'] == status_filter]
+                
+            # 3. 執行關鍵字搜尋
             if search_kw.strip():
                 mask = (
                     df_display['訂單編號'].astype(str).str.contains(search_kw, case=False, na=False) |
