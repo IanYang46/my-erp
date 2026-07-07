@@ -1663,12 +1663,10 @@ elif menu == "訂單明細":
                     df_imp = pd.read_csv(uploaded_order) if uploaded_order.name.endswith('.csv') else pd.read_excel(uploaded_order, engine='openpyxl')
                     
                     col_mapping = {
-                        '訂單編號': '訂單編號', '建立日期': '訂單日期', '顧客': '姓名', '產品': '品項內容',
-                        '產品數量': '下單總數', '總計金額': '包裹應收', '顧客電話': '電話',
-                        '信箱': '信箱', 'Email': '信箱', '顧客信箱': '信箱', 
+                        '訂單編號': '訂單編號', '建立日期': '訂單日期', '收件人': '姓名', '貨號': '品項內容',
+                        '總計金額': '包裹應收', '聯絡電話': '電話', 'Email': '信箱', '信箱': '信箱', 
                         '運送超商': '門市', '超商代號': '店號',
-                        '顧客備註': '顧客備註', '買家備註': '顧客備註',
-                        '商家備註': '商家備註', '賣家備註': '商家備註'
+                        '顧客備註': '顧客備註', '商家備註': '商家備註'
                     }
                     df_imp = df_imp.rename(columns=col_mapping)
                     
@@ -1676,7 +1674,8 @@ elif menu == "訂單明細":
                         st.error("❌ 匯入失敗：檔案中找不到『訂單編號』欄位。")
                     else:
                         df_imp = df_imp[df_imp['訂單編號'].astype(str).str.strip() != ""]
-                        if '下單總數' in df_imp.columns: df_imp['下單總數'] = pd.to_numeric(df_imp['下單總數'], errors='coerce').fillna(0)
+                        
+                        # 處理包裹應收的金額格式
                         if '包裹應收' in df_imp.columns:
                             if df_imp['包裹應收'].dtype == object: df_imp['包裹應收'] = df_imp['包裹應收'].astype(str).str.replace(',', '')
                             df_imp['包裹應收'] = pd.to_numeric(df_imp['包裹應收'], errors='coerce').fillna(0.0)
@@ -1686,7 +1685,6 @@ elif menu == "訂單明細":
                         for col in df_imp.columns:
                             if col == '訂單編號': continue
                             elif col == '品項內容': agg_funcs[col] = lambda x: '\n'.join([f"• {str(i).strip()}" for i in x if str(i).strip() != ""])
-                            elif col == '下單總數': agg_funcs[col] = 'sum'
                             else: agg_funcs[col] = 'first' 
                                 
                         df_grouped = df_imp.groupby('訂單編號', as_index=False).agg(agg_funcs)
@@ -1698,7 +1696,7 @@ elif menu == "訂單明細":
                                 cursor.execute("""
                                     INSERT INTO customer_orders 
                                     (訂單編號, 訂單日期, 姓名, 電話, 信箱, 門市, 店號, 品項內容, 下單總數, 包裹應收, 商品成本, 物流運費, 出貨成本, 訂單損益, 物流編號, 取貨狀態, 取貨日期, 顧客備註, 商家備註)
-                                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0.0, 0.0, 0.0, 0.0, '', '待出貨', '', ?, ?)
+                                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, ?, 0.0, 0.0, 0.0, 0.0, '', '待出貨', '', ?, ?)
                                     ON CONFLICT(訂單編號) DO UPDATE SET
                                         訂單日期 = excluded.訂單日期,
                                         姓名 = excluded.姓名,
@@ -1707,14 +1705,13 @@ elif menu == "訂單明細":
                                         門市 = excluded.門市,
                                         店號 = excluded.店號,
                                         品項內容 = excluded.品項內容,
-                                        下單總數 = excluded.下單總數,
                                         包裹應收 = excluded.包裹應收,
                                         顧客備註 = excluded.顧客備註,
                                         商家備註 = excluded.商家備註;
                                 """, (
                                     str(row['訂單編號']).strip(), str(row.get('訂單日期', '')), str(row.get('姓名', '')),
                                     str(row.get('電話', '')), str(row.get('信箱', '')), str(row.get('門市', '')), str(row.get('店號', '')),
-                                    str(row.get('品項內容', '')), int(row.get('下單總數', 0)), float(row.get('包裹應收', 0.0)),
+                                    str(row.get('品項內容', '')), float(row.get('包裹應收', 0.0)),
                                     str(row.get('顧客備註', '')), str(row.get('商家備註', ''))
                                 ))
                                 count += 1
