@@ -1584,7 +1584,7 @@ elif menu == "訂單明細":
                     new_items = st.text_area("📦 品項內容 (支援直接在此處換行編輯)", value=target_order.get('品項內容_原始', ''), height=180)
                     
                     c14, c15 = st.columns(2)
-                    edit_cust_note = c14.text_area("👤 顧客備註 (來自外部平台)", value=target_order.get('顧客備註', ''))
+                    edit_cust_note = c14.text_area("👤 顧客備註", value=target_order.get('顧客備註', ''))
                     edit_merch_note = c15.text_area("🏪 內部商家備註", value=target_order.get('商家備註', ''))
 
                     if can_edit:
