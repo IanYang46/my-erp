@@ -241,6 +241,16 @@ def init_db_v7():  # 🌟 升級為 v7，確保系統重新整理時會建立新
             取貨狀態 TEXT DEFAULT '待出貨',
             取貨日期 DATE
         )''')
+        
+        # 🌟 11. 安全動態擴充：為舊的 customer_orders 表格加入「信箱」、「顧客備註」、「商家備註」
+        cursor.execute("PRAGMA table_info(customer_orders)")
+        order_cols = [info[1] for info in cursor.fetchall()]
+        if '信箱' not in order_cols:
+            cursor.execute("ALTER TABLE customer_orders ADD COLUMN 信箱 TEXT DEFAULT ''")
+        if '顧客備註' not in order_cols:
+            cursor.execute("ALTER TABLE customer_orders ADD COLUMN 顧客備註 TEXT DEFAULT ''")
+        if '商家備註' not in order_cols:
+            cursor.execute("ALTER TABLE customer_orders ADD COLUMN 商家備註 TEXT DEFAULT ''")
 
         conn.commit()
         
@@ -1250,43 +1260,59 @@ elif menu == "訂單明細":
         st.error("🚫 您無權限訪問此模組")
         st.stop()
 
-    # 🌟 1. 取得資料庫資料 (移到最上方，讓數據看板與總表皆能共用)
+    # 🌟 1. 取得資料庫資料
     with get_db() as conn:
         df_orders = pd.read_sql("SELECT * FROM customer_orders ORDER BY 訂單日期 DESC", conn)
 
-    # 🌟 2. 資料預處理與美化
+    # 🌟 2. 資料預處理與重複客偵測
     if not df_orders.empty:
+        # 防呆補空值
+        df_orders['姓名'] = df_orders['姓名'].fillna('').astype(str)
+        df_orders['電話'] = df_orders['電話'].fillna('').astype(str)
+        df_orders['信箱'] = df_orders['信箱'].fillna('').astype(str)
+        df_orders['顧客備註'] = df_orders['顧客備註'].fillna('').astype(str)
+        df_orders['商家備註'] = df_orders['商家備註'].fillna('').astype(str)
+
         # 電話與店號自動補 0
         def fix_phone(val):
             s = str(val).replace('.0', '').strip()
-            if s and s not in ['nan', 'None', '']:
-                return '0' + s if not s.startswith('0') else s
+            if s and s not in ['nan', 'None', '']: return '0' + s if not s.startswith('0') else s
             return ""
 
         def fix_store_id(row):
             s = str(row['店號']).replace('.0', '').strip()
             if s and s not in ['nan', 'None', '']:
-                if '全家' in str(row['門市']) and not s.startswith('0'):
-                    return '0' + s
+                if '全家' in str(row['門市']) and not s.startswith('0'): return '0' + s
                 return s
             return ""
 
         df_orders['電話'] = df_orders['電話'].apply(fix_phone)
         df_orders['店號'] = df_orders.apply(fix_store_id, axis=1)
 
-        # 處理品項預覽
         def clean_and_preview(val):
-            if pd.isna(val) or str(val).strip() in ['nan', 'None']:
-                return ""
+            if pd.isna(val) or str(val).strip() in ['nan', 'None']: return ""
             return str(val)
         df_orders['品項內容_原始'] = df_orders['品項內容'].apply(clean_and_preview)
         df_orders['品項預覽'] = df_orders['品項內容_原始'].apply(lambda x: x.replace('\n', ' ｜ '))
         
-        # 確保財務欄位為數值型態，方便看板進行運算
+        # 確保財務欄位為數值型態
         for col in ['包裹應收', '商品成本', '物流運費', '出貨成本', '訂單損益']:
             df_orders[col] = pd.to_numeric(df_orders[col], errors='coerce').fillna(0.0)
 
-    # 🌟 3. 新增：最上方的營運數據看板
+        # 👇 智能重複客偵測邏輯 (只要姓名、電話或信箱其一重複大於1次，就標記)
+        name_counts = df_orders[df_orders['姓名'] != '']['姓名'].value_counts()
+        phone_counts = df_orders[df_orders['電話'] != '']['電話'].value_counts()
+        email_counts = df_orders[df_orders['信箱'] != '']['信箱'].value_counts()
+
+        def check_repeat(row):
+            if row['姓名'] and name_counts.get(row['姓名'], 0) > 1: return True
+            if row['電話'] and phone_counts.get(row['電話'], 0) > 1: return True
+            if row['信箱'] and email_counts.get(row['信箱'], 0) > 1: return True
+            return False
+
+        df_orders['is_repeat'] = df_orders.apply(check_repeat, axis=1)
+
+    # 🌟 3. 營運數據看板
     st.subheader("📊 營運數據看板")
     c_time, c_custom = st.columns([1, 2])
     time_filter = c_time.selectbox("📅 選擇統計區間", ["全部", "今日", "本月", "本季", "今年", "自訂區間"])
@@ -1296,21 +1322,16 @@ elif menu == "訂單明細":
         df_dash['訂單日期_dt'] = pd.to_datetime(df_dash['訂單日期'], errors='coerce')
         now = pd.Timestamp.today()
         
-        if time_filter == "今日":
-            df_dash = df_dash[df_dash['訂單日期_dt'].dt.date == now.date()]
-        elif time_filter == "本月":
-            df_dash = df_dash[(df_dash['訂單日期_dt'].dt.year == now.year) & (df_dash['訂單日期_dt'].dt.month == now.month)]
+        if time_filter == "今日": df_dash = df_dash[df_dash['訂單日期_dt'].dt.date == now.date()]
+        elif time_filter == "本月": df_dash = df_dash[(df_dash['訂單日期_dt'].dt.year == now.year) & (df_dash['訂單日期_dt'].dt.month == now.month)]
         elif time_filter == "本季":
             current_quarter = (now.month - 1) // 3 + 1
             df_dash = df_dash[(df_dash['訂單日期_dt'].dt.year == now.year) & (df_dash['訂單日期_dt'].dt.quarter == current_quarter)]
-        elif time_filter == "今年":
-            df_dash = df_dash[df_dash['訂單日期_dt'].dt.year == now.year]
+        elif time_filter == "今年": df_dash = df_dash[df_dash['訂單日期_dt'].dt.year == now.year]
         elif time_filter == "自訂區間":
             dates = c_custom.date_input("選擇自訂日期區間", [])
-            if len(dates) == 2:
-                df_dash = df_dash[(df_dash['訂單日期_dt'].dt.date >= dates[0]) & (df_dash['訂單日期_dt'].dt.date <= dates[1])]
+            if len(dates) == 2: df_dash = df_dash[(df_dash['訂單日期_dt'].dt.date >= dates[0]) & (df_dash['訂單日期_dt'].dt.date <= dates[1])]
     
-    # 計算各項指標
     total_orders = len(df_dash)
     total_revenue = df_dash['包裹應收'].sum() if not df_dash.empty else 0
     total_cost = df_dash['商品成本'].sum() if not df_dash.empty else 0
@@ -1322,21 +1343,16 @@ elif menu == "訂單明細":
     cancelled = len(df_dash[df_dash['取貨狀態'] == '取消']) if not df_dash.empty else 0
     unclaimed = len(df_dash[df_dash['取貨狀態'] == '未取退回']) if not df_dash.empty else 0
     
-    # 實際利潤 = 已取貨的預估利潤 - 未取退回損失的運費
     actual_profit = 0
     if not df_dash.empty:
         profit_from_picked = df_dash[df_dash['取貨狀態'] == '已取貨']['訂單損益'].sum()
         loss_from_unclaimed = df_dash[df_dash['取貨狀態'] == '未取退回']['物流運費'].sum()
         actual_profit = profit_from_picked - loss_from_unclaimed
 
-    # 渲染看板 UI (加上簡單的框線背景)
     st.markdown("""
     <style>
     div[data-testid="metric-container"] {
-        background-color: #f8f9fa;
-        border: 1px solid #e9ecef;
-        padding: 10px;
-        border-radius: 8px;
+        background-color: #f8f9fa; border: 1px solid #e9ecef; padding: 10px; border-radius: 8px;
     }
     </style>
     """, unsafe_allow_html=True)
@@ -1353,7 +1369,7 @@ elif menu == "訂單明細":
     m7.metric("❌ 總未取退回", f"{unclaimed:,}")
     m8.metric("🔄 總退貨數", f"{returned:,}")
     m9.metric("🚫 總取消數", f"{cancelled:,}")
-    m10.metric("💎 總實際利潤", f"${actual_profit:,.0f}", help="實際利潤 = (已成功取貨的訂單損益) - (未取退回所損失的物流運費)")
+    m10.metric("💎 總實際利潤", f"${actual_profit:,.0f}", help="實際利潤 = (已取貨的訂單損益) - (未取退回所損失的物流運費)")
 
     st.divider()
     
@@ -1361,45 +1377,40 @@ elif menu == "訂單明細":
     t1, t2 = st.tabs(["📄 訂單總表與追蹤", "📥 批次匯入與建檔"])
 
     with t1:
-        st.info("在此查看並管理所有客戶訂單。您可以在下方總表中快速修改「取貨狀態」、「物流編號」，若需【檢視完整詳細資料與換行編輯品項】，請使用表格下方的「單筆訂單完整詳細檢視與編輯」區。")
+        st.info("💡 **自動防護偵測**：若整行底色呈現「橘黃色」，代表該顧客 (依姓名、電話或信箱) 在系統內有 **2筆以上** 訂單紀錄，方便您一眼識別常客或惡意未取顧客。您可以利用右側卷軸查看顧客及商家備註。")
 
         if df_orders.empty:
-            st.warning("目前尚無任何訂單資料。請至「批次匯入與建檔」上傳 Excel/CSV，或手動建立第一筆訂單。")
+            st.warning("目前尚無任何訂單資料。請至「批次匯入與建檔」上傳 Excel/CSV。")
 
-        # 🌟 表格上方的全域搜尋與展開按鈕
         c_search, c_status, c_toggle = st.columns([2, 1, 1.2])
-        with c_search:
-            search_kw = st.text_input("🔍 搜尋訂單 (輸入姓名、電話或單號)", "")
-        with c_status:
-            status_filter = st.selectbox("📌 狀態篩選", ["全部", "待出貨", "配送中", "已抵達", "已取貨", "未取退回", "取消", "退換貨處理中"])
+        with c_search: search_kw = st.text_input("🔍 搜尋訂單 (輸入姓名、電話、信箱或單號)", "")
+        with c_status: status_filter = st.selectbox("📌 狀態篩選", ["全部", "待出貨", "配送中", "已抵達", "已取貨", "未取退回", "取消", "退換貨處理中"])
         with c_toggle:
-            st.write("") 
-            st.write("")
+            st.write(""); st.write("")
             show_all_cols = st.toggle("🔍 展開顯示所有詳細欄位", value=False)
 
-        # 根據搜尋框與狀態內容過濾資料
         df_display = df_orders.copy()
         if not df_display.empty:
-            # 1. 先進行狀態過濾
-            if status_filter != "全部":
-                df_display = df_display[df_display['取貨狀態'] == status_filter]
-                
-            # 2. 再進行關鍵字搜尋過濾
+            if status_filter != "全部": df_display = df_display[df_display['取貨狀態'] == status_filter]
             if search_kw.strip():
                 mask = (
                     df_display['訂單編號'].astype(str).str.contains(search_kw, case=False, na=False) |
                     df_display['姓名'].astype(str).str.contains(search_kw, case=False, na=False) |
                     df_display['電話'].astype(str).str.contains(search_kw, case=False, na=False) |
+                    df_display['信箱'].astype(str).str.contains(search_kw, case=False, na=False) |
                     df_display['物流編號'].astype(str).str.contains(search_kw, case=False, na=False)
                 )
                 df_display = df_display[mask]
 
-        # 🌟 插入全選功能與勾選刪除欄位
         if not df_display.empty:
-            # 建立全選按鈕，並貼心顯示目前過濾出的筆數
             select_all = st.checkbox(f"☑️ 全選下方所有顯示的 {len(df_display)} 筆訂單")
             df_display.insert(0, "🗑️ 勾選", select_all)
         
+        # 定義高亮重複客的風格套用函數
+        def highlight_repeats(row):
+            color = 'background-color: rgba(255, 193, 7, 0.25)' if row.get('is_repeat', False) else ''
+            return [color] * len(row)
+
         col_cfg = {
             "🗑️ 勾選": st.column_config.CheckboxColumn("🗑️ 刪除", default=False),
             "訂單編號": st.column_config.TextColumn("訂單編號", disabled=True),
@@ -1411,17 +1422,21 @@ elif menu == "訂單明細":
             "訂單損益": st.column_config.NumberColumn("訂單損益", format="$ %.0f", disabled=True),
             "下單總數": st.column_config.NumberColumn("下單總數", step=1),
             "取貨狀態": st.column_config.SelectboxColumn("狀態", options=["待出貨", "配送中", "已抵達", "已取貨", "未取退回", "取消", "退換貨處理中"]),
-            "品項預覽": st.column_config.TextColumn("📦 品項內容 (預覽)", disabled=True) 
+            "品項預覽": st.column_config.TextColumn("📦 品項內容 (預覽)", disabled=True),
+            "信箱": st.column_config.TextColumn("📧 信箱"),
+            "顧客備註": st.column_config.TextColumn("👤 顧客備註"),
+            "商家備註": st.column_config.TextColumn("🏪 商家備註")
         }
 
-        # 判斷開關狀態
         if show_all_cols:
-            display_cols = ["🗑️ 勾選", "訂單日期", "訂單編號", "訂單連結", "姓名", "電話", "門市", "店號", "品項預覽", "下單總數", "包裹應收", "商品成本", "物流運費", "出貨成本", "訂單損益", "物流編號", "取貨狀態", "取貨日期"]
+            display_cols = ["🗑️ 勾選", "訂單日期", "訂單編號", "訂單連結", "姓名", "電話", "信箱", "門市", "店號", "品項預覽", "下單總數", "包裹應收", "商品成本", "物流運費", "出貨成本", "訂單損益", "物流編號", "取貨狀態", "取貨日期", "顧客備註", "商家備註"]
         else:
-            display_cols = ["🗑️ 勾選", "訂單編號", "訂單日期", "姓名", "品項預覽", "包裹應收", "出貨成本", "訂單損益", "物流編號", "取貨狀態"]
+            display_cols = ["🗑️ 勾選", "訂單編號", "訂單日期", "姓名", "電話", "信箱", "品項預覽", "包裹應收", "出貨成本", "訂單損益", "物流編號", "取貨狀態", "顧客備註", "商家備註"]
+
+        styled_df = df_display.style.apply(highlight_repeats, axis=1) if not df_display.empty else pd.DataFrame(columns=display_cols)
 
         edited_orders = st.data_editor(
-            df_display if not df_display.empty else pd.DataFrame(columns=display_cols),
+            styled_df,
             disabled=not can_edit,
             hide_index=True,
             use_container_width=True,
@@ -1431,13 +1446,9 @@ elif menu == "訂單明細":
             key="orders_editor"
         )
 
-        # 🌟 處理儲存與刪除的雙按鈕邏輯
         if can_edit:
             c_save, c_del = st.columns(2)
-            
-            to_delete = []
-            if not edited_orders.empty and "🗑️ 勾選" in edited_orders.columns:
-                to_delete = edited_orders[edited_orders["🗑️ 勾選"] == True]['訂單編號'].tolist()
+            to_delete = edited_orders[edited_orders["🗑️ 勾選"] == True]['訂單編號'].tolist() if not edited_orders.empty and "🗑️ 勾選" in edited_orders.columns else []
 
             with c_save:
                 if st.button("💾 儲存上方總表狀態變更", type="primary", use_container_width=True):
@@ -1445,9 +1456,7 @@ elif menu == "訂單明細":
                         with get_db() as conn:
                             cursor = conn.cursor()
                             for _, row in edited_orders.iterrows():
-                                if pd.isna(row['訂單編號']) or str(row['訂單編號']).strip() == "":
-                                    continue 
-                                
+                                if pd.isna(row['訂單編號']) or str(row['訂單編號']).strip() == "": continue 
                                 row = row.fillna({'下單總數': 0, '包裹應收': 0.0, '商品成本': 0.0, '物流運費': 0.0})
                                 
                                 calc_ship_cost = float(row['商品成本']) + float(row['物流運費'])
@@ -1455,23 +1464,24 @@ elif menu == "訂單明細":
                                 
                                 cursor.execute("""
                                     UPDATE customer_orders SET 
-                                    訂單日期=?, 訂單連結=?, 姓名=?, 電話=?, 門市=?, 店號=?, 
+                                    訂單日期=?, 訂單連結=?, 姓名=?, 電話=?, 信箱=?, 門市=?, 店號=?, 
                                     下單總數=?, 包裹應收=?, 商品成本=?, 物流運費=?, 出貨成本=?, 訂單損益=?, 
-                                    物流編號=?, 取貨狀態=?, 取貨日期=?
+                                    物流編號=?, 取貨狀態=?, 取貨日期=?, 顧客備註=?, 商家備註=?
                                     WHERE 訂單編號=?
                                 """, (
                                     str(row.get('訂單日期', '')), str(row.get('訂單連結', '')),
-                                    str(row.get('姓名', '')), str(row.get('電話', '')), str(row.get('門市', '')), str(row.get('店號', '')),
+                                    str(row.get('姓名', '')), str(row.get('電話', '')), str(row.get('信箱', '')),
+                                    str(row.get('門市', '')), str(row.get('店號', '')),
                                     int(row['下單總數']), float(row['包裹應收']), float(row['商品成本']),
                                     float(row['物流運費']), calc_ship_cost, calc_profit, 
                                     str(row.get('物流編號', '')), str(row.get('取貨狀態', '待出貨')), str(row.get('取貨日期', '')),
+                                    str(row.get('顧客備註', '')), str(row.get('商家備註', '')),
                                     str(row['訂單編號']).strip()
                                 ))
                             conn.commit()
-                        log_system_action("訂單明細", current_operator, "更新訂單資料", "透過總表儲存了訂單狀態，並自動重新核算了成本與損益")
+                        log_system_action("訂單明細", current_operator, "更新訂單資料", "透過總表儲存了訂單狀態與備註，自動重新核算損益")
                         st.success("✅ 總表狀態資料已成功保存！")
-                        time.sleep(1)
-                        st.rerun()
+                        time.sleep(1); st.rerun()
                     except Exception as e:
                         st.error(f"❌ 儲存失敗：{str(e)}")
 
@@ -1486,8 +1496,7 @@ elif menu == "訂單明細":
                                 conn.commit()
                             log_system_action("訂單明細", current_operator, "刪除訂單資料", f"刪除了 {len(to_delete)} 筆訂單")
                             st.success(f"✅ 成功刪除 {len(to_delete)} 筆訂單！")
-                            time.sleep(1)
-                            st.rerun()
+                            time.sleep(1); st.rerun()
                         except Exception as e:
                             st.error(f"❌ 刪除失敗：{str(e)}")
 
@@ -1496,7 +1505,6 @@ elif menu == "訂單明細":
         # 👇 單筆訂單完整詳細檢視與獨立編輯區 👇
         st.subheader("🔍 單筆訂單完整詳細檢視與編輯")
         if not df_orders.empty:
-            
             detail_options = {}
             for _, row in df_orders.iterrows():
                 logi_info = row.get('物流編號', '').strip()
@@ -1504,11 +1512,7 @@ elif menu == "訂單明細":
                 label = f"[{row['訂單編號']}] {row.get('姓名', '')}{logi_str}"
                 detail_options[label] = row['訂單編號']
             
-            selected_label = st.selectbox(
-                "💡 支援直接點擊此處，用鍵盤打字搜尋「物流單號」、「姓名」或「訂單編號」：", 
-                options=list(detail_options.keys())
-            )
-            
+            selected_label = st.selectbox("💡 支援直接點擊此處，用鍵盤打字搜尋「物流單號」、「姓名」或「訂單編號」：", options=list(detail_options.keys()))
             selected_order = detail_options.get(selected_label)
             
             if selected_order:
@@ -1517,40 +1521,40 @@ elif menu == "訂單明細":
                 with st.form(f"detail_edit_form_{selected_order}"):
                     st.markdown(f"### 🧾 訂單編號：`{selected_order}`")
                     
-                    c1, c2, c3, c4 = st.columns(4)
+                    c1, c2, c3, c4, c5 = st.columns(5)
                     edit_date = c1.text_input("訂單日期", value=target_order.get('訂單日期', ''))
                     edit_name = c2.text_input("顧客姓名", value=target_order.get('姓名', ''))
                     edit_phone = c3.text_input("聯絡電話", value=target_order.get('電話', ''))
-                    edit_link = c4.text_input("訂單連結", value=target_order.get('訂單連結', ''))
+                    edit_email = c4.text_input("📧 聯絡信箱", value=target_order.get('信箱', ''))
+                    edit_link = c5.text_input("訂單連結", value=target_order.get('訂單連結', ''))
 
-                    c5, c6, c7, c8 = st.columns(4)
-                    edit_store = c5.text_input("取件門市", value=target_order.get('門市', ''))
-                    edit_store_id = c6.text_input("門市店號", value=target_order.get('店號', ''))
-                    edit_logistics = c7.text_input("物流編號", value=target_order.get('物流編號', ''))
+                    c6, c7, c8, c9 = st.columns(4)
+                    edit_store = c6.text_input("取件門市", value=target_order.get('門市', ''))
+                    edit_store_id = c7.text_input("門市店號", value=target_order.get('店號', ''))
+                    edit_logistics = c8.text_input("物流編號", value=target_order.get('物流編號', ''))
                     
                     status_opts = ["待出貨", "配送中", "已抵達", "已取貨", "未取退回", "取消", "退換貨處理中"]
                     current_status = target_order.get('取貨狀態', '待出貨')
                     if current_status not in status_opts: status_opts.append(current_status)
-                    edit_status = c8.selectbox("取貨狀態", options=status_opts, index=status_opts.index(current_status))
+                    edit_status = c9.selectbox("取貨狀態", options=status_opts, index=status_opts.index(current_status))
 
                     st.markdown("##### 💰 金額與成本核算 (金額皆為台幣 TWD)")
-                    st.info("💡 系統提示：您不需手動輸入「出貨成本」，系統會自動將「商品成本 + 物流運費」加總；並自動以「包裹應收 - 出貨成本」核算出「訂單損益」。")
-                    c9, c10, c11, c12 = st.columns(4)
-                    edit_qty = c9.number_input("下單總數", value=int(target_order.get('下單總數', 0)), step=1)
-                    edit_revenue = c10.number_input("包裹應收", value=float(target_order.get('包裹應收', 0.0)), step=10.0)
-                    edit_cost = c11.number_input("商品成本", value=float(target_order.get('商品成本', 0.0)), step=10.0)
-                    edit_shipping = c12.number_input("物流運費", value=float(target_order.get('物流運費', 0.0)), step=10.0)
+                    c10, c11, c12, c13 = st.columns(4)
+                    edit_qty = c10.number_input("下單總數", value=int(target_order.get('下單總數', 0)), step=1)
+                    edit_revenue = c11.number_input("包裹應收", value=float(target_order.get('包裹應收', 0.0)), step=10.0)
+                    edit_cost = c12.number_input("商品成本", value=float(target_order.get('商品成本', 0.0)), step=10.0)
+                    edit_shipping = c13.number_input("物流運費", value=float(target_order.get('物流運費', 0.0)), step=10.0)
                     
                     db_ship_cost = float(target_order.get('出貨成本', 0.0))
                     db_profit = float(target_order.get('訂單損益', 0.0))
                     st.caption(f"📝 目前存檔狀態 👉 系統結算之出貨總成本：**{db_ship_cost:,.0f}** ｜ 訂單最終損益：**{db_profit:,.0f}**")
 
-                    new_items = st.text_area(
-                        "📦 品項內容 (支援直接在此處換行編輯)", 
-                        value=target_order.get('品項內容_原始', ''), 
-                        height=180
-                    )
+                    new_items = st.text_area("📦 品項內容 (支援直接在此處換行編輯)", value=target_order.get('品項內容_原始', ''), height=180)
                     
+                    c14, c15 = st.columns(2)
+                    edit_cust_note = c14.text_area("👤 顧客備註 (來自外部平台)", value=target_order.get('顧客備註', ''))
+                    edit_merch_note = c15.text_area("🏪 內部商家備註", value=target_order.get('商家備註', ''))
+
                     if can_edit:
                         if st.form_submit_button("💾 儲存這筆訂單的所有完整變更", type="primary", use_container_width=True):
                             try:
@@ -1560,22 +1564,21 @@ elif menu == "訂單明細":
                                 with get_db() as conn:
                                     conn.execute("""
                                         UPDATE customer_orders SET 
-                                        訂單日期=?, 姓名=?, 電話=?, 訂單連結=?, 
+                                        訂單日期=?, 姓名=?, 電話=?, 信箱=?, 訂單連結=?, 
                                         門市=?, 店號=?, 物流編號=?, 取貨狀態=?,
                                         下單總數=?, 包裹應收=?, 商品成本=?, 物流運費=?, 出貨成本=?, 訂單損益=?,
-                                        品項內容=?
+                                        品項內容=?, 顧客備註=?, 商家備註=?
                                         WHERE 訂單編號=?
                                     """, (
-                                        edit_date, edit_name, edit_phone, edit_link,
+                                        edit_date, edit_name, edit_phone, edit_email, edit_link,
                                         edit_store, edit_store_id, edit_logistics, edit_status,
                                         edit_qty, edit_revenue, edit_cost, edit_shipping, calc_single_ship_cost, calc_single_profit,
-                                        new_items, selected_order
+                                        new_items, edit_cust_note, edit_merch_note, selected_order
                                     ))
                                     conn.commit()
-                                log_system_action("訂單明細", current_operator, "編輯單筆完整訂單", f"全面更新了訂單 {selected_order} 的詳細資訊與核算")
-                                st.success(f"✅ 訂單 {selected_order} 的完整資訊已更新成功！出貨成本自動結算為 {calc_single_ship_cost:,.0f}，損益為 {calc_single_profit:,.0f}。")
-                                time.sleep(1.5)
-                                st.rerun()
+                                log_system_action("訂單明細", current_operator, "編輯單筆完整訂單", f"全面更新了訂單 {selected_order} 的詳細資訊與備註")
+                                st.success(f"✅ 訂單 {selected_order} 資訊更新成功！出貨成本結算為 {calc_single_ship_cost:,.0f}，損益為 {calc_single_profit:,.0f}。")
+                                time.sleep(1.5); st.rerun()
                             except Exception as e:
                                 st.error(f"❌ 更新失敗：{str(e)}")
                     else:
@@ -1586,7 +1589,7 @@ elif menu == "訂單明細":
         if not check_perm(role, "訂單明細", "can_upload"):
             st.warning("🔒 您沒有上傳外部訂單的權限。")
         else:
-            st.caption("💡 系統會自動過濾外部格式的欄位，並將相同「訂單編號」的複數品項自動合併為一筆單據。")
+            st.caption("💡 系統會自動過濾外部欄位並合併複數品項。若包含『信箱』、『顧客備註』、『商家備註』系統也會一併抓取匯入。")
             uploaded_order = st.file_uploader("選擇訂單檔案", type=["csv", "xlsx"], key="order_uploader")
             
             if uploaded_order and st.button("🚀 執行訂單匯入", type="primary"):
@@ -1594,15 +1597,12 @@ elif menu == "訂單明細":
                     df_imp = pd.read_csv(uploaded_order) if uploaded_order.name.endswith('.csv') else pd.read_excel(uploaded_order, engine='openpyxl')
                     
                     col_mapping = {
-                        '訂單編號': '訂單編號',
-                        '建立日期': '訂單日期',
-                        '顧客': '姓名',
-                        '產品': '品項內容',
-                        '產品數量': '下單總數',
-                        '總計金額': '包裹應收',
-                        '顧客電話': '電話',
-                        '運送超商': '門市',
-                        '超商代號': '店號'
+                        '訂單編號': '訂單編號', '建立日期': '訂單日期', '顧客': '姓名', '產品': '品項內容',
+                        '產品數量': '下單總數', '總計金額': '包裹應收', '顧客電話': '電話',
+                        '信箱': '信箱', 'Email': '信箱', '顧客信箱': '信箱', 
+                        '運送超商': '門市', '超商代號': '店號',
+                        '顧客備註': '顧客備註', '買家備註': '顧客備註',
+                        '商家備註': '商家備註', '賣家備註': '商家備註'
                     }
                     df_imp = df_imp.rename(columns=col_mapping)
                     
@@ -1610,28 +1610,18 @@ elif menu == "訂單明細":
                         st.error("❌ 匯入失敗：檔案中找不到『訂單編號』欄位。")
                     else:
                         df_imp = df_imp[df_imp['訂單編號'].astype(str).str.strip() != ""]
-                        
-                        if '下單總數' in df_imp.columns:
-                            df_imp['下單總數'] = pd.to_numeric(df_imp['下單總數'], errors='coerce').fillna(0)
+                        if '下單總數' in df_imp.columns: df_imp['下單總數'] = pd.to_numeric(df_imp['下單總數'], errors='coerce').fillna(0)
                         if '包裹應收' in df_imp.columns:
-                            if df_imp['包裹應收'].dtype == object:
-                                df_imp['包裹應收'] = df_imp['包裹應收'].astype(str).str.replace(',', '')
+                            if df_imp['包裹應收'].dtype == object: df_imp['包裹應收'] = df_imp['包裹應收'].astype(str).str.replace(',', '')
                             df_imp['包裹應收'] = pd.to_numeric(df_imp['包裹應收'], errors='coerce').fillna(0.0)
                             
                         df_imp = df_imp.fillna("")
-
                         agg_funcs = {}
                         for col in df_imp.columns:
-                            if col == '訂單編號':
-                                continue
-                            elif col == '品項內容':
-                                agg_funcs[col] = lambda x: '\n'.join([f"• {str(i).strip()}" for i in x if str(i).strip() != ""])
-                            elif col == '下單總數':
-                                agg_funcs[col] = 'sum'
-                            elif col == '包裹應收':
-                                agg_funcs[col] = 'first' 
-                            else:
-                                agg_funcs[col] = 'first'
+                            if col == '訂單編號': continue
+                            elif col == '品項內容': agg_funcs[col] = lambda x: '\n'.join([f"• {str(i).strip()}" for i in x if str(i).strip() != ""])
+                            elif col == '下單總數': agg_funcs[col] = 'sum'
+                            else: agg_funcs[col] = 'first' 
                                 
                         df_grouped = df_imp.groupby('訂單編號', as_index=False).agg(agg_funcs)
 
@@ -1641,29 +1631,32 @@ elif menu == "訂單明細":
                             for _, row in df_grouped.iterrows():
                                 cursor.execute("""
                                     INSERT INTO customer_orders 
-                                    (訂單編號, 訂單日期, 姓名, 電話, 門市, 店號, 品項內容, 下單總數, 包裹應收, 商品成本, 物流運費, 出貨成本, 訂單損益, 物流編號, 取貨狀態, 取貨日期)
-                                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0.0, 0.0, 0.0, 0.0, '', '待出貨', '')
+                                    (訂單編號, 訂單日期, 姓名, 電話, 信箱, 門市, 店號, 品項內容, 下單總數, 包裹應收, 商品成本, 物流運費, 出貨成本, 訂單損益, 物流編號, 取貨狀態, 取貨日期, 顧客備註, 商家備註)
+                                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0.0, 0.0, 0.0, 0.0, '', '待出貨', '', ?, ?)
                                     ON CONFLICT(訂單編號) DO UPDATE SET
                                         訂單日期 = excluded.訂單日期,
                                         姓名 = excluded.姓名,
                                         電話 = excluded.電話,
+                                        信箱 = excluded.信箱,
                                         門市 = excluded.門市,
                                         店號 = excluded.店號,
                                         品項內容 = excluded.品項內容,
                                         下單總數 = excluded.下單總數,
-                                        包裹應收 = excluded.包裹應收;
+                                        包裹應收 = excluded.包裹應收,
+                                        顧客備註 = excluded.顧客備註,
+                                        商家備註 = excluded.商家備註;
                                 """, (
                                     str(row['訂單編號']).strip(), str(row.get('訂單日期', '')), str(row.get('姓名', '')),
-                                    str(row.get('電話', '')), str(row.get('門市', '')), str(row.get('店號', '')),
-                                    str(row.get('品項內容', '')), int(row.get('下單總數', 0)), float(row.get('包裹應收', 0.0))
+                                    str(row.get('電話', '')), str(row.get('信箱', '')), str(row.get('門市', '')), str(row.get('店號', '')),
+                                    str(row.get('品項內容', '')), int(row.get('下單總數', 0)), float(row.get('包裹應收', 0.0)),
+                                    str(row.get('顧客備註', '')), str(row.get('商家備註', ''))
                                 ))
                                 count += 1
                             conn.commit()
                             
-                        log_system_action("訂單明細", current_operator, "匯入訂單資料", f"成功批次合併與匯入了 {count} 筆訂單")
+                        log_system_action("訂單明細", current_operator, "匯入訂單資料", f"成功批次合併與匯入了 {count} 筆訂單，包含新欄位")
                         st.success(f"✅ 成功匯入並智能合併為 {count} 筆獨立訂單！")
-                        time.sleep(1.5)
-                        st.rerun()
+                        time.sleep(1.5); st.rerun()
                 except Exception as e:
                     st.error(f"❌ 匯入失敗，詳情：{str(e)}")
 
