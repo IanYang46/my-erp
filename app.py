@@ -1567,7 +1567,8 @@ elif menu == "訂單明細":
                     df_export['目的地'] = '台湾'
                     df_export['时效'] = '空运'
                     
-                    df_export['承运商'] = df_selected['門市']
+                    # 自動辨識超商：門市名稱包含「全家」則為「銥熙-全家」，否則預設為「銥熙7-11」
+                    df_export['承运商'] = df_selected['門市'].apply(lambda x: '銥熙-全家' if '全家' in str(x) else '銥熙7-11')
                     df_export['代收货款'] = df_selected['包裹應收']
                     
                     df_export['包税(1包税2不包税)'] = ''
