@@ -1599,13 +1599,25 @@ elif menu == "訂單明細":
                     # 動態產生包含年月日時分的檔案名稱
                     file_name = f"资料导入(代收付)_{pd.Timestamp.today().strftime('%Y%m%d_%H%M')}.xlsx"
                     
+                    # 🚀 自動化：點擊下載按鈕時，將勾選的訂單狀態直接改為「備貨中」
+                    def mark_as_preparing():
+                        try:
+                            with get_db() as conn:
+                                cursor = conn.cursor()
+                                placeholders = ','.join(['?'] * len(selected_orders))
+                                cursor.execute(f"UPDATE customer_orders SET 取貨狀態='備貨中' WHERE 訂單編號 IN ({placeholders})", tuple(selected_orders))
+                                conn.commit()
+                        except Exception as e:
+                            pass
+
                     st.download_button(
                         label=f"📥 導出列印面單 ({len(selected_orders)} 筆)",
                         data=output.getvalue(),
                         file_name=file_name,
                         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                         type="primary",
-                        use_container_width=True
+                        use_container_width=True,
+                        on_click=mark_as_preparing  # 綁定自動觸發事件
                     )
                 else:
                     st.button("📥 請先勾選訂單再導出", disabled=True, use_container_width=True)
@@ -1782,7 +1794,7 @@ elif menu == "訂單明細":
                         
                         col_mapping = {
                             '訂單編號': '訂單編號', '建立日期': '訂單日期', '收件人': '姓名', '貨號': '品項內容',
-                            '總計金額': '包裹應收', '聯絡電話': '電話', 'Email': '信箱', '信箱': '信箱', 
+                            '總計金額': '包裹應收', '聯絡電話': '電話', '連絡電話': '電話', 'Email': '信箱', '信箱': '信箱', 
                             '運送超商': '門市', '超商代號': '店號',
                             '顧客備註': '顧客備註', '商家備註': '商家備註'
                         }
@@ -1892,6 +1904,10 @@ elif menu == "訂單明細":
                                             new_status = str(row['狀態']).strip() if has_status and row['狀態'] != "" else None
                                             new_logi_num = str(row['物流單號']).strip() if has_logi_num and row['物流單號'] != "" else None
                                             new_fee = float(row['運費']) if has_fee and str(row['運費']) != "" else float(db_shipping)
+                                            
+                                            # 🚀 自動化：如果有匯入物流單號，且表格內沒有特別指定新狀態，自動轉為「配送中」
+                                            if new_logi_num and not new_status:
+                                                new_status = '配送中'
                                             
                                             # 自動結算新出貨成本與損益
                                             calc_ship = float(db_cost) + new_fee
