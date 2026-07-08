@@ -1370,15 +1370,16 @@ elif menu == "訂單明細":
     total_shipping = df_dash['物流運費'].sum() if not df_dash.empty else 0
     total_est_profit = df_dash['訂單損益'].sum() if not df_dash.empty else 0
     
-    picked_up = len(df_dash[df_dash['取貨狀態'] == '已取貨']) if not df_dash.empty else 0
-    returned = len(df_dash[df_dash['取貨狀態'] == '退換貨處理中']) if not df_dash.empty else 0
-    cancelled = len(df_dash[df_dash['取貨狀態'] == '取消']) if not df_dash.empty else 0
-    unclaimed = len(df_dash[df_dash['取貨狀態'] == '未取退回']) if not df_dash.empty else 0
+    # 🌟 更新狀態對應邏輯 (簽收=成功, 退回=失敗, 已取消=取消, 異常處理=客訴/已上架/已重出)
+    picked_up = len(df_dash[df_dash['取貨狀態'] == '簽收']) if not df_dash.empty else 0
+    returned = len(df_dash[df_dash['取貨狀態'].isin(['客訴', '已上架', '已重出'])]) if not df_dash.empty else 0
+    cancelled = len(df_dash[df_dash['取貨狀態'] == '已取消']) if not df_dash.empty else 0
+    unclaimed = len(df_dash[df_dash['取貨狀態'] == '退回']) if not df_dash.empty else 0
     
     actual_profit = 0
     if not df_dash.empty:
-        profit_from_picked = df_dash[df_dash['取貨狀態'] == '已取貨']['訂單損益'].sum()
-        loss_from_unclaimed = df_dash[df_dash['取貨狀態'] == '未取退回']['物流運費'].sum()
+        profit_from_picked = df_dash[df_dash['取貨狀態'] == '簽收']['訂單損益'].sum()
+        loss_from_unclaimed = df_dash[df_dash['取貨狀態'] == '退回']['物流運費'].sum()
         actual_profit = profit_from_picked - loss_from_unclaimed
 
     st.markdown("""
@@ -1397,16 +1398,21 @@ elif menu == "訂單明細":
     m5.metric("📈 總預估利潤", f"${total_est_profit:,.0f}")
     
     m6, m7, m8, m9, m10 = st.columns(5)
-    m6.metric("✅ 總取件數", f"{picked_up:,}")
-    m7.metric("❌ 總未取退回", f"{unclaimed:,}")
-    m8.metric("🔄 總退貨數", f"{returned:,}")
+    m6.metric("✅ 總簽收數", f"{picked_up:,}")
+    m7.metric("❌ 總退回數", f"{unclaimed:,}")
+    m8.metric("🔄 異常與客訴", f"{returned:,}")
     m9.metric("🚫 總取消數", f"{cancelled:,}")
-    m10.metric("💎 總實際利潤", f"${actual_profit:,.0f}", help="實際利潤 = (已取貨的訂單損益) - (未取退回所損失的物流運費)")
+    m10.metric("💎 總實際利潤", f"${actual_profit:,.0f}", help="實際利潤 = (簽收的訂單損益) - (退回所損失的物流運費)")
 
     st.divider()
     
     can_edit = check_perm(role, "訂單明細", "can_edit")
-    t1, t2 = st.tabs(["📄 訂單總表與追蹤", "📥 批次匯入與建檔"])
+    
+    # 🌟 修改為 3 個 Tab 分頁
+    t1, t2, t3 = st.tabs(["📄 訂單總表與追蹤", "✍️ 手動新增單筆", "📥 批量導入與更新"])
+    
+    # 🌟 共用新的狀態清單
+    STATUS_LIST = ["待出貨", "備貨中", "配送中", "已送達待取", "簽收", "退回", "已取消", "客訴", "已上架", "已重出"]
 
     with t1:
         st.info("💡 **自動防護偵測**：若表格前方的「⚠️ 警示」欄位顯示「🚨 重複」，代表該顧客（依姓名、電話或信箱比對）在系統內有 **2筆以上** 紀錄，方便一眼識別常客或潛在惡意未取顧客。若要查看完整備註與信箱，請開啟上方「展開顯示所有詳細欄位」。")
