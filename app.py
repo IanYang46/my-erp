@@ -1553,14 +1553,33 @@ elif menu == "訂單明細":
                     # 從完整的 df_orders 中提取資料，避免受到畫面欄位縮放的影響
                     df_selected = df_orders[df_orders['訂單編號'].isin(selected_orders)].copy()
                     
-                    # 建立導出的 DataFrame 並對應簡體字欄位
+                    # 建立導出的 DataFrame 並對應簡體字欄位與固定內容
                     df_export = pd.DataFrame()
+                    
                     df_export['订单号'] = df_selected['訂單編號']
+                    df_export['运单号'] = '系統获取单号'
+                    
                     df_export['备注'] = df_selected['品項預覽'] # 使用幫您整理好換行的品項預覽，印單最整齊
+                    
+                    df_export['货物类型'] = '商业件普货'
+                    df_export['货物数量'] = '1'
+                    df_export['品名'] = '香水'
+                    df_export['目的地'] = '台湾'
+                    df_export['时效'] = '空运'
+                    
                     df_export['承运商'] = df_selected['門市']
                     df_export['代收货款'] = df_selected['包裹應收']
+                    
+                    df_export['包税(1包税2不包税)'] = ''
+                    df_export['收件人地址'] = ''
+                    
                     df_export['收件人手机'] = df_selected['電話']
                     df_export['收件人姓名'] = df_selected['姓名']
+                    
+                    df_export['申报数量'] = '1'
+                    df_export['申报价值'] = '1'
+                    df_export['申报单价'] = '10'
+                    
                     df_export['门店名称'] = df_selected['門市']
                     df_export['门店号码'] = df_selected['店號']
                     
