@@ -1506,8 +1506,11 @@ elif menu == "訂單明細":
         )
 
         if can_edit:
-            c_save, c_del = st.columns(2)
-            to_delete = edited_orders[edited_orders["🗑️ 勾選"] == True]['訂單編號'].tolist() if not edited_orders.empty and "🗑️ 勾選" in edited_orders.columns else []
+            # 🌟 將按鈕區塊改為 3 欄，加入中間的導出功能
+            c_save, c_export, c_del = st.columns([1, 1, 1])
+            
+            # 取得被勾選的訂單編號
+            selected_orders = edited_orders[edited_orders["🗑️ 勾選"] == True]['訂單編號'].tolist() if not edited_orders.empty and "🗑️ 勾選" in edited_orders.columns else []
 
             with c_save:
                 if st.button("💾 儲存上方總表狀態變更", type="primary", use_container_width=True):
@@ -1544,17 +1547,54 @@ elif menu == "訂單明細":
                     except Exception as e:
                         st.error(f"❌ 儲存失敗：{str(e)}")
 
+            # 🌟 新增：導出列印面單區塊
+            with c_export:
+                if len(selected_orders) > 0:
+                    # 從完整的 df_orders 中提取資料，避免受到畫面欄位縮放的影響
+                    df_selected = df_orders[df_orders['訂單編號'].isin(selected_orders)].copy()
+                    
+                    # 建立導出的 DataFrame 並對應簡體字欄位
+                    df_export = pd.DataFrame()
+                    df_export['订单号'] = df_selected['訂單編號']
+                    df_export['备注'] = df_selected['品項預覽'] # 使用幫您整理好換行的品項預覽，印單最整齊
+                    df_export['承运商'] = df_selected['門市']
+                    df_export['代收货款'] = df_selected['包裹應收']
+                    df_export['收件人手机'] = df_selected['電話']
+                    df_export['收件人姓名'] = df_selected['姓名']
+                    df_export['门店名称'] = df_selected['門市']
+                    df_export['门店号码'] = df_selected['店號']
+                    
+                    # 將資料寫入記憶體中的 Excel 檔案
+                    import io
+                    output = io.BytesIO()
+                    with pd.ExcelWriter(output, engine='openpyxl') as writer:
+                        df_export.to_excel(writer, index=False, sheet_name='Sheet1')
+                    
+                    # 動態產生包含年月日時分的檔案名稱
+                    file_name = f"资料导入(代收付)_{pd.Timestamp.today().strftime('%Y%m%d_%H%M')}.xlsx"
+                    
+                    st.download_button(
+                        label=f"📥 導出列印面單 ({len(selected_orders)} 筆)",
+                        data=output.getvalue(),
+                        file_name=file_name,
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        type="primary",
+                        use_container_width=True
+                    )
+                else:
+                    st.button("📥 請先勾選訂單再導出", disabled=True, use_container_width=True)
+
             with c_del:
-                if len(to_delete) > 0:
-                    if st.button(f"⚠️ 確認刪除已勾選的 {len(to_delete)} 筆訂單", type="primary", use_container_width=True):
+                if len(selected_orders) > 0:
+                    if st.button(f"⚠️ 確認刪除已勾選的 {len(selected_orders)} 筆訂單", type="primary", use_container_width=True):
                         try:
                             with get_db() as conn:
                                 cursor = conn.cursor()
-                                placeholders = ','.join(['?'] * len(to_delete))
-                                cursor.execute(f"DELETE FROM customer_orders WHERE 訂單編號 IN ({placeholders})", tuple(to_delete))
+                                placeholders = ','.join(['?'] * len(selected_orders))
+                                cursor.execute(f"DELETE FROM customer_orders WHERE 訂單編號 IN ({placeholders})", tuple(selected_orders))
                                 conn.commit()
-                            log_system_action("訂單明細", current_operator, "刪除訂單資料", f"刪除了 {len(to_delete)} 筆訂單")
-                            st.success(f"✅ 成功刪除 {len(to_delete)} 筆訂單！")
+                            log_system_action("訂單明細", current_operator, "刪除訂單資料", f"刪除了 {len(selected_orders)} 筆訂單")
+                            st.success(f"✅ 成功刪除 {len(selected_orders)} 筆訂單！")
                             time.sleep(1); st.rerun()
                         except Exception as e:
                             st.error(f"❌ 刪除失敗：{str(e)}")
