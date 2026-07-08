@@ -1423,7 +1423,7 @@ elif menu == "訂單明細":
         # 🌟 修改：還原為 3 欄排版，移除獨立日期篩選，改為與上方「營運數據看板」同步
         c_search, c_status, c_toggle = st.columns([2, 1, 1.2])
         with c_search: search_kw = st.text_input("🔍 搜尋訂單 (輸入姓名、電話、信箱或單號)", "")
-        with c_status: status_filter = st.selectbox("📌 狀態篩選", ["全部", "待出貨", "配送中", "已抵達", "已取貨", "未取退回", "取消", "退換貨處理中"])
+        with c_status: status_filter = st.selectbox("📌 狀態篩選", ["全部"] + STATUS_LIST)
         with c_toggle:
             st.write(""); st.write("")
             show_all_cols = st.toggle("🔍 展開顯示所有詳細欄位", value=False)
@@ -1474,7 +1474,7 @@ elif menu == "訂單明細":
             "物流運費": st.column_config.NumberColumn("物流運費", format="$ %.0f"),
             "出貨成本": st.column_config.NumberColumn("出貨成本", format="$ %.0f", disabled=True),
             "訂單損益": st.column_config.NumberColumn("訂單損益", format="$ %.0f", disabled=True),
-            "取貨狀態": st.column_config.SelectboxColumn("狀態", options=["待出貨", "配送中", "已抵達", "已取貨", "未取退回", "取消", "退換貨處理中"]),
+            "取貨狀態": st.column_config.SelectboxColumn("狀態", options=STATUS_LIST),
             "品項預覽": st.column_config.TextColumn("📦 品項內容 (預覽)", disabled=True),
             "信箱": st.column_config.TextColumn("📧 信箱"),
             "顧客備註": st.column_config.TextColumn("👤 顧客備註"),
@@ -1658,7 +1658,7 @@ elif menu == "訂單明細":
                     edit_store_id = c7.text_input("門市店號", value=target_order.get('店號', ''))
                     edit_logistics = c8.text_input("物流編號", value=target_order.get('物流編號', ''))
                     
-                    status_opts = ["待出貨", "配送中", "已抵達", "已取貨", "未取退回", "取消", "退換貨處理中"]
+                    status_opts = STATUS_LIST.copy()
                     current_status = target_order.get('取貨狀態', '待出貨')
                     if current_status not in status_opts: status_opts.append(current_status)
                     edit_status = c9.selectbox("取貨狀態", options=status_opts, index=status_opts.index(current_status))
@@ -1709,77 +1709,214 @@ elif menu == "訂單明細":
                         st.form_submit_button("🔒 您無權限編輯這筆訂單", disabled=True)
 
     with t2:
-        st.subheader("📥 批量導入外部訂單資料")
+        st.subheader("✍️ 手動新增單筆訂單")
+        if not can_edit:
+            st.warning("🔒 您沒有新增訂單的權限。")
+        else:
+            with st.form("manual_add_order_form"):
+                c_ma1, c_ma2, c_ma3 = st.columns(3)
+                ma_oid = c_ma1.text_input("訂單編號 (必填)*")
+                ma_date = c_ma2.text_input("訂單日期 (如: 2026-07-08)", value=pd.Timestamp.today().strftime('%Y-%m-%d'))
+                ma_name = c_ma3.text_input("顧客姓名")
+                
+                c_ma4, c_ma5, c_ma6 = st.columns(3)
+                ma_phone = c_ma4.text_input("聯絡電話")
+                ma_email = c_ma5.text_input("聯絡信箱")
+                ma_link = c_ma6.text_input("訂單連結")
+                
+                c_ma7, c_ma8, c_ma9 = st.columns(3)
+                ma_store = c_ma7.text_input("取件門市 (承運商)")
+                ma_store_id = c_ma8.text_input("門市店號")
+                ma_status = c_ma9.selectbox("初始狀態", options=STATUS_LIST, index=0)
+                
+                c_ma10, c_ma11, c_ma12 = st.columns(3)
+                ma_revenue = c_ma10.number_input("包裹應收 (代收貨款)", value=0.0, step=10.0)
+                ma_cost = c_ma11.number_input("商品成本", value=0.0, step=10.0)
+                ma_shipping = c_ma12.number_input("物流運費", value=0.0, step=10.0)
+                
+                ma_items = st.text_area("📦 品項內容 (支援多行備註)")
+                
+                c_ma13, c_ma14 = st.columns(2)
+                ma_c_note = c_ma13.text_area("👤 顧客備註")
+                ma_m_note = c_ma14.text_area("🏪 商家備註")
+                
+                if st.form_submit_button("🚀 儲存並新增這筆訂單", type="primary", use_container_width=True):
+                    if not ma_oid.strip():
+                        st.error("❌ 『訂單編號』不可為空！")
+                    else:
+                        try:
+                            ma_ship_cost = ma_cost + ma_shipping
+                            ma_profit = ma_revenue - ma_ship_cost
+                            with get_db() as conn:
+                                conn.execute("""
+                                    INSERT INTO customer_orders 
+                                    (訂單編號, 訂單日期, 姓名, 電話, 信箱, 訂單連結, 門市, 店號, 品項內容, 包裹應收, 商品成本, 物流運費, 出貨成本, 訂單損益, 物流編號, 取貨狀態, 顧客備註, 商家備註, 下單總數)
+                                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', ?, ?, ?, 0)
+                                """, (
+                                    ma_oid.strip(), ma_date, ma_name, ma_phone, ma_email, ma_link, ma_store, ma_store_id,
+                                    ma_items, ma_revenue, ma_cost, ma_shipping, ma_ship_cost, ma_profit, ma_status, ma_c_note, ma_m_note
+                                ))
+                                conn.commit()
+                            log_system_action("訂單明細", current_operator, "手動新增訂單", f"新增了單筆訂單 {ma_oid}")
+                            st.success(f"✅ 訂單 {ma_oid} 新增成功！")
+                            time.sleep(1); st.rerun()
+                        except Exception as e:
+                            if "UNIQUE constraint failed" in str(e):
+                                st.error("❌ 此訂單編號已存在資料庫中！請確認是否重複。")
+                            else:
+                                st.error(f"❌ 新增失敗：{str(e)}")
+
+    with t3:
+        st.subheader("📥 批量導入與更新工具")
         if not check_perm(role, "訂單明細", "can_upload"):
             st.warning("🔒 您沒有上傳外部訂單的權限。")
         else:
-            st.caption("💡 系統會自動過濾外部欄位並合併複數品項。若包含『信箱』、『顧客備註』、『商家備註』系統也會一併抓取匯入。")
-            uploaded_order = st.file_uploader("選擇訂單檔案", type=["csv", "xlsx"], key="order_uploader")
-            
-            if uploaded_order and st.button("🚀 執行訂單匯入", type="primary"):
-                try:
-                    df_imp = pd.read_csv(uploaded_order) if uploaded_order.name.endswith('.csv') else pd.read_excel(uploaded_order, engine='openpyxl')
-                    
-                    col_mapping = {
-                        '訂單編號': '訂單編號', '建立日期': '訂單日期', '收件人': '姓名', '貨號': '品項內容',
-                        '總計金額': '包裹應收', '聯絡電話': '電話', 'Email': '信箱', '信箱': '信箱', 
-                        '運送超商': '門市', '超商代號': '店號',
-                        '顧客備註': '顧客備註', '商家備註': '商家備註'
-                    }
-                    df_imp = df_imp.rename(columns=col_mapping)
-                    
-                    if '訂單編號' not in df_imp.columns:
-                        st.error("❌ 匯入失敗：檔案中找不到『訂單編號』欄位。")
-                    else:
-                        df_imp = df_imp[df_imp['訂單編號'].astype(str).str.strip() != ""]
+            exp1 = st.expander("📝 1. 批量導入【新訂單建立】 (將新訂單資料寫入系統)", expanded=True)
+            with exp1:
+                st.caption("💡 系統會自動過濾外部欄位並合併複數品項。若包含『信箱』、『顧客備註』、『商家備註』系統也會一併抓取匯入。")
+                uploaded_order = st.file_uploader("選擇訂單檔案", type=["csv", "xlsx"], key="order_uploader")
+                
+                if uploaded_order and st.button("🚀 執行【建立新訂單】匯入", type="primary", key="btn_imp_orders"):
+                    try:
+                        df_imp = pd.read_csv(uploaded_order) if uploaded_order.name.endswith('.csv') else pd.read_excel(uploaded_order, engine='openpyxl')
                         
-                        # 處理包裹應收的金額格式
-                        if '包裹應收' in df_imp.columns:
-                            if df_imp['包裹應收'].dtype == object: df_imp['包裹應收'] = df_imp['包裹應收'].astype(str).str.replace(',', '')
-                            df_imp['包裹應收'] = pd.to_numeric(df_imp['包裹應收'], errors='coerce').fillna(0.0)
+                        col_mapping = {
+                            '訂單編號': '訂單編號', '建立日期': '訂單日期', '收件人': '姓名', '貨號': '品項內容',
+                            '總計金額': '包裹應收', '聯絡電話': '電話', 'Email': '信箱', '信箱': '信箱', 
+                            '運送超商': '門市', '超商代號': '店號',
+                            '顧客備註': '顧客備註', '商家備註': '商家備註'
+                        }
+                        df_imp = df_imp.rename(columns=col_mapping)
+                        
+                        if '訂單編號' not in df_imp.columns:
+                            st.error("❌ 匯入失敗：檔案中找不到『訂單編號』欄位。")
+                        else:
+                            df_imp = df_imp[df_imp['訂單編號'].astype(str).str.strip() != ""]
                             
-                        df_imp = df_imp.fillna("")
-                        agg_funcs = {}
-                        for col in df_imp.columns:
-                            if col == '訂單編號': continue
-                            elif col == '品項內容': agg_funcs[col] = lambda x: '\n'.join([f"• {str(i).strip()}" for i in x if str(i).strip() != ""])
-                            else: agg_funcs[col] = 'first' 
+                            if '包裹應收' in df_imp.columns:
+                                if df_imp['包裹應收'].dtype == object: df_imp['包裹應收'] = df_imp['包裹應收'].astype(str).str.replace(',', '')
+                                df_imp['包裹應收'] = pd.to_numeric(df_imp['包裹應收'], errors='coerce').fillna(0.0)
                                 
-                        df_grouped = df_imp.groupby('訂單編號', as_index=False).agg(agg_funcs)
+                            df_imp = df_imp.fillna("")
+                            agg_funcs = {}
+                            for col in df_imp.columns:
+                                if col == '訂單編號': continue
+                                elif col == '品項內容': agg_funcs[col] = lambda x: '\n'.join([f"• {str(i).strip()}" for i in x if str(i).strip() != ""])
+                                else: agg_funcs[col] = 'first' 
+                                    
+                            df_grouped = df_imp.groupby('訂單編號', as_index=False).agg(agg_funcs)
 
-                        with get_db() as conn:
-                            cursor = conn.cursor()
-                            count = 0
-                            for _, row in df_grouped.iterrows():
-                                cursor.execute("""
-                                    INSERT INTO customer_orders 
-                                    (訂單編號, 訂單日期, 姓名, 電話, 信箱, 門市, 店號, 品項內容, 下單總數, 包裹應收, 商品成本, 物流運費, 出貨成本, 訂單損益, 物流編號, 取貨狀態, 取貨日期, 顧客備註, 商家備註)
-                                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, ?, 0.0, 0.0, 0.0, 0.0, '', '待出貨', '', ?, ?)
-                                    ON CONFLICT(訂單編號) DO UPDATE SET
-                                        訂單日期 = excluded.訂單日期,
-                                        姓名 = excluded.姓名,
-                                        電話 = excluded.電話,
-                                        信箱 = excluded.信箱,
-                                        門市 = excluded.門市,
-                                        店號 = excluded.店號,
-                                        品項內容 = excluded.品項內容,
-                                        包裹應收 = excluded.包裹應收,
-                                        顧客備註 = excluded.顧客備註,
-                                        商家備註 = excluded.商家備註;
-                                """, (
-                                    str(row['訂單編號']).strip(), str(row.get('訂單日期', '')), str(row.get('姓名', '')),
-                                    str(row.get('電話', '')), str(row.get('信箱', '')), str(row.get('門市', '')), str(row.get('店號', '')),
-                                    str(row.get('品項內容', '')), float(row.get('包裹應收', 0.0)),
-                                    str(row.get('顧客備註', '')), str(row.get('商家備註', ''))
-                                ))
-                                count += 1
-                            conn.commit()
+                            with get_db() as conn:
+                                cursor = conn.cursor()
+                                count = 0
+                                for _, row in df_grouped.iterrows():
+                                    cursor.execute("""
+                                        INSERT INTO customer_orders 
+                                        (訂單編號, 訂單日期, 姓名, 電話, 信箱, 門市, 店號, 品項內容, 下單總數, 包裹應收, 商品成本, 物流運費, 出貨成本, 訂單損益, 物流編號, 取貨狀態, 取貨日期, 顧客備註, 商家備註)
+                                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, ?, 0.0, 0.0, 0.0, 0.0, '', '待出貨', '', ?, ?)
+                                        ON CONFLICT(訂單編號) DO UPDATE SET
+                                            訂單日期 = excluded.訂單日期,
+                                            姓名 = excluded.姓名,
+                                            電話 = excluded.電話,
+                                            信箱 = excluded.信箱,
+                                            門市 = excluded.門市,
+                                            店號 = excluded.店號,
+                                            品項內容 = excluded.品項內容,
+                                            包裹應收 = excluded.包裹應收,
+                                            顧客備註 = excluded.顧客備註,
+                                            商家備註 = excluded.商家備註;
+                                    """, (
+                                        str(row['訂單編號']).strip(), str(row.get('訂單日期', '')), str(row.get('姓名', '')),
+                                        str(row.get('電話', '')), str(row.get('信箱', '')), str(row.get('門市', '')), str(row.get('店號', '')),
+                                        str(row.get('品項內容', '')), float(row.get('包裹應收', 0.0)),
+                                        str(row.get('顧客備註', '')), str(row.get('商家備註', ''))
+                                    ))
+                                    count += 1
+                                conn.commit()
+                                
+                            log_system_action("訂單明細", current_operator, "匯入訂單資料", f"成功批次合併與匯入了 {count} 筆訂單，包含新欄位")
+                            st.success(f"✅ 成功匯入並智能合併為 {count} 筆獨立訂單！")
+                            time.sleep(1.5); st.rerun()
+                    except Exception as e:
+                        st.error(f"❌ 匯入失敗，詳情：{str(e)}")
+            
+            exp2 = st.expander("🚚 2. 批量導入【更新物流單號、狀態與運費】", expanded=False)
+            with exp2:
+                st.caption("💡 系統會以表格內的『訂單編號/订单号』尋找系統中對應的單號，並替換該單的【狀態】、【物流單號/运单号】、【運費/运费】。並重新幫您核算單筆利潤。")
+                uploaded_logi = st.file_uploader("選擇物流更新檔案", type=["csv", "xlsx"], key="logi_uploader")
+                
+                if uploaded_logi and st.button("🚀 執行【物流資訊】比對更新", type="primary", key="btn_update_logi"):
+                    try:
+                        df_logi = pd.read_csv(uploaded_logi) if uploaded_logi.name.endswith('.csv') else pd.read_excel(uploaded_logi, engine='openpyxl')
+                        
+                        # 幫您自動適配物流系統繁簡體亂流
+                        l_map = {
+                            '订单号': '訂單編號', '订单编号': '訂單編號', '訂單號': '訂單編號',
+                            '状态': '狀態', '订单状态': '狀態', '取貨狀態': '狀態',
+                            '运单号': '物流單號', '交货单号': '物流單號', '物流編號': '物流單號',
+                            '运费': '運費', '实际运费': '運費', '物流運費': '運費'
+                        }
+                        df_logi = df_logi.rename(columns=l_map)
+                        
+                        if '訂單編號' not in df_logi.columns:
+                            st.error("❌ 檔案中找不到基準欄位『訂單編號』(或订单号)，無法比對。")
+                        else:
+                            df_logi = df_logi[df_logi['訂單編號'].astype(str).str.strip() != ""]
                             
-                        log_system_action("訂單明細", current_operator, "匯入訂單資料", f"成功批次合併與匯入了 {count} 筆訂單，包含新欄位")
-                        st.success(f"✅ 成功匯入並智能合併為 {count} 筆獨立訂單！")
-                        time.sleep(1.5); st.rerun()
-                except Exception as e:
-                    st.error(f"❌ 匯入失敗，詳情：{str(e)}")
+                            has_status = '狀態' in df_logi.columns
+                            has_logi_num = '物流單號' in df_logi.columns
+                            has_fee = '運費' in df_logi.columns
+                            
+                            if not (has_status or has_logi_num or has_fee):
+                                st.error("❌ 檔案中必須包含『狀態』、『物流單號(运单号)』或『運費』至少其中一欄。")
+                            else:
+                                if has_fee:
+                                    if df_logi['運費'].dtype == object: df_logi['運費'] = df_logi['運費'].astype(str).str.replace(',', '')
+                                    df_logi['運費'] = pd.to_numeric(df_logi['運費'], errors='coerce').fillna(0.0)
+                                    
+                                df_logi = df_logi.fillna("")
+                                update_count = 0
+                                
+                                with get_db() as conn:
+                                    cursor = conn.cursor()
+                                    for _, row in df_logi.iterrows():
+                                        oid = str(row['訂單編號']).strip()
+                                        
+                                        # 找出原本的資料算利潤
+                                        cursor.execute("SELECT 包裹應收, 商品成本, 物流運費 FROM customer_orders WHERE 訂單編號=?", (oid,))
+                                        db_row = cursor.fetchone()
+                                        
+                                        if db_row:
+                                            db_revenue, db_cost, db_shipping = db_row
+                                            
+                                            new_status = str(row['狀態']).strip() if has_status and row['狀態'] != "" else None
+                                            new_logi_num = str(row['物流單號']).strip() if has_logi_num and row['物流單號'] != "" else None
+                                            new_fee = float(row['運費']) if has_fee and str(row['運費']) != "" else float(db_shipping)
+                                            
+                                            # 自動結算新出貨成本與損益
+                                            calc_ship = float(db_cost) + new_fee
+                                            calc_profit = float(db_revenue) - calc_ship
+                                            
+                                            updates, params = [], []
+                                            if new_status: updates.append("取貨狀態=?"); params.append(new_status)
+                                            if new_logi_num: updates.append("物流編號=?"); params.append(new_logi_num)
+                                            
+                                            updates.append("物流運費=?"); params.append(new_fee)
+                                            updates.append("出貨成本=?"); params.append(calc_ship)
+                                            updates.append("訂單損益=?"); params.append(calc_profit)
+                                            
+                                            params.append(oid)
+                                            
+                                            if updates:
+                                                cursor.execute(f"UPDATE customer_orders SET {', '.join(updates)} WHERE 訂單編號=?", tuple(params))
+                                                update_count += 1
+                                    conn.commit()
+                                
+                                log_system_action("訂單明細", current_operator, "批量更新物流", f"比對更新了 {update_count} 筆訂單資訊")
+                                st.success(f"✅ 成功為 {update_count} 筆訂單掛載了最新物流與狀態資訊！")
+                                time.sleep(1.5); st.rerun()
+                    except Exception as e:
+                        st.error(f"❌ 更新失敗，詳情：{str(e)}")
 
 elif menu == "財務報表":
     st.title("📈 財務與利潤分析")
