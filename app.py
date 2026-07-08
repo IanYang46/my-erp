@@ -1524,30 +1524,38 @@ elif menu == "訂單明細":
                         with get_db() as conn:
                             cursor = conn.cursor()
                             for _, row in edited_orders.iterrows():
-                                if pd.isna(row['訂單編號']) or str(row['訂單編號']).strip() == "": continue 
-                                row = row.fillna({'包裹應收': 0.0, '商品成本': 0.0, '物流運費': 0.0})
+                                oid = str(row.get('訂單編號', '')).strip()
+                                if pd.isna(oid) or oid == "": continue 
                                 
-                                calc_ship_cost = float(row['商品成本']) + float(row['物流運費'])
-                                calc_profit = float(row['包裹應收']) - calc_ship_cost
+                                # 取回原始資料，這樣就算表格隱藏了某些欄位，也不會出錯
+                                orig_row = df_orders[df_orders['訂單編號'] == oid].iloc[0]
+                                
+                                # 如果有在畫面上編輯的欄位就抓新值，被隱藏的就沿用原始值
+                                u_date = row.get('訂單日期', orig_row.get('訂單日期', ''))
+                                u_name = row.get('姓名', orig_row.get('姓名', ''))
+                                u_phone = row.get('電話', orig_row.get('電話', ''))
+                                u_email = row.get('信箱', orig_row.get('信箱', ''))
+                                u_status = row.get('取貨狀態', orig_row.get('取貨狀態', '待出貨'))
+                                u_logi = row.get('物流編號', orig_row.get('物流編號', ''))
+                                
+                                u_rev = float(row.get('包裹應收', orig_row.get('包裹應收', 0.0)))
+                                u_cost = float(row.get('商品成本', orig_row.get('商品成本', 0.0)))
+                                u_ship = float(row.get('物流運費', orig_row.get('物流運費', 0.0)))
+                                
+                                calc_ship_cost = u_cost + u_ship
+                                calc_profit = u_rev - calc_ship_cost
                                 
                                 cursor.execute("""
                                     UPDATE customer_orders SET 
-                                    訂單日期=?, 訂單連結=?, 姓名=?, 電話=?, 信箱=?, 門市=?, 店號=?, 
-                                    包裹應收=?, 商品成本=?, 物流運費=?, 出貨成本=?, 訂單損益=?, 
-                                    物流編號=?, 取貨狀態=?, 取貨日期=?, 顧客備註=?, 商家備註=?
+                                    訂單日期=?, 姓名=?, 電話=?, 信箱=?, 包裹應收=?, 商品成本=?, 物流運費=?, 出貨成本=?, 訂單損益=?, 物流編號=?, 取貨狀態=?
                                     WHERE 訂單編號=?
                                 """, (
-                                    str(row.get('訂單日期', '')), str(row.get('訂單連結', '')),
-                                    str(row.get('姓名', '')), str(row.get('電話', '')), str(row.get('信箱', '')),
-                                    str(row.get('門市', '')), str(row.get('店號', '')),
-                                    float(row['包裹應收']), float(row['商品成本']),
-                                    float(row['物流運費']), calc_ship_cost, calc_profit, 
-                                    str(row.get('物流編號', '')), str(row.get('取貨狀態', '待出貨')), str(row.get('取貨日期', '')),
-                                    str(row.get('顧客備註', '')), str(row.get('商家備註', '')),
-                                    str(row['訂單編號']).strip()
+                                    str(u_date), str(u_name), str(u_phone), str(u_email),
+                                    u_rev, u_cost, u_ship, calc_ship_cost, calc_profit, 
+                                    str(u_logi), str(u_status), oid
                                 ))
                             conn.commit()
-                        log_system_action("訂單明細", current_operator, "更新訂單資料", "透過總表儲存了訂單狀態與備註，自動重新核算損益")
+                        log_system_action("訂單明細", current_operator, "更新訂單資料", "透過總表儲存了訂單狀態與變更")
                         st.success("✅ 總表狀態資料已成功保存！")
                         time.sleep(1); st.rerun()
                     except Exception as e:
@@ -1657,6 +1665,22 @@ elif menu == "訂單明細":
                 
                 with st.form(f"detail_edit_form_{selected_order}"):
                     st.markdown(f"### 🧾 訂單編號：`{selected_order}`")
+                    
+                    # 🚀 新增：智能顯示重複客詳細資訊
+                    if target_order.get('is_repeat', False):
+                        dup_msgs = []
+                        if target_order['姓名'] and name_counts.get(target_order['姓名'], 0) > 1:
+                            dup_oids = df_orders[(df_orders['姓名'] == target_order['姓名']) & (df_orders['訂單編號'] != selected_order)]['訂單編號'].tolist()
+                            dup_msgs.append(f"👤 姓名【{target_order['姓名']}】👉 曾在單號 {', '.join(dup_oids)} 出現過")
+                        if target_order['電話'] and phone_counts.get(target_order['電話'], 0) > 1:
+                            dup_oids = df_orders[(df_orders['電話'] == target_order['電話']) & (df_orders['訂單編號'] != selected_order)]['訂單編號'].tolist()
+                            dup_msgs.append(f"📞 電話【{target_order['電話']}】👉 曾在單號 {', '.join(dup_oids)} 出現過")
+                        if target_order['信箱'] and email_counts.get(target_order['信箱'], 0) > 1:
+                            dup_oids = df_orders[(df_orders['信箱'] == target_order['信箱']) & (df_orders['訂單編號'] != selected_order)]['訂單編號'].tolist()
+                            dup_msgs.append(f"📧 信箱【{target_order['信箱']}】👉 曾在單號 {', '.join(dup_oids)} 出現過")
+                        
+                        if dup_msgs:
+                            st.error("🚨 **系統偵測此為重複客，歷史紀錄對比：**\n\n" + "\n\n".join(dup_msgs))
                     
                     c1, c2, c3, c4, c5 = st.columns(5)
                     edit_date = c1.text_input("訂單日期", value=target_order.get('訂單日期', ''))
@@ -1822,10 +1846,11 @@ elif menu == "訂單明細":
                                 cursor = conn.cursor()
                                 count = 0
                                 for _, row in df_grouped.iterrows():
+                                    rev = float(row.get('包裹應收', 0.0))
                                     cursor.execute("""
                                         INSERT INTO customer_orders 
                                         (訂單編號, 訂單日期, 姓名, 電話, 信箱, 門市, 店號, 品項內容, 下單總數, 包裹應收, 商品成本, 物流運費, 出貨成本, 訂單損益, 物流編號, 取貨狀態, 取貨日期, 顧客備註, 商家備註)
-                                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, ?, 0.0, 0.0, 0.0, 0.0, '', '待出貨', '', ?, ?)
+                                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, ?, 0.0, 0.0, 0.0, ?, '', '待出貨', '', ?, ?)
                                         ON CONFLICT(訂單編號) DO UPDATE SET
                                             訂單日期 = excluded.訂單日期,
                                             姓名 = excluded.姓名,
@@ -1835,12 +1860,13 @@ elif menu == "訂單明細":
                                             店號 = excluded.店號,
                                             品項內容 = excluded.品項內容,
                                             包裹應收 = excluded.包裹應收,
+                                            訂單損益 = excluded.包裹應收 - customer_orders.出貨成本,
                                             顧客備註 = excluded.顧客備註,
                                             商家備註 = excluded.商家備註;
                                     """, (
                                         str(row['訂單編號']).strip(), str(row.get('訂單日期', '')), str(row.get('姓名', '')),
                                         str(row.get('電話', '')), str(row.get('信箱', '')), str(row.get('門市', '')), str(row.get('店號', '')),
-                                        str(row.get('品項內容', '')), float(row.get('包裹應收', 0.0)),
+                                        str(row.get('品項內容', '')), rev, rev,
                                         str(row.get('顧客備註', '')), str(row.get('商家備註', ''))
                                     ))
                                     count += 1
