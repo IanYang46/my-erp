@@ -2037,6 +2037,12 @@ elif menu == "訂單明細":
                                             if new_logi_num: updates.append("物流編號=?"); params.append(new_logi_num)
                                             if new_date: updates.append("取貨日期=?"); params.append(new_date)
                                             
+                                            # 🌟 補回遺漏的寫入語法：更新運費與重新結算的成本、損益
+                                            updates.append("物流運費=?"); params.append(new_fee_twd)
+                                            updates.append("物流運費_RMB=?"); params.append(new_fee_rmb)
+                                            updates.append("出貨成本=?"); params.append(calc_ship)
+                                            updates.append("訂單損益=?"); params.append(calc_profit)
+                                            
                                             params.append(oid)
                                             
                                             if updates:
