@@ -1901,10 +1901,18 @@ elif menu == "訂單明細":
                                 count = 0
                                 for _, row in df_grouped.iterrows():
                                     rev = float(row.get('包裹應收', 0.0))
+                                    
+                                    # 🌟 智能偵測外部『訂單狀態』欄位 (支援繁簡體)
+                                    raw_order_status = str(row.get('訂單狀態', row.get('订单状态', ''))).strip()
+                                    if raw_order_status in ['已取消', '其他']:
+                                        init_status = '已取消'
+                                    else:
+                                        init_status = '待出貨'
+
                                     cursor.execute("""
                                         INSERT INTO customer_orders 
                                         (訂單編號, 訂單日期, 姓名, 電話, 信箱, 門市, 店號, 品項內容, 下單總數, 包裹應收, 商品成本, 物流運費, 出貨成本, 訂單損益, 物流編號, 取貨狀態, 取貨日期, 顧客備註, 商家備註)
-                                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, ?, 0.0, 0.0, 0.0, ?, '', '待出貨', '', ?, ?)
+                                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, ?, 0.0, 0.0, 0.0, ?, '', ?, '', ?, ?)
                                         ON CONFLICT(訂單編號) DO UPDATE SET
                                             訂單日期 = excluded.訂單日期,
                                             姓名 = excluded.姓名,
@@ -1915,12 +1923,13 @@ elif menu == "訂單明細":
                                             品項內容 = excluded.品項內容,
                                             包裹應收 = excluded.包裹應收,
                                             訂單損益 = excluded.包裹應收 - customer_orders.出貨成本,
+                                            取貨狀態 = CASE WHEN excluded.取貨狀態 = '已取消' THEN '已取消' ELSE customer_orders.取貨狀態 END,
                                             顧客備註 = excluded.顧客備註,
                                             商家備註 = excluded.商家備註;
                                     """, (
                                         str(row['訂單編號']).strip(), str(row.get('訂單日期', '')), str(row.get('姓名', '')),
                                         str(row.get('電話', '')), str(row.get('信箱', '')), str(row.get('門市', '')), str(row.get('店號', '')),
-                                        str(row.get('品項內容', '')), rev, rev,
+                                        str(row.get('品項內容', '')), rev, rev, init_status,
                                         str(row.get('顧客備註', '')), str(row.get('商家備註', ''))
                                     ))
                                     count += 1
