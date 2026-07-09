@@ -1989,8 +1989,27 @@ elif menu == "訂單明細":
                                         if db_row:
                                             db_revenue, db_cost, db_shipping, db_shipping_rmb = db_row
                                             
-                                            new_status = str(row['狀態']).strip() if has_status and row['狀態'] != "" else None
-                                            new_logi_num = str(row['物流編號']).strip() if has_logi_num and row['物流編號'] != "" else None
+                                            raw_status = str(row['狀態']).strip() if has_status and str(row['狀態']).strip() != "" else None
+                                            
+                                            # 🌟 新增：物流狀態智能對應字典 (外部狀態 -> 系統狀態)
+                                            status_map = {
+                                                '在途': '配送中',
+                                                '待取件': '已送達待取',
+                                                '签收': '簽收',
+                                                '退回': '退回',
+                                                '退货上架': '已上架',
+                                                '客诉': '客訴',
+                                                '已重出': '已重出'
+                                            }
+                                            
+                                            new_status = None
+                                            if raw_status in status_map:
+                                                new_status = status_map[raw_status]
+                                            elif raw_status in STATUS_LIST:
+                                                # 如果匯入的狀態原本就等於系統內的標準狀態，也直接放行
+                                                new_status = raw_status
+                                                
+                                            new_logi_num = str(row['物流編號']).strip() if has_logi_num and str(row['物流編號']).strip() != "" else None
                                             
                                             # 🌟 邏輯修正：將 Excel 匯入的運費鎖定為人民幣，並自動推算台幣
                                             if has_fee and str(row['物流運費']).strip() != "":
@@ -2000,12 +2019,15 @@ elif menu == "訂單明細":
                                                 new_fee_rmb = float(db_shipping_rmb if db_shipping_rmb is not None else 0.0)
                                                 new_fee_twd = float(db_shipping)
                                                 
-                                            new_date = str(row['取貨日期']).strip() if has_date and str(row['取貨日期']) != "" else None
-                                            
                                             # 🚀 自動化：如果有匯入物流單號，且表格內沒有特別指定新狀態，自動轉為「配送中」
                                             if new_logi_num and not new_status:
                                                 new_status = '配送中'
-                                            
+
+                                            # 🌟 限制：取貨日期欄只有在狀態被改為『簽收』時，才允許導入覆蓋
+                                            new_date = None
+                                            if new_status == '簽收' and has_date and str(row['取貨日期']).strip() != "":
+                                                new_date = str(row['取貨日期']).strip()
+                                                
                                             # 自動結算新出貨成本與損益 (此時的 new_fee_twd 已經是台幣了)
                                             calc_ship = float(db_cost) + new_fee_twd
                                             calc_profit = float(db_revenue) - calc_ship
@@ -2014,11 +2036,6 @@ elif menu == "訂單明細":
                                             if new_status: updates.append("取貨狀態=?"); params.append(new_status)
                                             if new_logi_num: updates.append("物流編號=?"); params.append(new_logi_num)
                                             if new_date: updates.append("取貨日期=?"); params.append(new_date)
-                                            
-                                            updates.append("物流運費=?"); params.append(new_fee_twd)
-                                            updates.append("物流運費_RMB=?"); params.append(new_fee_rmb)
-                                            updates.append("出貨成本=?"); params.append(calc_ship)
-                                            updates.append("訂單損益=?"); params.append(calc_profit)
                                             
                                             params.append(oid)
                                             
