@@ -1292,15 +1292,35 @@ elif menu == "訂單明細":
         st.error("🚫 您無權限訪問此模組")
         st.stop()
 
-    # 🌟 新增：在側邊欄加入全域匯率設定 (與商品庫存一致)
+    # 🌟 系統熱更新：確保 customer_orders 表格擁有獨立的「物流運費_RMB」欄位，讓人民幣原價永久保存
     with get_db() as conn:
-        rate = conn.execute("SELECT value FROM settings WHERE key='exchange_rate'").fetchone()[0]
+        cursor = conn.cursor()
+        cursor.execute("PRAGMA table_info(customer_orders)")
+        cols = [info[1] for info in cursor.fetchall()]
+        if '物流運費_RMB' not in cols:
+            cursor.execute("ALTER TABLE customer_orders ADD COLUMN 物流運費_RMB REAL DEFAULT 0.0")
+            # 根據現有台幣運費反推初始的人民幣並存入 (僅執行一次)
+            rate_val = cursor.execute("SELECT value FROM settings WHERE key='exchange_rate'").fetchone()[0]
+            cursor.execute("UPDATE customer_orders SET 物流運費_RMB = 物流運費 / ? WHERE 物流運費 > 0", (rate_val,))
+            conn.commit()
+
+        rate = cursor.execute("SELECT value FROM settings WHERE key='exchange_rate'").fetchone()[0]
 
     new_rate = st.sidebar.number_input("當前人民幣匯率 (RMB to TWD)", value=rate, step=0.01, key="order_sidebar_rate")
     if st.sidebar.button("更新匯率", key="btn_update_order_rate"):
         with get_db() as conn:
             conn.execute("UPDATE settings SET value=? WHERE key='exchange_rate'", (new_rate,))
+            # 🌟 核心修正：自動根據新的匯率，重新核算所有訂單的台幣運費、出貨總成本與損益！(保留原本的 RMB 運費完全不變)
+            conn.execute("""
+                UPDATE customer_orders 
+                SET 物流運費 = 物流運費_RMB * ?,
+                    出貨成本 = 商品成本 + (物流運費_RMB * ?),
+                    訂單損益 = 包裹應收 - (商品成本 + (物流運費_RMB * ?))
+                WHERE 物流運費_RMB > 0
+            """, (new_rate, new_rate, new_rate))
             conn.commit()
+        st.toast(f"✅ 匯率已更新為 {new_rate}！系統已自動幫您重新核算所有訂單的台幣運費與利潤。")
+        time.sleep(1.5)
         st.rerun()
 
     # 🌟 1. 取得資料庫資料
@@ -1715,11 +1735,10 @@ elif menu == "訂單明細":
                     edit_revenue = c10.number_input("包裹應收 (TWD)", value=float(target_order.get('包裹應收', 0.0)), step=10.0)
                     edit_cost = c11.number_input("商品成本 (TWD)", value=float(target_order.get('商品成本', 0.0)), step=10.0)
                     
-                    # 🌟 運費改為輸入 RMB，下方即時顯示預估台幣，並自動換算存檔
-                    current_shipping_twd = float(target_order.get('物流運費', 0.0))
-                    current_shipping_rmb = current_shipping_twd / rate if rate else 0.0
+                    # 🌟 運費直接讀取資料庫專屬的 RMB 欄位，不再因為匯率變動而失真
+                    current_shipping_rmb = float(target_order.get('物流運費_RMB', 0.0))
                     edit_shipping_rmb = c12.number_input("物流運費 (RMB)", value=current_shipping_rmb, step=1.0)
-                    edit_shipping = edit_shipping_rmb * rate  # 儲存時會自動用這個換算後的台幣
+                    edit_shipping = edit_shipping_rmb * rate  # 換算為台幣供後續運算
                     
                     c12.caption(f"🔄 預估台幣運費：**{edit_shipping:,.0f}** TWD (依匯率 {rate})")
 
@@ -1740,17 +1759,18 @@ elif menu == "訂單明細":
                                 calc_single_profit = edit_revenue - calc_single_ship_cost
                                 
                                 with get_db() as conn:
+                                    # 🌟 新增寫入 物流運費_RMB 確保原價永久留存
                                     conn.execute("""
                                         UPDATE customer_orders SET 
                                         訂單日期=?, 姓名=?, 電話=?, 信箱=?, 訂單連結=?, 
                                         門市=?, 店號=?, 物流編號=?, 取貨狀態=?,
-                                        包裹應收=?, 商品成本=?, 物流運費=?, 出貨成本=?, 訂單損益=?,
+                                        包裹應收=?, 商品成本=?, 物流運費=?, 物流運費_RMB=?, 出貨成本=?, 訂單損益=?,
                                         品項內容=?, 顧客備註=?, 商家備註=?
                                         WHERE 訂單編號=?
                                     """, (
                                         edit_date, edit_name, edit_phone, edit_email, edit_link,
                                         edit_store, edit_store_id, edit_logistics, edit_status,
-                                        edit_revenue, edit_cost, edit_shipping, calc_single_ship_cost, calc_single_profit,
+                                        edit_revenue, edit_cost, edit_shipping, edit_shipping_rmb, calc_single_ship_cost, calc_single_profit,
                                         new_items, edit_cust_note, edit_merch_note, selected_order
                                     ))
                                     conn.commit()
@@ -1806,13 +1826,14 @@ elif menu == "訂單明細":
                             ma_ship_cost = ma_cost + ma_shipping
                             ma_profit = ma_revenue - ma_ship_cost
                             with get_db() as conn:
+                                # 🌟 將 ma_shipping_rmb 一併寫入資料庫
                                 conn.execute("""
                                     INSERT INTO customer_orders 
-                                    (訂單編號, 訂單日期, 姓名, 電話, 信箱, 訂單連結, 門市, 店號, 品項內容, 包裹應收, 商品成本, 物流運費, 出貨成本, 訂單損益, 物流編號, 取貨狀態, 顧客備註, 商家備註, 下單總數)
-                                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', ?, ?, ?, 0)
+                                    (訂單編號, 訂單日期, 姓名, 電話, 信箱, 訂單連結, 門市, 店號, 品項內容, 包裹應收, 商品成本, 物流運費, 物流運費_RMB, 出貨成本, 訂單損益, 物流編號, 取貨狀態, 顧客備註, 商家備註, 下單總數)
+                                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', ?, ?, ?, 0)
                                 """, (
                                     ma_oid.strip(), ma_date, ma_name, ma_phone, ma_email, ma_link, ma_store, ma_store_id,
-                                    ma_items, ma_revenue, ma_cost, ma_shipping, ma_ship_cost, ma_profit, ma_status, ma_c_note, ma_m_note
+                                    ma_items, ma_revenue, ma_cost, ma_shipping, ma_shipping_rmb, ma_ship_cost, ma_profit, ma_status, ma_c_note, ma_m_note
                                 ))
                                 conn.commit()
                             log_system_action("訂單明細", current_operator, "手動新增訂單", f"新增了單筆訂單 {ma_oid}")
@@ -1950,21 +1971,23 @@ elif menu == "訂單明細":
                                     for _, row in df_logi.iterrows():
                                         oid = str(row['訂單編號']).strip()
                                         
-                                        # 找出原本的資料算利潤
-                                        cursor.execute("SELECT 包裹應收, 商品成本, 物流運費 FROM customer_orders WHERE 訂單編號=?", (oid,))
+                                        # 🌟 加入撈取 物流運費_RMB
+                                        cursor.execute("SELECT 包裹應收, 商品成本, 物流運費, 物流運費_RMB FROM customer_orders WHERE 訂單編號=?", (oid,))
                                         db_row = cursor.fetchone()
                                         
                                         if db_row:
-                                            db_revenue, db_cost, db_shipping = db_row
+                                            db_revenue, db_cost, db_shipping, db_shipping_rmb = db_row
                                             
                                             new_status = str(row['狀態']).strip() if has_status and row['狀態'] != "" else None
                                             new_logi_num = str(row['物流編號']).strip() if has_logi_num and row['物流編號'] != "" else None
                                             
-                                            # 🌟 匯率換算邏輯：如果有新運費，就乘上剛剛設定的匯率；沒有新運費，就沿用原本資料庫裡的台幣運費
+                                            # 🌟 邏輯修正：將 Excel 匯入的運費鎖定為人民幣，並自動推算台幣
                                             if has_fee and str(row['物流運費']).strip() != "":
-                                                new_fee = float(row['物流運費']) * exchange_rate
+                                                new_fee_rmb = float(row['物流運費'])
+                                                new_fee_twd = new_fee_rmb * exchange_rate
                                             else:
-                                                new_fee = float(db_shipping)
+                                                new_fee_rmb = float(db_shipping_rmb if db_shipping_rmb is not None else 0.0)
+                                                new_fee_twd = float(db_shipping)
                                                 
                                             new_date = str(row['取貨日期']).strip() if has_date and str(row['取貨日期']) != "" else None
                                             
@@ -1972,8 +1995,8 @@ elif menu == "訂單明細":
                                             if new_logi_num and not new_status:
                                                 new_status = '配送中'
                                             
-                                            # 自動結算新出貨成本與損益 (此時的 new_fee 已經是台幣了)
-                                            calc_ship = float(db_cost) + new_fee
+                                            # 自動結算新出貨成本與損益 (此時的 new_fee_twd 已經是台幣了)
+                                            calc_ship = float(db_cost) + new_fee_twd
                                             calc_profit = float(db_revenue) - calc_ship
                                             
                                             updates, params = [], []
@@ -1981,7 +2004,8 @@ elif menu == "訂單明細":
                                             if new_logi_num: updates.append("物流編號=?"); params.append(new_logi_num)
                                             if new_date: updates.append("取貨日期=?"); params.append(new_date)
                                             
-                                            updates.append("物流運費=?"); params.append(new_fee)
+                                            updates.append("物流運費=?"); params.append(new_fee_twd)
+                                            updates.append("物流運費_RMB=?"); params.append(new_fee_rmb)
                                             updates.append("出貨成本=?"); params.append(calc_ship)
                                             updates.append("訂單損益=?"); params.append(calc_profit)
                                             
