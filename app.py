@@ -1891,26 +1891,28 @@ elif menu == "訂單明細":
                         l_map = {
                             '订单号': '訂單編號', '订单编号': '訂單編號', '訂單號': '訂單編號', '订单号码': '訂單編號',
                             '状态': '狀態', '订单状态': '狀態', '取貨狀態': '狀態',
-                            '运单号': '物流單號', '交货单号': '物流單號', '物流編號': '物流單號', '发货单号': '物流單號',
-                            '运费': '運費', '实际运费': '運費', '物流運費': '運費'
+                            '运单号': '物流編號', '交货单号': '物流編號', '发货单号': '物流編號', '物流單號': '物流編號',
+                            '运费': '物流運費', '实际运费': '物流運費',
+                            '末条时间': '取貨日期', '取货时间': '取貨日期'
                         }
                         df_logi = df_logi.rename(columns=l_map)
                         
                         if '訂單編號' not in df_logi.columns:
-                            st.error("❌ 檔案中找不到基準欄位『訂單編號』(或订单号)，無法比對。")
+                            st.error("❌ 檔案中找不到基準欄位『訂單編號』(或订单号码)，無法比對。")
                         else:
                             df_logi = df_logi[df_logi['訂單編號'].astype(str).str.strip() != ""]
                             
                             has_status = '狀態' in df_logi.columns
-                            has_logi_num = '物流單號' in df_logi.columns
-                            has_fee = '運費' in df_logi.columns
+                            has_logi_num = '物流編號' in df_logi.columns
+                            has_fee = '物流運費' in df_logi.columns
+                            has_date = '取貨日期' in df_logi.columns
                             
-                            if not (has_status or has_logi_num or has_fee):
-                                st.error("❌ 檔案中必須包含『狀態』、『物流單號(运单号)』或『運費』至少其中一欄。")
+                            if not (has_status or has_logi_num or has_fee or has_date):
+                                st.error("❌ 檔案中必須包含『狀態』、『发货单号』、『運費』或『末条时间』至少其中一欄。")
                             else:
                                 if has_fee:
-                                    if df_logi['運費'].dtype == object: df_logi['運費'] = df_logi['運費'].astype(str).str.replace(',', '')
-                                    df_logi['運費'] = pd.to_numeric(df_logi['運費'], errors='coerce').fillna(0.0)
+                                    if df_logi['物流運費'].dtype == object: df_logi['物流運費'] = df_logi['物流運費'].astype(str).str.replace(',', '')
+                                    df_logi['物流運費'] = pd.to_numeric(df_logi['物流運費'], errors='coerce').fillna(0.0)
                                     
                                 df_logi = df_logi.fillna("")
                                 update_count = 0
@@ -1928,8 +1930,9 @@ elif menu == "訂單明細":
                                             db_revenue, db_cost, db_shipping = db_row
                                             
                                             new_status = str(row['狀態']).strip() if has_status and row['狀態'] != "" else None
-                                            new_logi_num = str(row['物流單號']).strip() if has_logi_num and row['物流單號'] != "" else None
-                                            new_fee = float(row['運費']) if has_fee and str(row['運費']) != "" else float(db_shipping)
+                                            new_logi_num = str(row['物流編號']).strip() if has_logi_num and row['物流編號'] != "" else None
+                                            new_fee = float(row['物流運費']) if has_fee and str(row['物流運費']) != "" else float(db_shipping)
+                                            new_date = str(row['取貨日期']).strip() if has_date and str(row['取貨日期']) != "" else None
                                             
                                             # 🚀 自動化：如果有匯入物流單號，且表格內沒有特別指定新狀態，自動轉為「配送中」
                                             if new_logi_num and not new_status:
@@ -1942,6 +1945,7 @@ elif menu == "訂單明細":
                                             updates, params = [], []
                                             if new_status: updates.append("取貨狀態=?"); params.append(new_status)
                                             if new_logi_num: updates.append("物流編號=?"); params.append(new_logi_num)
+                                            if new_date: updates.append("取貨日期=?"); params.append(new_date)
                                             
                                             updates.append("物流運費=?"); params.append(new_fee)
                                             updates.append("出貨成本=?"); params.append(calc_ship)
