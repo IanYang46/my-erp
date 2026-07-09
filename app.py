@@ -1881,13 +1881,19 @@ elif menu == "訂單明細":
             exp2 = st.expander("🚚 2. 批量導入【更新物流單號、狀態與運費】", expanded=False)
             with exp2:
                 st.caption("💡 系統會以表格內的『訂單編號/订单号』尋找系統中對應的單號，並替換該單的【狀態】、【物流單號/运单号】、【運費/运费】。並重新幫您核算單筆利潤。")
-                uploaded_logi = st.file_uploader("選擇物流更新檔案", type=["csv", "xlsx"], key="logi_uploader")
+                
+                # 🌟 新增：將上傳區塊切割，加入匯率設定
+                c_up1, c_up2 = st.columns([2, 1])
+                with c_up1:
+                    uploaded_logi = st.file_uploader("選擇物流更新檔案", type=["csv", "xlsx"], key="logi_uploader")
+                with c_up2:
+                    exchange_rate = st.number_input("💱 人民幣轉台幣匯率", value=4.5, step=0.1, help="若物流單運費為人民幣，系統會自動乘以匯率轉為台幣。若表格內已是台幣，請設為 1。")
                 
                 if uploaded_logi and st.button("🚀 執行【物流資訊】比對更新", type="primary", key="btn_update_logi"):
                     try:
                         df_logi = pd.read_csv(uploaded_logi) if uploaded_logi.name.endswith('.csv') else pd.read_excel(uploaded_logi, engine='openpyxl')
                         
-                        # 幫您自動適配物流系統繁簡體亂流
+                        # 幫您自動適配物流系統繁簡體亂流，並加入您指定的最新對應
                         l_map = {
                             '订单号': '訂單編號', '订单编号': '訂單編號', '訂單號': '訂單編號', '订单号码': '訂單編號',
                             '状态': '狀態', '订单状态': '狀態', '取貨狀態': '狀態',
@@ -1931,14 +1937,20 @@ elif menu == "訂單明細":
                                             
                                             new_status = str(row['狀態']).strip() if has_status and row['狀態'] != "" else None
                                             new_logi_num = str(row['物流編號']).strip() if has_logi_num and row['物流編號'] != "" else None
-                                            new_fee = float(row['物流運費']) if has_fee and str(row['物流運費']) != "" else float(db_shipping)
+                                            
+                                            # 🌟 匯率換算邏輯：如果有新運費，就乘上剛剛設定的匯率；沒有新運費，就沿用原本資料庫裡的台幣運費
+                                            if has_fee and str(row['物流運費']).strip() != "":
+                                                new_fee = float(row['物流運費']) * exchange_rate
+                                            else:
+                                                new_fee = float(db_shipping)
+                                                
                                             new_date = str(row['取貨日期']).strip() if has_date and str(row['取貨日期']) != "" else None
                                             
                                             # 🚀 自動化：如果有匯入物流單號，且表格內沒有特別指定新狀態，自動轉為「配送中」
                                             if new_logi_num and not new_status:
                                                 new_status = '配送中'
                                             
-                                            # 自動結算新出貨成本與損益
+                                            # 自動結算新出貨成本與損益 (此時的 new_fee 已經是台幣了)
                                             calc_ship = float(db_cost) + new_fee
                                             calc_profit = float(db_revenue) - calc_ship
                                             
@@ -1958,8 +1970,8 @@ elif menu == "訂單明細":
                                                 update_count += 1
                                     conn.commit()
                                 
-                                log_system_action("訂單明細", current_operator, "批量更新物流", f"比對更新了 {update_count} 筆訂單資訊")
-                                st.success(f"✅ 成功為 {update_count} 筆訂單掛載了最新物流與狀態資訊！")
+                                log_system_action("訂單明細", current_operator, "批量更新物流", f"比對更新了 {update_count} 筆訂單資訊，匯率設定：{exchange_rate}")
+                                st.success(f"✅ 成功為 {update_count} 筆訂單掛載了最新物流與狀態資訊！(已依匯率 {exchange_rate} 轉換為台幣)")
                                 time.sleep(1.5); st.rerun()
                     except Exception as e:
                         st.error(f"❌ 更新失敗，詳情：{str(e)}")
