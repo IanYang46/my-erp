@@ -1652,8 +1652,8 @@ elif menu == "訂單明細":
                         # 從完整的 df_orders 中提取原汁原味的所有資料
                         df_selected_detail = df_orders[df_orders['訂單編號'].isin(selected_orders)].copy()
                         
-                        # 清理掉系統內部輔助欄位，讓導出的 Excel 保持乾淨
-                        cols_to_drop = ['is_repeat', '品項內容_原始', '品項預覽']
+                        # 🌟 修正：把「下單總數」也加入清理清單，讓導出的 Excel 保持乾淨
+                        cols_to_drop = ['is_repeat', '品項內容_原始', '品項預覽', '下單總數']
                         df_selected_detail = df_selected_detail.drop(columns=[c for c in cols_to_drop if c in df_selected_detail.columns])
 
                         output_detail = io.BytesIO()
