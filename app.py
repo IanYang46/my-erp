@@ -1543,138 +1543,149 @@ elif menu == "訂單明細":
         )
 
         if can_edit:
-            # 🌟 將按鈕區塊改為 3 欄，加入中間的導出功能
-            c_save, c_export, c_del = st.columns([1, 1, 1])
-            
-            # 取得被勾選的訂單編號
-            selected_orders = edited_orders[edited_orders["🗑️ 勾選"] == True]['訂單編號'].tolist() if not edited_orders.empty and "🗑️ 勾選" in edited_orders.columns else []
+            # 🌟 將按鈕區塊改為 4 欄，新增「導出詳細資料」按鈕
+                c_save, c_export_label, c_export_detail, c_del = st.columns([1, 1, 1, 1])
+                
+                # 取得被勾選的訂單編號
+                selected_orders = edited_orders[edited_orders["🗑️ 勾選"] == True]['訂單編號'].tolist() if not edited_orders.empty and "🗑️ 勾選" in edited_orders.columns else []
 
-            with c_save:
-                if st.button("💾 儲存上方總表狀態變更", type="primary", use_container_width=True):
-                    try:
-                        with get_db() as conn:
-                            cursor = conn.cursor()
-                            for _, row in edited_orders.iterrows():
-                                oid = str(row.get('訂單編號', '')).strip()
-                                if pd.isna(oid) or oid == "": continue 
-                                
-                                # 取回原始資料，這樣就算表格隱藏了某些欄位，也不會出錯
-                                orig_row = df_orders[df_orders['訂單編號'] == oid].iloc[0]
-                                
-                                # 如果有在畫面上編輯的欄位就抓新值，被隱藏的就沿用原始值
-                                u_date = row.get('訂單日期', orig_row.get('訂單日期', ''))
-                                u_name = row.get('姓名', orig_row.get('姓名', ''))
-                                u_phone = row.get('電話', orig_row.get('電話', ''))
-                                u_email = row.get('信箱', orig_row.get('信箱', ''))
-                                u_status = row.get('取貨狀態', orig_row.get('取貨狀態', '待出貨'))
-                                u_logi = row.get('物流編號', orig_row.get('物流編號', ''))
-                                
-                                u_rev = float(row.get('包裹應收', orig_row.get('包裹應收', 0.0)))
-                                u_cost = float(row.get('商品成本', orig_row.get('商品成本', 0.0)))
-                                u_ship = float(row.get('物流運費', orig_row.get('物流運費', 0.0)))
-                                
-                                calc_ship_cost = u_cost + u_ship
-                                calc_profit = u_rev - calc_ship_cost
-                                
-                                cursor.execute("""
-                                    UPDATE customer_orders SET 
-                                    訂單日期=?, 姓名=?, 電話=?, 信箱=?, 包裹應收=?, 商品成本=?, 物流運費=?, 出貨成本=?, 訂單損益=?, 物流編號=?, 取貨狀態=?
-                                    WHERE 訂單編號=?
-                                """, (
-                                    str(u_date), str(u_name), str(u_phone), str(u_email),
-                                    u_rev, u_cost, u_ship, calc_ship_cost, calc_profit, 
-                                    str(u_logi), str(u_status), oid
-                                ))
+                with c_save:
+                    if st.button("💾 儲存上方總表狀態變更", type="primary", use_container_width=True):
+                        try:
+                            with get_db() as conn:
+                                cursor = conn.cursor()
+                                for _, row in edited_orders.iterrows():
+                                    oid = str(row.get('訂單編號', '')).strip()
+                                    if pd.isna(oid) or oid == "": continue 
+                                    
+                                    orig_row = df_orders[df_orders['訂單編號'] == oid].iloc[0]
+                                    
+                                    u_date = row.get('訂單日期', orig_row.get('訂單日期', ''))
+                                    u_name = row.get('姓名', orig_row.get('姓名', ''))
+                                    u_phone = row.get('電話', orig_row.get('電話', ''))
+                                    u_email = row.get('信箱', orig_row.get('信箱', ''))
+                                    u_status = row.get('取貨狀態', orig_row.get('取貨狀態', '待出貨'))
+                                    u_logi = row.get('物流編號', orig_row.get('物流編號', ''))
+                                    
+                                    u_rev = float(row.get('包裹應收', orig_row.get('包裹應收', 0.0)))
+                                    u_cost = float(row.get('商品成本', orig_row.get('商品成本', 0.0)))
+                                    u_ship = float(row.get('物流運費', orig_row.get('物流運費', 0.0)))
+                                    
+                                    calc_ship_cost = u_cost + u_ship
+                                    calc_profit = u_rev - calc_ship_cost
+                                    
+                                    cursor.execute("""
+                                        UPDATE customer_orders SET 
+                                        訂單日期=?, 姓名=?, 電話=?, 信箱=?, 包裹應收=?, 商品成本=?, 物流運費=?, 出貨成本=?, 訂單損益=?, 物流編號=?, 取貨狀態=?
+                                        WHERE 訂單編號=?
+                                    """, (
+                                        str(u_date), str(u_name), str(u_phone), str(u_email),
+                                        u_rev, u_cost, u_ship, calc_ship_cost, calc_profit, 
+                                        str(u_logi), str(u_status), oid
+                                    ))
                             conn.commit()
-                        log_system_action("訂單明細", current_operator, "更新訂單資料", "透過總表儲存了訂單狀態與變更")
-                        st.success("✅ 總表狀態資料已成功保存！")
-                        time.sleep(1); st.rerun()
-                    except Exception as e:
-                        st.error(f"❌ 儲存失敗：{str(e)}")
-
-            # 🌟 新增：導出列印面單區塊
-            with c_export:
-                if len(selected_orders) > 0:
-                    # 從完整的 df_orders 中提取資料，避免受到畫面欄位縮放的影響
-                    df_selected = df_orders[df_orders['訂單編號'].isin(selected_orders)].copy()
-                    
-                    # 建立導出的 DataFrame 並對應簡體字欄位與固定內容
-                    df_export = pd.DataFrame()
-                    
-                    df_export['订单号'] = df_selected['訂單編號']
-                    df_export['运单号'] = '系統获取单号'
-                    
-                    df_export['备注'] = df_selected['品項預覽'] # 使用幫您整理好換行的品項預覽，印單最整齊
-                    
-                    df_export['货物类型'] = '商业件普货'
-                    df_export['货物数量'] = '1'
-                    df_export['品名'] = '香水'
-                    df_export['目的地'] = '台湾'
-                    df_export['时效'] = '空运'
-                    
-                    # 自動辨識超商：門市名稱包含「全家」則為「銥熙-全家」，否則預設為「銥熙7-11」
-                    df_export['承运商'] = df_selected['門市'].apply(lambda x: '銥熙-全家' if '全家' in str(x) else '銥熙7-11')
-                    df_export['代收货款'] = df_selected['包裹應收']
-                    
-                    df_export['包税(1包税2不包税)'] = ''
-                    df_export['收件人地址'] = ''
-                    
-                    df_export['收件人手机'] = df_selected['電話']
-                    df_export['收件人姓名'] = df_selected['姓名']
-                    
-                    df_export['申报数量'] = '1'
-                    df_export['申报价值'] = '1'
-                    df_export['申报单价'] = '10'
-                    
-                    df_export['门店名称'] = df_selected['門市']
-                    df_export['门店号码'] = df_selected['店號']
-                    
-                    # 將資料寫入記憶體中的 Excel 檔案
-                    import io
-                    output = io.BytesIO()
-                    with pd.ExcelWriter(output, engine='openpyxl') as writer:
-                        df_export.to_excel(writer, index=False, sheet_name='Sheet1')
-                    
-                    # 動態產生包含年月日時分的檔案名稱
-                    file_name = f"资料导入(代收付)_{pd.Timestamp.today().strftime('%Y%m%d_%H%M')}.xlsx"
-                    
-                    # 🚀 自動化：點擊下載按鈕時，將勾選的訂單狀態直接改為「備貨中」
-                    def mark_as_preparing():
-                        try:
-                            with get_db() as conn:
-                                cursor = conn.cursor()
-                                placeholders = ','.join(['?'] * len(selected_orders))
-                                cursor.execute(f"UPDATE customer_orders SET 取貨狀態='備貨中' WHERE 訂單編號 IN ({placeholders})", tuple(selected_orders))
-                                conn.commit()
-                        except Exception as e:
-                            pass
-
-                    st.download_button(
-                        label=f"📥 導出列印面單 ({len(selected_orders)} 筆)",
-                        data=output.getvalue(),
-                        file_name=file_name,
-                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                        type="primary",
-                        use_container_width=True,
-                        on_click=mark_as_preparing  # 綁定自動觸發事件
-                    )
-                else:
-                    st.button("📥 請先勾選訂單再導出", disabled=True, use_container_width=True)
-
-            with c_del:
-                if len(selected_orders) > 0:
-                    if st.button(f"⚠️ 確認刪除已勾選的 {len(selected_orders)} 筆訂單", type="primary", use_container_width=True):
-                        try:
-                            with get_db() as conn:
-                                cursor = conn.cursor()
-                                placeholders = ','.join(['?'] * len(selected_orders))
-                                cursor.execute(f"DELETE FROM customer_orders WHERE 訂單編號 IN ({placeholders})", tuple(selected_orders))
-                                conn.commit()
-                            log_system_action("訂單明細", current_operator, "刪除訂單資料", f"刪除了 {len(selected_orders)} 筆訂單")
-                            st.success(f"✅ 成功刪除 {len(selected_orders)} 筆訂單！")
+                            log_system_action("訂單明細", current_operator, "更新訂單資料", "透過總表儲存了訂單狀態與變更")
+                            st.success("✅ 總表狀態資料已成功保存！")
                             time.sleep(1); st.rerun()
                         except Exception as e:
-                            st.error(f"❌ 刪除失敗：{str(e)}")
+                            st.error(f"❌ 儲存失敗：{str(e)}")
+
+                # 🌟 原有功能：導出列印面單區塊
+                with c_export_label:
+                    if len(selected_orders) > 0:
+                        df_selected = df_orders[df_orders['訂單編號'].isin(selected_orders)].copy()
+                        df_export = pd.DataFrame()
+                        
+                        df_export['订单号'] = df_selected['訂單編號']
+                        df_export['运单号'] = '系統获取单号'
+                        df_export['备注'] = df_selected['品項預覽']
+                        df_export['货物类型'] = '商业件普货'
+                        df_export['货物数量'] = '1'
+                        df_export['品名'] = '香水'
+                        df_export['目的地'] = '台湾'
+                        df_export['时效'] = '空运'
+                        df_export['承运商'] = df_selected['門市'].apply(lambda x: '銥熙-全家' if '全家' in str(x) else '銥熙7-11')
+                        df_export['代收货款'] = df_selected['包裹應收']
+                        df_export['包税(1包税2不包税)'] = ''
+                        df_export['收件人地址'] = ''
+                        df_export['收件人手机'] = df_selected['電話']
+                        df_export['收件人姓名'] = df_selected['姓名']
+                        df_export['申报数量'] = '1'
+                        df_export['申报价值'] = '1'
+                        df_export['申报单价'] = '10'
+                        df_export['门店名称'] = df_selected['門市']
+                        df_export['门店号码'] = df_selected['店號']
+                        
+                        import io
+                        output = io.BytesIO()
+                        with pd.ExcelWriter(output, engine='openpyxl') as writer:
+                            df_export.to_excel(writer, index=False, sheet_name='Sheet1')
+                        
+                        file_name = f"资料导入(代收付)_{pd.Timestamp.today().strftime('%Y%m%d_%H%M')}.xlsx"
+                        
+                        def mark_as_preparing():
+                            try:
+                                with get_db() as conn:
+                                    cursor = conn.cursor()
+                                    placeholders = ','.join(['?'] * len(selected_orders))
+                                    cursor.execute(f"UPDATE customer_orders SET 取貨狀態='備貨中' WHERE 訂單編號 IN ({placeholders})", tuple(selected_orders))
+                                    conn.commit()
+                            except Exception as e:
+                                pass
+
+                        st.download_button(
+                            label=f"📥 列印面單 ({len(selected_orders)} 筆)",
+                            data=output.getvalue(),
+                            file_name=file_name,
+                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                            type="primary",
+                            use_container_width=True,
+                            on_click=mark_as_preparing
+                        )
+                    else:
+                        st.button("📥 請先勾選", disabled=True, use_container_width=True, key="btn_no_label")
+
+                # 🌟 新增功能：導出完整詳細資料區塊
+                with c_export_detail:
+                    if len(selected_orders) > 0:
+                        import io
+                        # 從完整的 df_orders 中提取原汁原味的所有資料
+                        df_selected_detail = df_orders[df_orders['訂單編號'].isin(selected_orders)].copy()
+                        
+                        # 清理掉系統內部輔助欄位，讓導出的 Excel 保持乾淨
+                        cols_to_drop = ['is_repeat', '品項內容_原始', '品項預覽']
+                        df_selected_detail = df_selected_detail.drop(columns=[c for c in cols_to_drop if c in df_selected_detail.columns])
+
+                        output_detail = io.BytesIO()
+                        with pd.ExcelWriter(output_detail, engine='openpyxl') as writer:
+                            df_selected_detail.to_excel(writer, index=False, sheet_name='訂單詳細資料')
+                        
+                        file_name_detail = f"訂單詳細匯出_{pd.Timestamp.today().strftime('%Y%m%d_%H%M')}.xlsx"
+
+                        st.download_button(
+                            label=f"📊 詳細資料 ({len(selected_orders)} 筆)",
+                            data=output_detail.getvalue(),
+                            file_name=file_name_detail,
+                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                            use_container_width=True
+                        )
+                    else:
+                        st.button("📊 請先勾選", disabled=True, use_container_width=True, key="btn_no_detail")
+
+                with c_del:
+                    if len(selected_orders) > 0:
+                        if st.button(f"⚠️ 刪除勾選 ({len(selected_orders)} 筆)", type="primary", use_container_width=True):
+                            try:
+                                with get_db() as conn:
+                                    cursor = conn.cursor()
+                                    placeholders = ','.join(['?'] * len(selected_orders))
+                                    cursor.execute(f"DELETE FROM customer_orders WHERE 訂單編號 IN ({placeholders})", tuple(selected_orders))
+                                    conn.commit()
+                                log_system_action("訂單明細", current_operator, "刪除訂單資料", f"刪除了 {len(selected_orders)} 筆訂單")
+                                st.success(f"✅ 成功刪除 {len(selected_orders)} 筆訂單！")
+                                time.sleep(1); st.rerun()
+                            except Exception as e:
+                                st.error(f"❌ 刪除失敗：{str(e)}")
 
         st.divider()
 
