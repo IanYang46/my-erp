@@ -1292,6 +1292,17 @@ elif menu == "訂單明細":
         st.error("🚫 您無權限訪問此模組")
         st.stop()
 
+    # 🌟 新增：在側邊欄加入全域匯率設定 (與商品庫存一致)
+    with get_db() as conn:
+        rate = conn.execute("SELECT value FROM settings WHERE key='exchange_rate'").fetchone()[0]
+
+    new_rate = st.sidebar.number_input("當前人民幣匯率 (RMB to TWD)", value=rate, step=0.01, key="order_sidebar_rate")
+    if st.sidebar.button("更新匯率", key="btn_update_order_rate"):
+        with get_db() as conn:
+            conn.execute("UPDATE settings SET value=? WHERE key='exchange_rate'", (new_rate,))
+            conn.commit()
+        st.rerun()
+
     # 🌟 1. 取得資料庫資料
     with get_db() as conn:
         df_orders = pd.read_sql("SELECT * FROM customer_orders ORDER BY 訂單日期 DESC", conn)
@@ -1699,12 +1710,19 @@ elif menu == "訂單明細":
                     if current_status not in status_opts: status_opts.append(current_status)
                     edit_status = c9.selectbox("取貨狀態", options=status_opts, index=status_opts.index(current_status))
 
-                    st.markdown("##### 💰 金額與成本核算 (金額皆為台幣 TWD)")
+                    st.markdown("##### 💰 金額與成本核算 (應收與成本為台幣，運費請輸入人民幣)")
                     c10, c11, c12 = st.columns(3)
-                    edit_revenue = c10.number_input("包裹應收", value=float(target_order.get('包裹應收', 0.0)), step=10.0)
-                    edit_cost = c11.number_input("商品成本", value=float(target_order.get('商品成本', 0.0)), step=10.0)
-                    edit_shipping = c12.number_input("物流運費", value=float(target_order.get('物流運費', 0.0)), step=10.0)
+                    edit_revenue = c10.number_input("包裹應收 (TWD)", value=float(target_order.get('包裹應收', 0.0)), step=10.0)
+                    edit_cost = c11.number_input("商品成本 (TWD)", value=float(target_order.get('商品成本', 0.0)), step=10.0)
                     
+                    # 🌟 運費改為輸入 RMB，下方即時顯示預估台幣，並自動換算存檔
+                    current_shipping_twd = float(target_order.get('物流運費', 0.0))
+                    current_shipping_rmb = current_shipping_twd / rate if rate else 0.0
+                    edit_shipping_rmb = c12.number_input("物流運費 (RMB)", value=current_shipping_rmb, step=1.0)
+                    edit_shipping = edit_shipping_rmb * rate  # 儲存時會自動用這個換算後的台幣
+                    
+                    c12.caption(f"🔄 預估台幣運費：**{edit_shipping:,.0f}** TWD (依匯率 {rate})")
+
                     db_ship_cost = float(target_order.get('出貨成本', 0.0))
                     db_profit = float(target_order.get('訂單損益', 0.0))
                     st.caption(f"📝 目前存檔狀態 👉 系統結算之出貨總成本：**{db_ship_cost:,.0f}** ｜ 訂單最終損益：**{db_profit:,.0f}**")
@@ -1766,9 +1784,13 @@ elif menu == "訂單明細":
                 ma_status = c_ma9.selectbox("初始狀態", options=STATUS_LIST, index=0)
                 
                 c_ma10, c_ma11, c_ma12 = st.columns(3)
-                ma_revenue = c_ma10.number_input("包裹應收 (代收貨款)", value=0.0, step=10.0)
-                ma_cost = c_ma11.number_input("商品成本", value=0.0, step=10.0)
-                ma_shipping = c_ma12.number_input("物流運費", value=0.0, step=10.0)
+                ma_revenue = c_ma10.number_input("包裹應收 (TWD)", value=0.0, step=10.0)
+                ma_cost = c_ma11.number_input("商品成本 (TWD)", value=0.0, step=10.0)
+                
+                # 🌟 新增時運費改為輸入 RMB 並自動換算台幣存檔
+                ma_shipping_rmb = c_ma12.number_input("物流運費 (RMB)", value=0.0, step=1.0)
+                ma_shipping = ma_shipping_rmb * rate  # 儲存時自動轉回台幣
+                c_ma12.caption(f"🔄 預估台幣運費：**{ma_shipping:,.0f}** TWD (依匯率 {rate})")
                 
                 ma_items = st.text_area("📦 品項內容 (支援多行備註)")
                 
@@ -1878,18 +1900,18 @@ elif menu == "訂單明細":
                     except Exception as e:
                         st.error(f"❌ 匯入失敗，詳情：{str(e)}")
             
-            exp2 = st.expander("🚚 2. 批量導入【更新物流單號、狀態與運費】", expanded=False)
-            with exp2:
-                st.caption("💡 系統會以表格內的『訂單編號/订单号』尋找系統中對應的單號，並替換該單的【狀態】、【物流單號/运单号】、【運費/运费】。並重新幫您核算單筆利潤。")
-                
-                # 🌟 新增：將上傳區塊切割，加入匯率設定
-                c_up1, c_up2 = st.columns([2, 1])
-                with c_up1:
-                    uploaded_logi = st.file_uploader("選擇物流更新檔案", type=["csv", "xlsx"], key="logi_uploader")
-                with c_up2:
-                    exchange_rate = st.number_input("💱 人民幣轉台幣匯率", value=4.5, step=0.1, help="若物流單運費為人民幣，系統會自動乘以匯率轉為台幣。若表格內已是台幣，請設為 1。")
-                
-                if uploaded_logi and st.button("🚀 執行【物流資訊】比對更新", type="primary", key="btn_update_logi"):
+        exp2 = st.expander("🚚 2. 批量導入【更新物流單號、狀態與運費】", expanded=False)
+        with exp2:
+            st.caption("💡 系統會以表格內的『訂單編號/订单号』尋找系統中對應的單號，並替換該單的【狀態】、【物流單號/运单号】、【運費/运费】。並重新幫您核算單筆利潤。")
+            
+            # 🌟 移除獨立設定，改為直接顯示並套用側邊欄的全域匯率
+            st.info(f"💱 系統將自動套用側邊欄目前的匯率：**{rate}**。若物流單內填寫的是人民幣，系統會自動轉換為台幣存檔。")
+            uploaded_logi = st.file_uploader("選擇物流更新檔案", type=["csv", "xlsx"], key="logi_uploader")
+            
+            # 將全域 rate 對應給下方的批量換算邏輯
+            exchange_rate = rate
+            
+            if uploaded_logi and st.button("🚀 執行【物流資訊】比對更新", type="primary", key="btn_update_logi"):
                     try:
                         df_logi = pd.read_csv(uploaded_logi) if uploaded_logi.name.endswith('.csv') else pd.read_excel(uploaded_logi, engine='openpyxl')
                         
