@@ -1851,7 +1851,7 @@ elif menu == "訂單明細":
                                     calc_t_profit = t_rev - calc_t_ship_cost
                                     
                                     # 將新訂單原本點的商品，記錄到商家備註中備查
-                                    new_t_note = f"{t_merch_note}\n[系統] 接收自已上架包裹 {selected_order}，並支付重出運費 RMB {reship_fee_rmb}。\n[系統] 客戶原訂商品保留紀錄：{t_old_items}".strip()
+                                    new_t_note = f"{t_merch_note}\n[系統] 接收物流上架包裹 {selected_order}，並支付重出運費 RMB {reship_fee_rmb}。\n[系統] 客戶原訂商品保留紀錄：{t_old_items}".strip()
                                     
                                     # 更新資料庫：寫入新品項、新成本、新運費，並推進狀態 (包裹應收保持不變)
                                     cursor.execute("""
