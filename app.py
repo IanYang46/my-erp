@@ -1799,6 +1799,68 @@ elif menu == "訂單明細":
                     else:
                         st.form_submit_button("🔒 您無權限編輯這筆訂單", disabled=True)
 
+                # 🌟 新增功能：已上架訂單的重出作業 (獨立於上方的編輯表單外)
+                if target_order.get('取貨狀態') == '已上架' and can_edit:
+                    st.markdown("---")
+                    st.markdown("#### 🔄 庫存轉單重出作業")
+                    st.info("💡 此功能可將目前這筆「已上架」的包裹，直接轉配給另一位「待出貨 / 備貨中」的客人。系統將自動為雙方加上備註，並幫新訂單計算重出的運費成本。")
+                    
+                    # 尋找可以接收此包裹的訂單 (待出貨或備貨中)
+                    pending_orders = df_orders[df_orders['取貨狀態'].isin(['待出貨', '備貨中'])]
+                    if pending_orders.empty:
+                        st.warning("目前系統中沒有「待出貨」或「備貨中」的訂單可供轉配。")
+                    else:
+                        # 準備選單字典，避免同名覆蓋
+                        pending_opts = {}
+                        for _, prow in pending_orders.iterrows():
+                            plabel = f"[{prow['訂單編號']}] {prow.get('姓名','')} (應收: ${float(prow.get('包裹應收',0)):,.0f})"
+                            pending_opts[plabel] = prow['訂單編號']
+                        
+                        c_transfer1, c_transfer2 = st.columns([2, 1])
+                        with c_transfer1:
+                            target_pending_label = st.selectbox("🎯 選擇接收此包裹的新訂單：", options=list(pending_opts.keys()))
+                            target_pending_oid = pending_opts[target_pending_label]
+                        with c_transfer2:
+                            reship_fee_rmb = st.number_input("💸 本次重出的新運費 (RMB)", value=0.0, step=1.0)
+                            reship_fee_twd = reship_fee_rmb * rate
+                            st.caption(f"預估台幣：**{reship_fee_twd:,.0f}** TWD")
+                            
+                        if st.button("🚀 確認執行轉單重出", type="primary", use_container_width=True):
+                            try:
+                                with get_db() as conn:
+                                    cursor = conn.cursor()
+                                    
+                                    # 1. 更新原訂單 (改為已重出，加上追蹤備註)
+                                    orig_merch_note = target_order.get('商家備註', '')
+                                    new_orig_note = f"{orig_merch_note}\n[系統] 於 {pd.Timestamp.today().strftime('%Y-%m-%d')} 轉單重出給 {target_pending_oid}".strip()
+                                    cursor.execute("UPDATE customer_orders SET 取貨狀態='已重出', 商家備註=? WHERE 訂單編號=?", (new_orig_note, selected_order))
+                                    
+                                    # 2. 更新目標接收訂單 (運費、成本、損益、狀態、備註)
+                                    target_row = pending_orders[pending_orders['訂單編號'] == target_pending_oid].iloc[0]
+                                    t_cost = float(target_row.get('商品成本', 0.0))
+                                    t_rev = float(target_row.get('包裹應收', 0.0))
+                                    t_merch_note = target_row.get('商家備註', '')
+                                    
+                                    calc_t_ship_cost = t_cost + reship_fee_twd
+                                    calc_t_profit = t_rev - calc_t_ship_cost
+                                    new_t_note = f"{t_merch_note}\n[系統] 接收自已上架包裹 {selected_order}，並支付重出運費 RMB {reship_fee_rmb}".strip()
+                                    
+                                    # 狀態推進為備貨中，代表已經配好貨
+                                    cursor.execute("""
+                                        UPDATE customer_orders 
+                                        SET 物流運費_RMB=?, 物流運費=?, 出貨成本=?, 訂單損益=?, 取貨狀態='備貨中', 商家備註=?
+                                        WHERE 訂單編號=?
+                                    """, (reship_fee_rmb, reship_fee_twd, calc_t_ship_cost, calc_t_profit, new_t_note, target_pending_oid))
+                                    
+                                    conn.commit()
+                                    
+                                log_system_action("訂單明細", current_operator, "轉單重出", f"將已上架訂單 {selected_order} 重出給 {target_pending_oid}")
+                                st.success(f"✅ 成功將包裹轉配給 {target_pending_oid}！原訂單已標記為「已重出」。")
+                                time.sleep(1.5)
+                                st.rerun()
+                            except Exception as e:
+                                st.error(f"❌ 轉單失敗：{str(e)}")
+
     with t2:
         st.subheader("✍️ 手動新增單筆訂單")
         if not can_edit:
