@@ -1708,21 +1708,27 @@ elif menu == "訂單明細":
                 with st.form(f"detail_edit_form_{selected_order}"):
                     st.markdown(f"### 🧾 訂單編號：`{selected_order}`")
                     
-                    # 🚀 新增：智能顯示重複客詳細資訊
+                    # 🚀 新增：智能顯示重複客詳細資訊 (包含歷史訂單狀態)
                     if target_order.get('is_repeat', False):
                         dup_msgs = []
+                        
                         if target_order['姓名'] and name_counts.get(target_order['姓名'], 0) > 1:
-                            dup_oids = df_orders[(df_orders['姓名'] == target_order['姓名']) & (df_orders['訂單編號'] != selected_order)]['訂單編號'].tolist()
-                            dup_msgs.append(f"👤 姓名【{target_order['姓名']}】👉 曾在單號 {', '.join(dup_oids)} 出現過")
+                            dup_df = df_orders[(df_orders['姓名'] == target_order['姓名']) & (df_orders['訂單編號'] != selected_order)]
+                            dup_info = [f"{row['訂單編號']} ({row.get('取貨狀態', '未知')})" for _, row in dup_df.iterrows()]
+                            dup_msgs.append(f"👤 姓名【{target_order['姓名']}】👉 歷史單號：{', '.join(dup_info)}")
+                            
                         if target_order['電話'] and phone_counts.get(target_order['電話'], 0) > 1:
-                            dup_oids = df_orders[(df_orders['電話'] == target_order['電話']) & (df_orders['訂單編號'] != selected_order)]['訂單編號'].tolist()
-                            dup_msgs.append(f"📞 電話【{target_order['電話']}】👉 曾在單號 {', '.join(dup_oids)} 出現過")
+                            dup_df = df_orders[(df_orders['電話'] == target_order['電話']) & (df_orders['訂單編號'] != selected_order)]
+                            dup_info = [f"{row['訂單編號']} ({row.get('取貨狀態', '未知')})" for _, row in dup_df.iterrows()]
+                            dup_msgs.append(f"📞 電話【{target_order['電話']}】👉 歷史單號：{', '.join(dup_info)}")
+                            
                         if target_order['信箱'] and email_counts.get(target_order['信箱'], 0) > 1:
-                            dup_oids = df_orders[(df_orders['信箱'] == target_order['信箱']) & (df_orders['訂單編號'] != selected_order)]['訂單編號'].tolist()
-                            dup_msgs.append(f"📧 信箱【{target_order['信箱']}】👉 曾在單號 {', '.join(dup_oids)} 出現過")
+                            dup_df = df_orders[(df_orders['信箱'] == target_order['信箱']) & (df_orders['訂單編號'] != selected_order)]
+                            dup_info = [f"{row['訂單編號']} ({row.get('取貨狀態', '未知')})" for _, row in dup_df.iterrows()]
+                            dup_msgs.append(f"📧 信箱【{target_order['信箱']}】👉 歷史單號：{', '.join(dup_info)}")
                         
                         if dup_msgs:
-                            st.error("🚨 **系統偵測此為重複客，歷史紀錄對比：**\n\n" + "\n\n".join(dup_msgs))
+                            st.error("🚨 **系統偵測此為重複客，歷史紀錄與狀態對比：**\n\n" + "\n\n".join(dup_msgs))
                     
                     c1, c2, c3, c4, c5 = st.columns(5)
                     edit_date = c1.text_input("訂單日期", value=target_order.get('訂單日期', ''))
