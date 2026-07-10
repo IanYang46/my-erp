@@ -1835,22 +1835,30 @@ elif menu == "訂單明細":
                                     new_orig_note = f"{orig_merch_note}\n[系統] 於 {pd.Timestamp.today().strftime('%Y-%m-%d')} 轉單重出給 {target_pending_oid}".strip()
                                     cursor.execute("UPDATE customer_orders SET 取貨狀態='已重出', 商家備註=? WHERE 訂單編號=?", (new_orig_note, selected_order))
                                     
-                                    # 2. 更新目標接收訂單 (運費、成本、損益、狀態、備註)
+                                    # 2. 獲取原包裹 (已上架) 的實際品項與商品成本 (準備轉移)
+                                    orig_items = str(target_order.get('品項內容_原始', target_order.get('品項內容', ''))).strip()
+                                    orig_cost = float(target_order.get('商品成本', 0.0))
+                                    
+                                    # 3. 獲取目標接收訂單的現有資訊 (保留它自己的包裹應收，因為這是新客人的成交價)
                                     target_row = pending_orders[pending_orders['訂單編號'] == target_pending_oid].iloc[0]
-                                    t_cost = float(target_row.get('商品成本', 0.0))
-                                    t_rev = float(target_row.get('包裹應收', 0.0))
+                                    t_old_items = str(target_row.get('品項內容_原始', target_row.get('品項內容', ''))).strip()
                                     t_merch_note = target_row.get('商家備註', '')
+                                    t_rev = float(target_row.get('包裹應收', 0.0))  # 保持新訂單原有的應收金額
                                     
-                                    calc_t_ship_cost = t_cost + reship_fee_twd
+                                    # 重新結算新訂單出貨成本 (原包裹商品成本 + 本次重出的新運費)
+                                    calc_t_ship_cost = orig_cost + reship_fee_twd
+                                    # 重新結算訂單損益 (新訂單的應收金額 - 剛算出的出貨成本)
                                     calc_t_profit = t_rev - calc_t_ship_cost
-                                    new_t_note = f"{t_merch_note}\n[系統] 接收自已上架包裹 {selected_order}，並支付重出運費 RMB {reship_fee_rmb}".strip()
                                     
-                                    # 狀態推進為備貨中，代表已經配好貨
+                                    # 將新訂單原本點的商品，記錄到商家備註中備查
+                                    new_t_note = f"{t_merch_note}\n[系統] 接收自已上架包裹 {selected_order}，並支付重出運費 RMB {reship_fee_rmb}。\n[系統] 客戶原訂商品保留紀錄：{t_old_items}".strip()
+                                    
+                                    # 更新資料庫：寫入新品項、新成本、新運費，並推進狀態 (包裹應收保持不變)
                                     cursor.execute("""
                                         UPDATE customer_orders 
-                                        SET 物流運費_RMB=?, 物流運費=?, 出貨成本=?, 訂單損益=?, 取貨狀態='備貨中', 商家備註=?
+                                        SET 品項內容=?, 商品成本=?, 物流運費_RMB=?, 物流運費=?, 出貨成本=?, 訂單損益=?, 取貨狀態='備貨中', 商家備註=?
                                         WHERE 訂單編號=?
-                                    """, (reship_fee_rmb, reship_fee_twd, calc_t_ship_cost, calc_t_profit, new_t_note, target_pending_oid))
+                                    """, (orig_items, orig_cost, reship_fee_rmb, reship_fee_twd, calc_t_ship_cost, calc_t_profit, new_t_note, target_pending_oid))
                                     
                                     conn.commit()
                                     
