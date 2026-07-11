@@ -4,3 +4,5 @@ openpyxl
 sqlalchemy
 psycopg2-binary
 extra-streamlit-components
+psycopg2-binary==2.9.9
+SQLAlchemy==2.0.28
