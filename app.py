@@ -9,6 +9,7 @@ import base64  # 🌟 改用 base64，這是可逆的編碼套件
 import requests  # 🌟 新增：用於向 API 查詢 IP 的地理位置
 import datetime
 import extra_streamlit_components as stx
+from psycopg2 import pool  # 👈 🌟 請加入這一行，引入高速連線池套件
 
 # --- 密碼編解碼工具 ---
 def encode_pw(pw):
@@ -158,16 +159,18 @@ enterprise_erp_style = """
 st.markdown(enterprise_erp_style, unsafe_allow_html=True)
 # 👆 覆蓋結束 👆
 
-# --- 2. 穩定的資料庫連線 (終極智能包裝器) ---
+# --- 2. 穩定的資料庫連線 (終極智能包裝器 + 高速連線池) ---
+@st.cache_resource
+def get_connection_pool():
+    # 🌟 建立執行緒安全的連線池，保持 1~20 個常駐連線，避免重複握手造成的卡頓
+    return pool.ThreadedConnectionPool(1, 20, st.secrets["DB_URL"])
+
 class PostgresCursorWrapper:
     def __init__(self, cursor):
         self.cursor = cursor
         
     def execute(self, query, params=None):
-        # 1. 魔法：自動將 SQLite 的 ? 翻譯成 PostgreSQL 的 %s
         pg_query = query.replace("?", "%s")
-        
-        # 2. 魔法：自動攔截並修正 SQLite 專用的 INSERT OR REPLACE 批量匯入語法
         if "INSERT OR REPLACE INTO products" in pg_query:
             pg_query = pg_query.replace("INSERT OR REPLACE INTO products", "INSERT INTO products")
             pg_query += " ON CONFLICT (編碼) DO UPDATE SET 類別=EXCLUDED.類別, 品牌=EXCLUDED.品牌, 名稱=EXCLUDED.名稱, 備註=EXCLUDED.備註, 圖片路徑=EXCLUDED.圖片路徑"
@@ -179,7 +182,6 @@ class PostgresCursorWrapper:
         return self
         
     def __getattr__(self, attr):
-        # 將 pandas 需要的方法 (fetchone, fetchall, description) 自動轉交給真實的 cursor
         return getattr(self.cursor, attr)
 
 class PostgresConnWrapper:
@@ -194,16 +196,16 @@ class PostgresConnWrapper:
     def commit(self):
         self.conn.commit()
     def close(self):
-        self.conn.close()
+        pass # 🌟 重要魔法：把 close 留空。交給連線池管理，不強制掛斷電話
 
 @contextmanager
 def get_db():
-    # 從 Streamlit 後台抓取金鑰連線
-    conn = psycopg2.connect(st.secrets["DB_URL"])
+    db_pool = get_connection_pool()
+    conn = db_pool.getconn() # 從池子裡「借」一條已經連線好的專線
     try:
         yield PostgresConnWrapper(conn)
     finally:
-        conn.close()
+        db_pool.putconn(conn) # 🌟 執行完畢後把專線「還」給池子，保持暢通
         
 # 給 Pandas 專用的引擎
 db_engine = create_engine(st.secrets["DB_URL"].replace("postgres://", "postgresql://"))
