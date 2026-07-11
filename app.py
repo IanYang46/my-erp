@@ -1,5 +1,7 @@
 import streamlit as st
-import sqlite3
+import psycopg2
+from sqlalchemy import create_engine
+from contextlib import contextmanager
 import pandas as pd
 import os
 import time
@@ -157,100 +159,86 @@ st.markdown(enterprise_erp_style, unsafe_allow_html=True)
 # 👆 覆蓋結束 👆
 
 # --- 2. 穩定的資料庫連線 ---
+class PostgresConnWrapper:
+    def __init__(self, conn):
+        self.conn = conn
+    def execute(self, query, params=None):
+        cursor = self.conn.cursor()
+        if params:
+            cursor.execute(query, params)
+        else:
+            cursor.execute(query)
+        return cursor
+    def commit(self):
+        self.conn.commit()
+    def cursor(self):
+        return self.conn.cursor()
+    def close(self):
+        self.conn.close()
+
+@contextmanager
 def get_db():
-    return sqlite3.connect("powerful_group.db", timeout=30, check_same_thread=False)
+    # 從 Streamlit 後台抓取金鑰連線
+    conn = psycopg2.connect(st.secrets["DB_URL"])
+    try:
+        yield PostgresConnWrapper(conn)
+    finally:
+        conn.close()
+        
+# 給 Pandas 專用的引擎
+db_engine = create_engine(st.secrets["DB_URL"].replace("postgres://", "postgresql://"))
     
 # --- 3. 初始化資料庫與預設權限 ---
 @st.cache_resource
-def init_db_v7():  # 🌟 升級為 v7，確保系統重新整理時會建立新表
+def init_db_v7():
     with get_db() as conn:
         cursor = conn.cursor()
         
         # 1. 建立系統核心表格
-        cursor.execute('''CREATE TABLE IF NOT EXISTS users (username TEXT PRIMARY KEY, password TEXT, role TEXT)''')
+        cursor.execute('''CREATE TABLE IF NOT EXISTS users (username TEXT PRIMARY KEY, password TEXT, role TEXT, nickname TEXT DEFAULT '', last_active REAL DEFAULT 0, admin_remark TEXT DEFAULT '')''')
         
-        # 🌟 安全擴充：為舊的 users 表格加入「暱稱」、「最後活躍時間」與「管理員私密備註」欄位
-        cursor.execute("PRAGMA table_info(users)")
-        cols = [info[1] for info in cursor.fetchall()]
-        if 'nickname' not in cols:
-            cursor.execute("ALTER TABLE users ADD COLUMN nickname TEXT DEFAULT ''")
-        if 'last_active' not in cols:
-            cursor.execute("ALTER TABLE users ADD COLUMN last_active REAL DEFAULT 0")
-        if 'admin_remark' not in cols:
-            cursor.execute("ALTER TABLE users ADD COLUMN admin_remark TEXT DEFAULT ''")
-            
         cursor.execute('''CREATE TABLE IF NOT EXISTS permissions (role TEXT, module TEXT, can_view BOOLEAN, can_edit BOOLEAN, can_upload BOOLEAN, can_download BOOLEAN)''')
         
-        # 細部權限設定表
-        cursor.execute('''CREATE TABLE IF NOT EXISTS user_perms (
-                            username TEXT, module TEXT, can_view BOOLEAN DEFAULT 0,
-                            can_edit BOOLEAN DEFAULT 0, can_upload BOOLEAN DEFAULT 0,
-                            can_download BOOLEAN DEFAULT 0, PRIMARY KEY (username, module))''')
+        cursor.execute('''CREATE TABLE IF NOT EXISTS user_perms (username TEXT, module TEXT, can_view BOOLEAN DEFAULT FALSE, can_edit BOOLEAN DEFAULT FALSE, can_upload BOOLEAN DEFAULT FALSE, can_download BOOLEAN DEFAULT FALSE, PRIMARY KEY (username, module))''')
         
         # 2. 商品資料表
         cursor.execute('''CREATE TABLE IF NOT EXISTS products (編碼 TEXT PRIMARY KEY, 類別 TEXT, 品牌 TEXT, 名稱 TEXT, 備註 TEXT, 圖片路徑 TEXT)''')
         
-        # 3. 庫存管理表
-        cursor.execute('''CREATE TABLE IF NOT EXISTS inventory (id INTEGER PRIMARY KEY AUTOINCREMENT, 編碼 TEXT, 倉庫位置 TEXT, 數量 INTEGER, 單支成本_RMB REAL, 採購廠商 TEXT, 採購金額_RMB REAL, 進貨日期 DATE)''')
+        # 3. 庫存管理表 (SQLite 的 AUTOINCREMENT 在 PG 叫做 SERIAL)
+        cursor.execute('''CREATE TABLE IF NOT EXISTS inventory (id SERIAL PRIMARY KEY, 編碼 TEXT, 倉庫位置 TEXT, 數量 INTEGER, 單支成本_RMB REAL, 採購廠商 TEXT, 採購金額_RMB REAL, 進貨日期 DATE)''')
         
-        # 4. 匯率設定表
+        # 4. 匯率設定表 (取代 INSERT OR IGNORE)
         cursor.execute('''CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value REAL)''')
-        cursor.execute("INSERT OR IGNORE INTO settings VALUES ('exchange_rate', 4.5)")
+        cursor.execute("INSERT INTO settings (key, value) VALUES ('exchange_rate', 4.5) ON CONFLICT (key) DO NOTHING")
         
         # 5. 採購單與明細表
         cursor.execute('''CREATE TABLE IF NOT EXISTS procurement_orders (order_id TEXT PRIMARY KEY, date DATE, supplier TEXT, total_qty INTEGER, total_amount_rmb REAL, total_amount_twd REAL, warehouse TEXT, staff TEXT, status TEXT DEFAULT '待驗收')''')
-        cursor.execute('''CREATE TABLE IF NOT EXISTS procurement_items (id INTEGER PRIMARY KEY AUTOINCREMENT, order_id TEXT, code TEXT, qty INTEGER, unit_price_rmb REAL, total_price_rmb REAL)''')
+        cursor.execute('''CREATE TABLE IF NOT EXISTS procurement_items (id SERIAL PRIMARY KEY, order_id TEXT, code TEXT, qty INTEGER, unit_price_rmb REAL, total_price_rmb REAL)''')
 
         # 6. 動態倉庫與日誌表
         cursor.execute('''CREATE TABLE IF NOT EXISTS warehouses (name TEXT PRIMARY KEY)''')
         cursor.execute("SELECT count(*) FROM warehouses")
         if cursor.fetchone()[0] == 0:
             for w in ['台灣黃興-商品', '東莞熙元-商品', '台灣黃興-樣品', '退換貨倉']:
-                cursor.execute("INSERT OR IGNORE INTO warehouses (name) VALUES (?)", (w,))
+                cursor.execute("INSERT INTO warehouses (name) VALUES (%s) ON CONFLICT (name) DO NOTHING", (w,))
                 
-        # 登入歷史紀錄表格
-        cursor.execute('''CREATE TABLE IF NOT EXISTS login_logs (id INTEGER PRIMARY KEY AUTOINCREMENT, username TEXT, login_time TEXT, ip TEXT, location TEXT, device TEXT)''')
+        cursor.execute('''CREATE TABLE IF NOT EXISTS login_logs (id SERIAL PRIMARY KEY, username TEXT, login_time TEXT, ip TEXT, location TEXT, device TEXT)''')
         
-        # 7. 建立預設 Admin 帳號 
-        cursor.execute("INSERT OR IGNORE INTO users (username, password, nickname, role) VALUES ('admin', ?, '總管理員', 'Admin')", (encode_pw('123456'),))
+        # 7. 預設 Admin 帳號
+        cursor.execute("INSERT INTO users (username, password, nickname, role) VALUES ('admin', %s, '總管理員', 'Admin') ON CONFLICT (username) DO NOTHING", (encode_pw('123456'),))
         
-        # 🌟 8. 舊有的獨立日誌表 (保留給商品與庫存)
-        cursor.execute('''CREATE TABLE IF NOT EXISTS product_logs (id INTEGER PRIMARY KEY AUTOINCREMENT, timestamp TEXT, operator TEXT, action_type TEXT, details TEXT)''')
-        cursor.execute('''CREATE TABLE IF NOT EXISTS inventory_logs (id INTEGER PRIMARY KEY AUTOINCREMENT, timestamp TEXT, operator TEXT, action_type TEXT, details TEXT)''')
+        # 8. 日誌表
+        cursor.execute('''CREATE TABLE IF NOT EXISTS product_logs (id SERIAL PRIMARY KEY, timestamp TEXT, operator TEXT, action_type TEXT, details TEXT)''')
+        cursor.execute('''CREATE TABLE IF NOT EXISTS inventory_logs (id SERIAL PRIMARY KEY, timestamp TEXT, operator TEXT, action_type TEXT, details TEXT)''')
+        cursor.execute('''CREATE TABLE IF NOT EXISTS system_logs (id SERIAL PRIMARY KEY, timestamp TEXT, module TEXT, operator TEXT, action_type TEXT, details TEXT)''')
         
-        # 🌟 9. 新增：全局系統操作日誌表 (供採購、訂單、權限等共用)
-        cursor.execute('''CREATE TABLE IF NOT EXISTS system_logs (id INTEGER PRIMARY KEY AUTOINCREMENT, timestamp TEXT, module TEXT, operator TEXT, action_type TEXT, details TEXT)''')
-        
-        # 🌟 10. 全新：客戶訂單明細表 (涵蓋 17 個專屬欄位，訂單編號為唯一主鍵)
+        # 9. 客戶訂單明細表
         cursor.execute('''CREATE TABLE IF NOT EXISTS customer_orders (
-            訂單編號 TEXT PRIMARY KEY,
-            訂單日期 DATE,
-            訂單連結 TEXT,
-            姓名 TEXT,
-            電話 TEXT,
-            門市 TEXT,
-            店號 TEXT,
-            品項內容 TEXT,
-            下單總數 INTEGER,
-            包裹應收 REAL,
-            商品成本 REAL,
-            物流運費 REAL,
-            出貨成本 REAL,
-            訂單損益 REAL,
-            物流編號 TEXT,
-            取貨狀態 TEXT DEFAULT '待出貨',
-            取貨日期 DATE
+            訂單編號 TEXT PRIMARY KEY, 訂單日期 DATE, 訂單連結 TEXT, 姓名 TEXT, 電話 TEXT, 門市 TEXT, 店號 TEXT,
+            品項內容 TEXT, 下單總數 INTEGER, 包裹應收 REAL, 商品成本 REAL, 物流運費 REAL, 物流運費_RMB REAL DEFAULT 0.0,
+            出貨成本 REAL, 訂單損益 REAL, 物流編號 TEXT, 取貨狀態 TEXT DEFAULT '待出貨', 取貨日期 DATE,
+            信箱 TEXT DEFAULT '', 顧客備註 TEXT DEFAULT '', 商家備註 TEXT DEFAULT ''
         )''')
-        
-        # 🌟 11. 安全動態擴充：為舊的 customer_orders 表格加入「信箱」、「顧客備註」、「商家備註」
-        cursor.execute("PRAGMA table_info(customer_orders)")
-        order_cols = [info[1] for info in cursor.fetchall()]
-        if '信箱' not in order_cols:
-            cursor.execute("ALTER TABLE customer_orders ADD COLUMN 信箱 TEXT DEFAULT ''")
-        if '顧客備註' not in order_cols:
-            cursor.execute("ALTER TABLE customer_orders ADD COLUMN 顧客備註 TEXT DEFAULT ''")
-        if '商家備註' not in order_cols:
-            cursor.execute("ALTER TABLE customer_orders ADD COLUMN 商家備註 TEXT DEFAULT ''")
 
         conn.commit()
         
@@ -259,17 +247,17 @@ init_db_v7()
 # --- 日誌自動寫入工具群 ---
 def log_inventory_change(operator, action_type, details):
     with get_db() as conn:
-        conn.execute("INSERT INTO inventory_logs (timestamp, operator, action_type, details) VALUES (datetime('now', 'localtime'), ?, ?, ?)", (operator, action_type, details))
+        conn.execute("INSERT INTO inventory_logs (timestamp, operator, action_type, details) VALUES (%s, %s, %s, %s)", (time.strftime('%Y-%m-%d %H:%M:%S'), operator, action_type, details))
         conn.commit()
         
 def log_product_change(operator, action_type, details):
     with get_db() as conn:
-        conn.execute("INSERT INTO product_logs (timestamp, operator, action_type, details) VALUES (datetime('now', 'localtime'), ?, ?, ?)", (operator, action_type, details))
+        conn.execute("INSERT INTO product_logs (timestamp, operator, action_type, details) VALUES (%s, %s, %s, %s)", (time.strftime('%Y-%m-%d %H:%M:%S'), operator, action_type, details))
         conn.commit()
 
 def log_system_action(module, operator, action_type, details):
     with get_db() as conn:
-        conn.execute("INSERT INTO system_logs (timestamp, module, operator, action_type, details) VALUES (datetime('now', 'localtime'), ?, ?, ?, ?)", (module, operator, action_type, details))
+        conn.execute("INSERT INTO system_logs (timestamp, module, operator, action_type, details) VALUES (%s, %s, %s, %s, %s)", (time.strftime('%Y-%m-%d %H:%M:%S'), module, operator, action_type, details))
         conn.commit()
 
 # --- 自動抓取並記錄登入歷程工具 ---
