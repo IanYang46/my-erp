@@ -206,7 +206,7 @@ def get_db():
         conn.close()
         
 # 給 Pandas 專用的引擎
-db_engine = create_engine(st.secrets["DB_URL"].replace("postgres://", "postgresql://")
+db_engine = create_engine(st.secrets["DB_URL"].replace("postgres://", "postgresql://"))
     
 # --- 3. 初始化資料庫與預設權限 ---
 @st.cache_resource
