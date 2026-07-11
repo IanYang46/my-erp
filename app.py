@@ -158,21 +158,41 @@ enterprise_erp_style = """
 st.markdown(enterprise_erp_style, unsafe_allow_html=True)
 # 👆 覆蓋結束 👆
 
-# --- 2. 穩定的資料庫連線 ---
+# --- 2. 穩定的資料庫連線 (終極智能包裝器) ---
+class PostgresCursorWrapper:
+    def __init__(self, cursor):
+        self.cursor = cursor
+        
+    def execute(self, query, params=None):
+        # 1. 魔法：自動將 SQLite 的 ? 翻譯成 PostgreSQL 的 %s
+        pg_query = query.replace("?", "%s")
+        
+        # 2. 魔法：自動攔截並修正 SQLite 專用的 INSERT OR REPLACE 批量匯入語法
+        if "INSERT OR REPLACE INTO products" in pg_query:
+            pg_query = pg_query.replace("INSERT OR REPLACE INTO products", "INSERT INTO products")
+            pg_query += " ON CONFLICT (編碼) DO UPDATE SET 類別=EXCLUDED.類別, 品牌=EXCLUDED.品牌, 名稱=EXCLUDED.名稱, 備註=EXCLUDED.備註, 圖片路徑=EXCLUDED.圖片路徑"
+            
+        if params:
+            self.cursor.execute(pg_query, params)
+        else:
+            self.cursor.execute(pg_query)
+        return self
+        
+    def __getattr__(self, attr):
+        # 將 pandas 需要的方法 (fetchone, fetchall, description) 自動轉交給真實的 cursor
+        return getattr(self.cursor, attr)
+
 class PostgresConnWrapper:
     def __init__(self, conn):
         self.conn = conn
+    def cursor(self):
+        return PostgresCursorWrapper(self.conn.cursor())
     def execute(self, query, params=None):
-        cursor = self.conn.cursor()
-        if params:
-            cursor.execute(query, params)
-        else:
-            cursor.execute(query)
-        return cursor
+        cur = self.cursor()
+        cur.execute(query, params)
+        return cur
     def commit(self):
         self.conn.commit()
-    def cursor(self):
-        return self.conn.cursor()
     def close(self):
         self.conn.close()
 
@@ -186,7 +206,7 @@ def get_db():
         conn.close()
         
 # 給 Pandas 專用的引擎
-db_engine = create_engine(st.secrets["DB_URL"].replace("postgres://", "postgresql://"))
+db_engine = create_engine(st.secrets["DB_URL"].replace("postgres://", "postgresql://")
     
 # --- 3. 初始化資料庫與預設權限 ---
 @st.cache_resource
