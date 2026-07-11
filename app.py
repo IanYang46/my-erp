@@ -1307,9 +1307,13 @@ elif menu == "訂單明細":
     # 🌟 系統熱更新：確保 customer_orders 表格擁有獨立的「物流運費_RMB」欄位，讓人民幣原價永久保存
     with get_db() as conn:
         cursor = conn.cursor()
-        cursor.execute("PRAGMA table_info(customer_orders)")
-        cols = [info[1] for info in cursor.fetchall()]
-        if '物流運費_RMB' not in cols:
+        
+        # ⚠️ PostgreSQL 專屬寫法：查詢系統表來確認欄位是否存在
+        cursor.execute("SELECT column_name FROM information_schema.columns WHERE table_name = 'customer_orders'")
+        # 由於 PostgreSQL 預設會將未加引號的欄位名稱轉為小寫，這裡統一轉小寫來比對防呆
+        cols = [info[0].lower() for info in cursor.fetchall()]
+        
+        if '物流運費_rmb' not in cols:
             cursor.execute("ALTER TABLE customer_orders ADD COLUMN 物流運費_RMB REAL DEFAULT 0.0")
             # 根據現有台幣運費反推初始的人民幣並存入 (僅執行一次)
             rate_val = cursor.execute("SELECT value FROM settings WHERE key='exchange_rate'").fetchone()[0]
