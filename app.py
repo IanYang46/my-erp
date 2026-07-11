@@ -831,7 +831,9 @@ elif menu == "商品庫存":
             with get_db() as conn:
                 query = """
                 SELECT p.圖片路徑, p.編碼, p.名稱, p.類別, p.品牌, 
-                       COALESCE(SUM(i.數量), 0) as 總庫存, COALESCE(SUM(i.採購金額_RMB), 0) as 總採購金額_RMB, AVG(i.單支成本_RMB) as 平均成本_RMB
+                       COALESCE(SUM(i.數量), 0) as 總庫存, 
+                       COALESCE(SUM(i.採購金額_RMB), 0) as "總採購金額_RMB", 
+                       AVG(i.單支成本_RMB) as "平均成本_RMB"
                 FROM products p LEFT JOIN inventory i ON p.編碼 = i.編碼
                 """
                 params = []
