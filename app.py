@@ -57,12 +57,13 @@ enterprise_erp_style = """
                 color: #0F172A !important;
             }
             /* 🌟 確保側邊欄輸入框、下拉選單的文字與背景不被全域白色覆蓋 */
+            [data-testid="stSidebar"] input,
+            [data-testid="stSidebar"] input[type="number"],
             [data-testid="stSidebar"] div[data-baseweb="input"] input, 
             [data-testid="stSidebar"] div[data-baseweb="select"] * {
                 color: #0F172A !important;
-            }
-            [data-testid="stSidebar"] hr {
-                border-color: #334155 !important;
+                -webkit-text-fill-color: #0F172A !important; /* 🌟 修復 Chrome/Safari 強制變白的問題 */
+                background-color: #FFFFFF !important;
             }
 
             /* 4. 頂部功能標籤頁 (Tabs) */
