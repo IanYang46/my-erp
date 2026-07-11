@@ -896,7 +896,7 @@ elif menu == "商品庫存":
             else:
                 st.write("不論是手動匯入或是由採購單點收進來的個別紀錄，皆會在下方展開。您可以選取對應的序號進行精準修正或刪除。")
                 with get_db() as conn:
-                    df_raw_inv = pd.read_sql("SELECT i.id as 流水號, i.編碼, p.名稱 as 商品名稱, i.倉庫位置, i.數量, i.單支成本_RMB as '單支成本(RMB)', i.採購廠商, i.進貨日期 FROM inventory i LEFT JOIN products p ON i.編碼 = p.編碼 ORDER BY i.id DESC", conn)
+                    df_raw_inv = pd.read_sql('SELECT i.id as 流水號, i.編碼, p.名稱 as 商品名稱, i.倉庫位置, i.數量, i.單支成本_RMB as "單支成本(RMB)", i.採購廠商, i.進貨日期 FROM inventory i LEFT JOIN products p ON i.編碼 = p.編碼 ORDER BY i.id DESC', conn)
                     
                 if df_raw_inv.empty:
                     st.info("目前庫存流水表中無任何原始資料。")
