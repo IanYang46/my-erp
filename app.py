@@ -2158,45 +2158,28 @@ elif menu == "訂單明細":
                                             db_row = None
                                             target_oid = oid
                                             
-                                            is_reship_match = False
-                                            matched_old_logi = ""
-                                            
-                                            # 🌟 第一關：精準比對 (使用常規訂單編號尋找)，新增讀取現有取貨狀態
+                                            # 🌟 第一關：精準比對 (先用常規訂單編號尋找)
+                                            # 注意：這裡多撈了「品項內容」，為了後續搬移資料用
                                             if target_oid:
-                                                cursor.execute("SELECT 訂單編號, 包裹應收, 商品成本, 物流運費, 物流運費_RMB, 商家備註, 取貨狀態 FROM customer_orders WHERE 訂單編號=?", (target_oid,))
+                                                cursor.execute("SELECT 訂單編號, 包裹應收, 商品成本, 物流運費, 物流運費_RMB, 商家備註, 取貨狀態, 品項內容 FROM customer_orders WHERE 訂單編號=?", (target_oid,))
                                                 db_row = cursor.fetchone()
                                             
-                                            # 🌟 第二關：反查重出 (如果第一關失敗，且備註欄有舊單號)
-                                            if not db_row and remark:
-                                                potential_logi_nums = re.findall(r'[A-Za-z0-9]{8,20}', remark)
-                                                for match_logi in potential_logi_nums:
-                                                    cursor.execute("SELECT 訂單編號, 包裹應收, 商品成本, 物流運費, 物流運費_RMB, 商家備註, 取貨狀態 FROM customer_orders WHERE 物流編號=?", (match_logi,))
-                                                    db_row = cursor.fetchone()
-                                                    if db_row:
-                                                        target_oid = db_row[0] 
-                                                        is_reship_match = True 
-                                                        matched_old_logi = match_logi
-                                                        break
-                                            
-                                            # 🌟 第三關：模糊比對新單 (如果一、二關都失敗，利用姓名+電話尋找還沒出貨的空單)
+                                            # 🌟 第二關：新單模糊比對 (訂單號對不上時，利用「姓名+電話」尋找系統中還沒填物流單號的新訂單)
                                             if not db_row and c_name and c_phone:
-                                                # 限定條件：物流編號為空。若有多筆，優先抓取最舊的那筆訂單
                                                 cursor.execute("""
-                                                    SELECT 訂單編號, 包裹應收, 商品成本, 物流運費, 物流運費_RMB, 商家備註, 取貨狀態
+                                                    SELECT 訂單編號, 包裹應收, 商品成本, 物流運費, 物流運費_RMB, 商家備註, 取貨狀態, 品項內容
                                                     FROM customer_orders 
                                                     WHERE 姓名=? AND 電話=? AND (物流編號 IS NULL OR 物流編號='') 
                                                     ORDER BY 訂單日期 ASC LIMIT 1
                                                 """, (c_name, c_phone))
                                                 db_row = cursor.fetchone()
-                                                if db_row:
-                                                    target_oid = db_row[0]
                                             
                                             if db_row:
-                                                real_oid, db_revenue, db_cost, db_shipping, db_shipping_rmb, db_merch_note, current_db_status = db_row
+                                                # 取出資料庫原本的資料
+                                                real_oid, db_revenue, db_cost, db_shipping, db_shipping_rmb, db_merch_note, current_db_status, db_items = db_row
                                                 
                                                 raw_status = str(row['狀態']).strip() if has_status and str(row['狀態']).strip() != "" else None
                                                 
-                                                # 🌟 還原這段重要的狀態翻譯字典，系統才看得懂！
                                                 status_map = {
                                                     '在途': '配送中', '待取件': '已送達待取', '签收': '簽收', '退回': '退回',
                                                     '退货上架': '已上架', '客诉': '客訴', '已重出': '已重出'
@@ -2217,7 +2200,7 @@ elif menu == "訂單明細":
                                                     new_fee_rmb = float(db_shipping_rmb if db_shipping_rmb is not None else 0.0)
                                                     new_fee_twd = float(db_shipping)
                                                     
-                                                # 防呆：有了單號但報表沒狀態時，只會動「剛建好」的單，不會蓋掉別人已經簽收或客訴的單
+                                                # 防呆：有了單號但報表沒狀態時，只會動「剛建好」的單
                                                 if new_logi_num and not new_status:
                                                     if current_db_status in ['待出貨', '備貨中', None, '']:
                                                         new_status = '配送中'
@@ -2231,17 +2214,36 @@ elif menu == "訂單明細":
                                                 
                                                 updates, params = [], []
                                                 
-                                                # 如果是反查成功的重出單，自動寫入軌跡到「商家備註」
-                                                if is_reship_match and new_logi_num:
-                                                    current_note = str(db_merch_note) if db_merch_note and str(db_merch_note) != "None" else ""
-                                                    today_str = pd.Timestamp.today().strftime('%Y-%m-%d')
-                                                    auto_note = f"[系統] {today_str} 接收物流重出報表，原單號:{matched_old_logi} ➔ 新單號:{new_logi_num}"
-                                                    new_merch_note = f"{current_note}\n{auto_note}".strip()
-                                                    
-                                                    updates.append("商家備註=?")
-                                                    params.append(new_merch_note)
+                                                # 🌟 第三關：智能攔截【重出新單】並搬移品項與備註
+                                                # 如果物流單的顧客備註裡有寫舊單號，我們要去抓舊單的品項過來，並寫入新單的商家備註
+                                                if remark:
+                                                    potential_logi_nums = re.findall(r'[A-Za-z0-9]{8,20}', remark)
+                                                    for match_logi in potential_logi_nums:
+                                                        # 去資料庫找這個舊單號的品項內容
+                                                        cursor.execute("SELECT 品項內容, 訂單編號 FROM customer_orders WHERE 物流編號=?", (match_logi,))
+                                                        old_order_row = cursor.fetchone()
+                                                        
+                                                        if old_order_row:
+                                                            old_items = str(old_order_row[0])
+                                                            old_oid = old_order_row[1]
+                                                            
+                                                            # 防呆：確認抓到的不是自己
+                                                            if old_oid != real_oid:
+                                                                # 1. 將舊品項蓋過去
+                                                                updates.append("品項內容=?")
+                                                                params.append(old_items)
+                                                                
+                                                                # 2. 仔細寫入商家備註
+                                                                current_note = str(db_merch_note) if db_merch_note and str(db_merch_note) != "None" else ""
+                                                                today_str = pd.Timestamp.today().strftime('%Y-%m-%d')
+                                                                auto_note = f"[系統] {today_str} 接收重出物流單。\n👉 從舊物流單重出：{match_logi}\n👉 原訂單點了什麼：\n{old_items}"
+                                                                new_merch_note = f"{current_note}\n{auto_note}".strip()
+                                                                
+                                                                updates.append("商家備註=?")
+                                                                params.append(new_merch_note)
+                                                                break
 
-                                                # 🌟 還原條件式動態寫入，確保不會強制洗白欄位
+                                                # 寫入其他一般資訊
                                                 if new_status: updates.append("取貨狀態=?"); params.append(new_status)
                                                 if new_logi_num: updates.append("物流編號=?"); params.append(new_logi_num) 
                                                 if new_date: updates.append("取貨日期=?"); params.append(new_date)
