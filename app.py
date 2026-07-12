@@ -1993,16 +1993,23 @@ elif menu == "訂單明細":
                                 cursor = conn.cursor()
                                 count = 0
                                 for _, row in df_grouped.iterrows():
+                                    # 🌟 保留原有的金額與狀態判斷
                                     rev = float(row.get('包裹應收', 0.0))
                                     
+                                    raw_order_status = str(row.get('訂單狀態', row.get('订单状态', ''))).strip()
+                                    if raw_order_status in ['已取消', '其他']:
+                                        init_status = '已取消'
+                                    else:
+                                        init_status = '待出貨'
+
                                     # 🌟 修正 1：處理空日期，將 Excel 空字串轉換為 None (對應資料庫的 NULL)
                                     raw_date = str(row.get('訂單日期', '')).strip()
                                     order_date = raw_date if raw_date else None
 
+                                    # 🌟 修正 2：寫入資料庫，修復日期欄位 NULL 報錯問題
                                     cursor.execute("""
                                         INSERT INTO customer_orders 
                                         (訂單編號, 訂單日期, 姓名, 電話, 信箱, 門市, 店號, 品項內容, 下單總數, 包裹應收, 商品成本, 物流運費, 出貨成本, 訂單損益, 物流編號, 取貨狀態, 取貨日期, 顧客備註, 商家備註)
-                                        /* 🌟 修正 2：將原本倒數第 3 個用來寫入取貨日期的 '' 改為資料庫語法 NULL */
                                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, ?, 0.0, 0.0, 0.0, ?, '', ?, NULL, ?, ?)
                                         ON CONFLICT(訂單編號) DO UPDATE SET
                                             訂單日期 = excluded.訂單日期,
@@ -2019,7 +2026,7 @@ elif menu == "訂單明細":
                                             商家備註 = excluded.商家備註;
                                     """, (
                                         str(row['訂單編號']).strip(), 
-                                        order_date,  # 🌟 修正 3：這裡改帶入處理過的 order_date 變數
+                                        order_date,  # 🌟 修正 3：使用處理過防呆的日期變數
                                         str(row.get('姓名', '')),
                                         str(row.get('電話', '')), 
                                         str(row.get('信箱', '')), 
