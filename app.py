@@ -2090,7 +2090,7 @@ elif menu == "訂單明細":
             
         exp2 = st.expander("🚚 2. 批量導入【更新物流單號、狀態與運費】", expanded=False)
         with exp2:
-            st.caption("💡 系統會先以『訂單編號』尋找；若找不到或非本店單號，將智能讀取『客户备注』內的舊物流單號進行反查配對，自動替換【狀態】、【物流單號】、【運費】並重新核算單筆利潤。")
+            st.caption("💡 系統會先以『訂單編號』尋找；若找不到或非本店單號，將智能讀取『客户备注』內的舊物流單號進行反查配對。若反查成功，系統會自動幫您替換為【新物流單號】，並在【商家備註】留下重出軌跡紀錄！")
             
             st.info(f"💱 系統將自動套用側邊欄目前的匯率：**{rate}**。若物流單內填寫的是人民幣，系統會自動轉換為台幣存檔。")
             uploaded_logi = st.file_uploader("選擇物流更新檔案", type=["csv", "xlsx"], key="logi_uploader")
@@ -2148,9 +2148,13 @@ elif menu == "訂單明細":
                                             db_row = None
                                             target_oid = oid
                                             
-                                            # 🌟 策略 1：先使用常規訂單編號尋找
+                                            # 🌟 變數追蹤：紀錄這筆是否為「反查舊單號」成功的重出單
+                                            is_reship_match = False
+                                            matched_old_logi = ""
+                                            
+                                            # 🌟 策略 1：先使用常規訂單編號尋找 (注意：多撈了「商家備註」)
                                             if target_oid:
-                                                cursor.execute("SELECT 訂單編號, 包裹應收, 商品成本, 物流運費, 物流運費_RMB FROM customer_orders WHERE 訂單編號=?", (target_oid,))
+                                                cursor.execute("SELECT 訂單編號, 包裹應收, 商品成本, 物流運費, 物流運費_RMB, 商家備註 FROM customer_orders WHERE 訂單編號=?", (target_oid,))
                                                 db_row = cursor.fetchone()
                                             
                                             # 🌟 策略 2：如果找不到 (重出單號被亂蓋)，且備註欄有文字，啟動「舊單號反查」機制
@@ -2158,14 +2162,17 @@ elif menu == "訂單明細":
                                                 # 抓取備註中長度大於等於 8 的連續英數字 (完美對應如 75N10805744)
                                                 potential_logi_nums = re.findall(r'[A-Za-z0-9]{8,20}', remark)
                                                 for match_logi in potential_logi_nums:
-                                                    cursor.execute("SELECT 訂單編號, 包裹應收, 商品成本, 物流運費, 物流運費_RMB FROM customer_orders WHERE 物流編號=?", (match_logi,))
+                                                    # 注意：多撈了「商家備註」
+                                                    cursor.execute("SELECT 訂單編號, 包裹應收, 商品成本, 物流運費, 物流運費_RMB, 商家備註 FROM customer_orders WHERE 物流編號=?", (match_logi,))
                                                     db_row = cursor.fetchone()
                                                     if db_row:
                                                         target_oid = db_row[0] # 成功反查！覆寫成資料庫真正對應的本店訂單編號
+                                                        is_reship_match = True # 打上標記，確認這是一筆重出單
+                                                        matched_old_logi = match_logi
                                                         break
                                             
                                             if db_row:
-                                                real_oid, db_revenue, db_cost, db_shipping, db_shipping_rmb = db_row
+                                                real_oid, db_revenue, db_cost, db_shipping, db_shipping_rmb, db_merch_note = db_row
                                                 
                                                 raw_status = str(row['狀態']).strip() if has_status and str(row['狀態']).strip() != "" else None
                                                 
@@ -2200,8 +2207,19 @@ elif menu == "訂單明細":
                                                 calc_profit = float(db_revenue) - calc_ship
                                                 
                                                 updates, params = [], []
+                                                
+                                                # 🚀 核心新邏輯：如果是反查成功的重出單，自動寫入軌跡到「商家備註」！
+                                                if is_reship_match and new_logi_num:
+                                                    current_note = str(db_merch_note) if db_merch_note and str(db_merch_note) != "None" else ""
+                                                    today_str = pd.Timestamp.today().strftime('%Y-%m-%d')
+                                                    auto_note = f"[系統] {today_str} 接收物流重出報表，原單號:{matched_old_logi} ➔ 新單號:{new_logi_num}"
+                                                    new_merch_note = f"{current_note}\n{auto_note}".strip()
+                                                    
+                                                    updates.append("商家備註=?")
+                                                    params.append(new_merch_note)
+
                                                 if new_status: updates.append("取貨狀態=?"); params.append(new_status)
-                                                if new_logi_num: updates.append("物流編號=?"); params.append(new_logi_num)
+                                                if new_logi_num: updates.append("物流編號=?"); params.append(new_logi_num) # 確保新物流單號覆寫進系統
                                                 if new_date: updates.append("取貨日期=?"); params.append(new_date)
                                                 
                                                 updates.append("物流運費=?"); params.append(new_fee_twd)
@@ -2209,7 +2227,7 @@ elif menu == "訂單明細":
                                                 updates.append("出貨成本=?"); params.append(calc_ship)
                                                 updates.append("訂單損益=?"); params.append(calc_profit)
                                                 
-                                                params.append(real_oid) # 使用我們可能反查出來的真正單號
+                                                params.append(real_oid) # 使用我們反查出來的真正單號
                                                 
                                                 if updates:
                                                     cursor.execute(f"UPDATE customer_orders SET {', '.join(updates)} WHERE 訂單編號=?", tuple(params))
@@ -2217,13 +2235,13 @@ elif menu == "訂單明細":
 
                                             if i % 10 == 0 or i == total_logi - 1:
                                                 progress_bar.progress((i + 1) / total_logi)
-                                                progress_text.caption(f"⏳ 更新進度 {i + 1} / {total_logi} 筆 (已更新 {update_count} 筆)")
+                                                progress_text.caption(f"⏳ 更新進度 {i + 1} / {total_logi} 筆 (已成功更新 {update_count} 筆)")
 
                                         conn.commit()
                                     
-                                    log_system_action("訂單明細", current_operator, "批量更新物流", f"比對更新了 {update_count} 筆訂單資訊，包含智能反查。")
-                                    st.success(f"✅ 成功為 {update_count} 筆訂單掛載了最新物流資訊！(已依匯率 {exchange_rate} 轉換為台幣)")
-                                    time.sleep(2.5); st.rerun()
+                                    log_system_action("訂單明細", current_operator, "批量更新物流", f"比對更新了 {update_count} 筆訂單資訊，包含智能反查重出單。")
+                                    st.success(f"✅ 成功為 {update_count} 筆訂單掛載了最新物流與狀態資訊！(重出單號已自動寫入系統並留下備註)")
+                                    time.sleep(3.0); st.rerun()
                         except Exception as e:
                             st.error(f"❌ 更新失敗，詳情：{str(e)}")
 
