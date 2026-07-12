@@ -2090,7 +2090,7 @@ elif menu == "訂單明細":
             
         exp2 = st.expander("🚚 2. 批量導入【更新物流單號、狀態與運費】", expanded=False)
         with exp2:
-            st.caption("💡 系統會先以『訂單編號』尋找；若找不到或非本店單號，將智能讀取『客户备注』內的舊物流單號進行反查配對。若反查成功，系統會自動幫您替換為【新物流單號】，並在【商家備註】留下重出軌跡紀錄！")
+            st.caption("💡 系統支援漏斗式智能匹配：1. 依『訂單編號』匹配 ➔ 2. 依『備註舊單號』反查重出單 ➔ 3. 依『姓名+電話』自動填補尚未發貨的新訂單，完美解決物流商未提供訂單編號的問題。")
             
             st.info(f"💱 系統將自動套用側邊欄目前的匯率：**{rate}**。若物流單內填寫的是人民幣，系統會自動轉換為台幣存檔。")
             uploaded_logi = st.file_uploader("選擇物流更新檔案", type=["csv", "xlsx"], key="logi_uploader")
@@ -2100,24 +2100,26 @@ elif menu == "訂單明細":
             if uploaded_logi and st.button("🚀 執行【物流資訊】比對更新", type="primary", key="btn_update_logi"):
                     import re  # 🌟 確保載入正則表達式模組供智能反查使用
                     
-                    with st.spinner("🔄 正在載入與解析物流報表，並執行智能單號反查配對..."): 
+                    with st.spinner("🔄 正在載入與解析物流報表，並執行漏斗式智能配對..."): 
                         try:
                             df_logi = pd.read_csv(uploaded_logi) if uploaded_logi.name.endswith('.csv') else pd.read_excel(uploaded_logi, engine='openpyxl')
                             
-                            # 🌟 擴增映射字典：加入客户备注的各種可能寫法
+                            # 🌟 擴增映射字典：加入姓名與電話的各種寫法，以利第三關比對
                             l_map = {
                                 '订单号': '訂單編號', '订单编号': '訂單編號', '訂單號': '訂單編號', '订单号码': '訂單編號',
                                 '状态': '狀態', '订单状态': '狀態', '取貨狀態': '狀態',
                                 '运单号': '物流編號', '交货单号': '物流編號', '发货单号': '物流編號', '物流單號': '物流編號',
                                 '运费': '物流運費', '实际运费': '物流運費',
                                 '末条时间': '取貨日期', '取货时间': '取貨日期',
-                                '客户备注': '顧客備註', '客戶備註': '顧客備註', '备注': '顧客備註', '買家備註': '顧客備註'
+                                '客户备注': '顧客備註', '客戶備註': '顧客備註', '备注': '顧客備註', '買家備註': '顧客備註',
+                                '收件人姓名': '姓名', '收件人': '姓名', '姓名': '姓名',
+                                '收件人手机': '電話', '联系电话': '電話', '手机': '電話', '聯絡電話': '電話'
                             }
                             df_logi = df_logi.rename(columns=l_map)
                             
-                            # 🌟 放寬條件：只要有訂單編號 "或" 備註其一即可，給予系統從備註反查的機會
-                            if '訂單編號' not in df_logi.columns and '顧客備註' not in df_logi.columns:
-                                st.error("❌ 檔案中找不到『訂單編號』，也找不到『客户备注』，無法進行任何比對。")
+                            # 🌟 放寬條件：訂單編號、備註、姓名，只要有其中一項即可啟動比對
+                            if '訂單編號' not in df_logi.columns and '顧客備註' not in df_logi.columns and '姓名' not in df_logi.columns:
+                                st.error("❌ 檔案中找不到『訂單編號』、『客户备注』或『收件人姓名』，無法進行任何比對。")
                             else:
                                 has_status = '狀態' in df_logi.columns
                                 has_logi_num = '物流編號' in df_logi.columns
@@ -2145,31 +2147,46 @@ elif menu == "訂單明細":
                                             oid = str(row.get('訂單編號', '')).strip()
                                             remark = str(row.get('顧客備註', '')).strip()
                                             
+                                            # 解析姓名與電話供第三關使用，並修復 Excel 常見的 .0 電話格式
+                                            c_name = str(row.get('姓名', '')).strip()
+                                            c_phone = str(row.get('電話', '')).replace('.0', '').strip()
+                                            if c_phone and not c_phone.startswith('0'): c_phone = '0' + c_phone
+                                            
                                             db_row = None
                                             target_oid = oid
                                             
-                                            # 🌟 變數追蹤：紀錄這筆是否為「反查舊單號」成功的重出單
                                             is_reship_match = False
                                             matched_old_logi = ""
                                             
-                                            # 🌟 策略 1：先使用常規訂單編號尋找 (注意：多撈了「商家備註」)
+                                            # 🌟 第一關：精準比對 (使用常規訂單編號尋找)
                                             if target_oid:
                                                 cursor.execute("SELECT 訂單編號, 包裹應收, 商品成本, 物流運費, 物流運費_RMB, 商家備註 FROM customer_orders WHERE 訂單編號=?", (target_oid,))
                                                 db_row = cursor.fetchone()
                                             
-                                            # 🌟 策略 2：如果找不到 (重出單號被亂蓋)，且備註欄有文字，啟動「舊單號反查」機制
+                                            # 🌟 第二關：反查重出 (如果第一關失敗，且備註欄有舊單號)
                                             if not db_row and remark:
-                                                # 抓取備註中長度大於等於 8 的連續英數字 (完美對應如 75N10805744)
                                                 potential_logi_nums = re.findall(r'[A-Za-z0-9]{8,20}', remark)
                                                 for match_logi in potential_logi_nums:
-                                                    # 注意：多撈了「商家備註」
                                                     cursor.execute("SELECT 訂單編號, 包裹應收, 商品成本, 物流運費, 物流運費_RMB, 商家備註 FROM customer_orders WHERE 物流編號=?", (match_logi,))
                                                     db_row = cursor.fetchone()
                                                     if db_row:
-                                                        target_oid = db_row[0] # 成功反查！覆寫成資料庫真正對應的本店訂單編號
-                                                        is_reship_match = True # 打上標記，確認這是一筆重出單
+                                                        target_oid = db_row[0] 
+                                                        is_reship_match = True 
                                                         matched_old_logi = match_logi
                                                         break
+                                            
+                                            # 🌟 第三關：模糊比對新單 (如果一、二關都失敗，利用姓名+電話尋找還沒出貨的空單)
+                                            if not db_row and c_name and c_phone:
+                                                # 限定條件：物流編號為空。若有多筆，優先抓取最舊的那筆訂單
+                                                cursor.execute("""
+                                                    SELECT 訂單編號, 包裹應收, 商品成本, 物流運費, 物流運費_RMB, 商家備註 
+                                                    FROM customer_orders 
+                                                    WHERE 姓名=? AND 電話=? AND (物流編號 IS NULL OR 物流編號='') 
+                                                    ORDER BY 訂單日期 ASC LIMIT 1
+                                                """, (c_name, c_phone))
+                                                db_row = cursor.fetchone()
+                                                if db_row:
+                                                    target_oid = db_row[0]
                                             
                                             if db_row:
                                                 real_oid, db_revenue, db_cost, db_shipping, db_shipping_rmb, db_merch_note = db_row
@@ -2208,7 +2225,7 @@ elif menu == "訂單明細":
                                                 
                                                 updates, params = [], []
                                                 
-                                                # 🚀 核心新邏輯：如果是反查成功的重出單，自動寫入軌跡到「商家備註」！
+                                                # 如果是反查成功的重出單，自動寫入軌跡到「商家備註」
                                                 if is_reship_match and new_logi_num:
                                                     current_note = str(db_merch_note) if db_merch_note and str(db_merch_note) != "None" else ""
                                                     today_str = pd.Timestamp.today().strftime('%Y-%m-%d')
@@ -2219,7 +2236,7 @@ elif menu == "訂單明細":
                                                     params.append(new_merch_note)
 
                                                 if new_status: updates.append("取貨狀態=?"); params.append(new_status)
-                                                if new_logi_num: updates.append("物流編號=?"); params.append(new_logi_num) # 確保新物流單號覆寫進系統
+                                                if new_logi_num: updates.append("物流編號=?"); params.append(new_logi_num) 
                                                 if new_date: updates.append("取貨日期=?"); params.append(new_date)
                                                 
                                                 updates.append("物流運費=?"); params.append(new_fee_twd)
@@ -2227,7 +2244,7 @@ elif menu == "訂單明細":
                                                 updates.append("出貨成本=?"); params.append(calc_ship)
                                                 updates.append("訂單損益=?"); params.append(calc_profit)
                                                 
-                                                params.append(real_oid) # 使用我們反查出來的真正單號
+                                                params.append(real_oid) 
                                                 
                                                 if updates:
                                                     cursor.execute(f"UPDATE customer_orders SET {', '.join(updates)} WHERE 訂單編號=?", tuple(params))
@@ -2239,8 +2256,8 @@ elif menu == "訂單明細":
 
                                         conn.commit()
                                     
-                                    log_system_action("訂單明細", current_operator, "批量更新物流", f"比對更新了 {update_count} 筆訂單資訊，包含智能反查重出單。")
-                                    st.success(f"✅ 成功為 {update_count} 筆訂單掛載了最新物流與狀態資訊！(重出單號已自動寫入系統並留下備註)")
+                                    log_system_action("訂單明細", current_operator, "批量更新物流", f"漏斗式配對更新了 {update_count} 筆訂單資訊。")
+                                    st.success(f"✅ 成功為 {update_count} 筆訂單掛載了最新物流與狀態資訊！")
                                     time.sleep(3.0); st.rerun()
                         except Exception as e:
                             st.error(f"❌ 更新失敗，詳情：{str(e)}")
