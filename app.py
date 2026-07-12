@@ -2311,33 +2311,32 @@ elif menu == "訂單明細":
         # ==========================================
         exp3 = st.expander("🔄 3. 批量導入【庫存轉單重出作業】", expanded=False)
         with exp3:
-            st.caption("💡 專門用於處理「退回/已上架」包裹的重出。您的 Excel/CSV 檔案必須包含：『舊物流單號』(用來找原包裹)、『新訂單編號』(用來找新客人) 以及『重出運費』(人民幣)。")
+            st.caption("💡 專門用於處理物流重出報表。支援「一單多包裹」累加，系統會自動比對『姓名+電話』找尋尚未發貨的新單，並從『客户备注』中反查舊包裹進行狀態核銷。")
             
             uploaded_reship = st.file_uploader("選擇重出轉單檔案", type=["csv", "xlsx"], key="reship_uploader")
             
             if uploaded_reship and st.button("🚀 執行【批量重出】作業", type="primary", key="btn_reship"):
-                with st.spinner("🔄 正在讀取並執行批量轉單重出..."):
+                import re
+                
+                with st.spinner("🔄 正在讀取並執行批量轉單重出，處理多包裹累加中..."):
                     try:
                         df_reship = pd.read_csv(uploaded_reship) if uploaded_reship.name.endswith('.csv') else pd.read_excel(uploaded_reship, engine='openpyxl')
                         
-                        # 欄位寬容映射 (兼容多種常見表頭命名)
+                        # 🌟 依照您的需求，精準映射報表欄位
                         r_map = {
-                            '旧物流单号': '舊物流單號', '原物流單號': '舊物流單號', '原承运单号': '舊物流單號', '退回單號': '舊物流單號',
-                            '新订单号': '新訂單編號', '新订单编号': '新訂單編號', '訂單編號': '新訂單編號',
-                            '重出运费': '重出運費', '运费': '重出運費', '運費': '重出運費'
+                            '收件人姓名': '姓名', '收件人': '姓名',
+                            '收件人手机': '電話', '联系电话': '電話', '手机': '電話',
+                            '客户备注': '顧客備註', '客戶備註': '顧客備註', '备注': '顧客備註',
+                            '承运单号': '物流編號', '发货单号': '物流編號', '交货单号': '物流編號', '物流單號': '物流編號',
+                            '运费': '物流運費', '实际运费': '物流運費'
                         }
                         df_reship = df_reship.rename(columns=r_map)
+                        df_reship = df_reship.loc[:, ~df_reship.columns.duplicated()] # 防止欄位重複報錯
                         
-                        # 防呆檢查：必須要有舊物流單號與新訂單編號
-                        if '舊物流單號' not in df_reship.columns or '新訂單編號' not in df_reship.columns:
-                            st.error("❌ 檔案表頭錯誤：必須包含『舊物流單號』與『新訂單編號』這兩個欄位。")
+                        # 防呆檢查：必須要有姓名、電話、物流單號
+                        if '姓名' not in df_reship.columns or '電話' not in df_reship.columns or '物流編號' not in df_reship.columns:
+                            st.error("❌ 檔案表頭錯誤：您的報表必須包含『收件人姓名』、『收件人手机』與『承运单号』。")
                         else:
-                            # 處理運費 (若無此欄位則預設為 0)
-                            if '重出運費' in df_reship.columns:
-                                df_reship['重出運費'] = pd.to_numeric(df_reship['重出運費'].astype(str).str.replace(',', ''), errors='coerce').fillna(0.0)
-                            else:
-                                df_reship['重出運費'] = 0.0
-                                
                             success_count = 0
                             progress_text_reship = st.empty()
                             progress_bar_reship = st.progress(0)
@@ -2346,58 +2345,130 @@ elif menu == "訂單明細":
                             with get_db() as conn:
                                 cursor = conn.cursor()
                                 for i, row in df_reship.iterrows():
-                                    old_logi = str(row['舊物流單號']).replace('.0', '').strip()
-                                    new_oid = str(row['新訂單編號']).replace('.0', '').strip()
-                                    reship_fee_rmb = float(row['重出運費'])
-                                    reship_fee_twd = reship_fee_rmb * rate  # 依據側邊欄匯率轉換
+                                    # 1. 提取報表資料並清理格式
+                                    c_name = str(row.get('姓名', '')).strip()
+                                    c_phone = str(row.get('電話', '')).replace('.0', '').strip()
+                                    if c_phone and not c_phone.startswith('0'): c_phone = '0' + c_phone
                                     
-                                    if not old_logi or not new_oid or old_logi == 'nan' or new_oid == 'nan':
+                                    remark = str(row.get('顧客備註', '')).strip()
+                                    new_logi = str(row.get('物流編號', '')).strip()
+                                    
+                                    # 如果連最基本的姓名或物流單號都沒有，直接跳過這行
+                                    if not c_name or not new_logi or new_logi == 'nan':
                                         continue
                                         
-                                    # 1. 找舊訂單 (利用舊物流單號尋找退回的包裹)
-                                    cursor.execute("SELECT 訂單編號, 品項內容, 商品成本, 商家備註 FROM customer_orders WHERE 物流編號 LIKE ? LIMIT 1", (f"%{old_logi}%",))
-                                    old_order = cursor.fetchone()
+                                    try:
+                                        new_fee_rmb = float(str(row.get('物流運費', 0.0)).replace(',', ''))
+                                    except:
+                                        new_fee_rmb = 0.0
+                                    new_fee_twd = new_fee_rmb * rate  # 依據側邊欄匯率轉換
                                     
-                                    # 2. 找新訂單 (接收這個包裹的客人)
-                                    cursor.execute("SELECT 訂單編號, 包裹應收, 商家備註, 品項內容 FROM customer_orders WHERE 訂單編號 = ?", (new_oid,))
+                                    old_logi_num = ""
+                                    old_oid = ""
+                                    orig_items = ""
+                                    orig_cost = 0.0
+                                    old_merch_note = ""
+
+                                    # 2. 嘗試從「客户备注」中挖出舊物流單號，尋找原退回的舊訂單
+                                    if remark:
+                                        potential_logi_nums = re.findall(r'[A-Za-z0-9]{8,20}', remark)
+                                        for match_logi in potential_logi_nums:
+                                            cursor.execute("SELECT 訂單編號, 品項內容, 商品成本, 商家備註 FROM customer_orders WHERE 物流編號 LIKE ?", (f"%{match_logi}%",))
+                                            old_order = cursor.fetchone()
+                                            if old_order:
+                                                old_oid, orig_items, orig_cost, old_merch_note = old_order
+                                                old_logi_num = match_logi
+                                                break
+
+                                    # 3. 找新訂單 (依姓名+電話，找最新建立的一筆訂單，保證是為了重出而建的空單)
+                                    query = """
+                                        SELECT 訂單編號, 包裹應收, 商家備註, 品項內容, 物流編號, 物流運費_RMB, 商品成本
+                                        FROM customer_orders
+                                        WHERE 姓名=? AND 電話=?
+                                    """
+                                    params = [c_name, c_phone]
+                                    if old_oid:
+                                        query += " AND 訂單編號 != ?" # 絕對避開舊單本身
+                                        params.append(old_oid)
+                                    # 依時間降冪找最新的一筆 (這能保證第一包、第二包都精準鎖定並寫入同一個新單)
+                                    query += " ORDER BY 訂單日期 DESC LIMIT 1"
+                                    
+                                    cursor.execute(query, tuple(params))
                                     new_order = cursor.fetchone()
-                                    
-                                    if old_order and new_order:
-                                        old_oid, orig_items, orig_cost, old_merch_note = old_order
-                                        t_oid, t_rev, t_merch_note, t_old_items = new_order
+
+                                    # 4. 如果成功找到新訂單，開始執行累加與搬移
+                                    if new_order:
+                                        t_oid, t_rev, t_merch_note, t_old_items, t_logi, t_fee_rmb, t_cost = new_order
+
+                                        # --- A. 累加物流單號 (完美支援一單多包裹) ---
+                                        final_logi_num = str(t_logi).strip() if t_logi and str(t_logi) != "None" else ""
+                                        if new_logi not in final_logi_num:
+                                            if final_logi_num:
+                                                final_logi_num = f"{final_logi_num}, {new_logi}"
+                                            else:
+                                                final_logi_num = new_logi
+
+                                        # --- B. 累加多包裹的運費 ---
+                                        final_fee_rmb = float(t_fee_rmb if t_fee_rmb else 0.0) + new_fee_rmb
+                                        final_fee_twd = final_fee_rmb * rate
+
+                                        # --- C. 智能搬移品項與成本 (防重複搬移爆表) ---
+                                        final_cost = float(t_cost if t_cost else 0.0)
+                                        current_items = str(t_old_items) if t_old_items and str(t_old_items) != "None" else ""
+                                        final_items = current_items
                                         
-                                        # === A. 更新舊單狀態為「已重出」 ===
-                                        new_old_note = f"{old_merch_note}\n[系統] 於 {pd.Timestamp.today().strftime('%Y-%m-%d')} 批量轉單重出給 {t_oid}".strip()
-                                        cursor.execute("UPDATE customer_orders SET 取貨狀態='已重出', 商家備註=? WHERE 訂單編號=?", (new_old_note, old_oid))
+                                        # 如果這筆舊單還沒被搬過，才加上去 (避免同一個舊單拆成3包，商品成本被加3次)
+                                        if old_logi_num and old_logi_num not in str(t_merch_note):
+                                            final_cost += float(orig_cost if orig_cost else 0.0)
+                                            orig_items_str = str(orig_items) if orig_items and str(orig_items) != "None" else ""
+                                            if orig_items_str and orig_items_str not in current_items:
+                                                final_items = f"{current_items}\n{orig_items_str}".strip()
+
+                                        # --- D. 寫入專屬雙向備註 ---
+                                        today_str = pd.Timestamp.today().strftime('%Y-%m-%d')
                                         
-                                        # === B. 計算新單成本與寫入 ===
-                                        calc_t_ship_cost = float(orig_cost if orig_cost else 0.0) + reship_fee_twd
+                                        # 寫給新單的追蹤備註
+                                        auto_note = f"[系統] {today_str} 接收重出包裹，單號:{new_logi} (運費RMB {new_fee_rmb})"
+                                        if old_logi_num:
+                                            auto_note += f" ⬅️ 來自原單:{old_logi_num}"
+                                            
+                                        final_note = str(t_merch_note) if t_merch_note and str(t_merch_note) != 'None' else ""
+                                        if auto_note not in final_note:
+                                            final_note = f"{final_note}\n{auto_note}".strip()
+
+                                        # 結算台幣總損益
+                                        calc_t_ship_cost = final_cost + final_fee_twd
                                         calc_t_profit = float(t_rev if t_rev else 0.0) - calc_t_ship_cost
-                                        
-                                        new_t_note = f"{t_merch_note}\n[系統] 接收物流上架包裹 {old_oid}，並支付重出運費 RMB {reship_fee_rmb}。\n[系統] 客戶原訂商品保留紀錄：{t_old_items}".strip()
-                                        
+
+                                        # 執行更新【新單】
                                         cursor.execute("""
                                             UPDATE customer_orders 
-                                            SET 品項內容=?, 商品成本=?, 物流運費_RMB=?, 物流運費=?, 出貨成本=?, 訂單損益=?, 取貨狀態='備貨中', 商家備註=?
+                                            SET 品項內容=?, 商品成本=?, 物流運費_RMB=?, 物流運費=?, 出貨成本=?, 訂單損益=?, 物流編號=?, 取貨狀態='備貨中', 商家備註=?
                                             WHERE 訂單編號=?
-                                        """, (str(orig_items), float(orig_cost if orig_cost else 0.0), reship_fee_rmb, reship_fee_twd, calc_t_ship_cost, calc_t_profit, new_t_note, t_oid))
-                                        
+                                        """, (final_items, final_cost, final_fee_rmb, final_fee_twd, calc_t_ship_cost, calc_t_profit, final_logi_num, final_note, t_oid))
+
+                                        # 執行更新【舊單】
+                                        if old_oid:
+                                            new_old_note = f"{old_merch_note}\n[系統] 於 {today_str} 重出給 {t_oid} (新包裹:{new_logi})".strip()
+                                            if f"重出給 {t_oid} (新包裹:{new_logi})" not in str(old_merch_note):
+                                                cursor.execute("UPDATE customer_orders SET 取貨狀態='已重出', 商家備註=? WHERE 訂單編號=?", (new_old_note, old_oid))
+
                                         success_count += 1
 
-                                    # 更新進度條
+                                    # 更新進度條視覺
                                     if i % 5 == 0 or i == total_reship - 1:
                                         progress_bar_reship.progress((i + 1) / total_reship)
-                                        progress_text_reship.caption(f"⏳ 重出處理進度 {i + 1} / {total_reship} 筆 (已成功轉單 {success_count} 筆)")
+                                        progress_text_reship.caption(f"⏳ 重出處理進度 {i + 1} / {total_reship} 筆 (已成功匹配並轉單 {success_count} 筆包裹)")
 
                                 conn.commit()
                                 
-                            log_system_action("訂單明細", current_operator, "批量轉單重出", f"成功批量執行了 {success_count} 筆包裹重出轉單。")
-                            st.success(f"✅ 成功執行 {success_count} 筆重出轉單作業！原訂單已標記「已重出」，新訂單已自動帶入成本與品項。")
+                            log_system_action("訂單明細", current_operator, "批量轉單重出", f"成功批量執行了 {success_count} 筆包裹重出比對與更新。")
+                            st.success(f"✅ 成功執行 {success_count} 筆重出包裹比對！系統已自動為新訂單累加了物流單號與運費。")
                             time.sleep(2.5)
                             st.rerun()
                             
                     except Exception as e:
-                        st.error(f"❌ 批量重出發生錯誤：{str(e)}")
+                        st.error(f"❌ 批量重出發生錯誤，詳情：{str(e)}")
 
 elif menu == "財務報表":
     st.title("📈 財務與利潤分析")
