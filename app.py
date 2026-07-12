@@ -2166,8 +2166,8 @@ elif menu == "訂單明細":
                                             if remark:
                                                 potential_logi_nums = re.findall(r'[A-Za-z0-9]{8,20}', remark)
                                                 for match_logi in potential_logi_nums:
-                                                    # 驗證這個號碼是不是系統裡的舊物流單
-                                                    cursor.execute("SELECT 訂單編號 FROM customer_orders WHERE 物流編號=?", (match_logi,))
+                                                    # 驗證這個號碼是不是系統裡的舊物流單 (支援多單號用 LIKE)
+                                                    cursor.execute("SELECT 訂單編號 FROM customer_orders WHERE 物流編號 LIKE ?", (f"%{match_logi}%",))
                                                     if cursor.fetchone():
                                                         is_reship_row = True
                                                         old_logi_num_in_remark = match_logi
@@ -2175,25 +2175,25 @@ elif menu == "訂單明細":
                                             
                                             # 🌟 尋找目標訂單
                                             if is_reship_row:
-                                                # 【核心防呆】如果是重出單報表，直接放棄用檔案的訂單號找 (因為一定對不上)
-                                                # 強制使用「姓名+電話」去尋找系統中「尚未發貨 (無物流單號)」的新訂單！
+                                                # 【核心修改：支援多包裹】如果是重出單，直接找該客人「最新」的一筆訂單
+                                                # 這樣即使他被拆成3個包裹，第2、3個包裹還是能找到同一個新訂單，準備執行「累加」
                                                 if c_name and c_phone:
                                                     cursor.execute("""
-                                                        SELECT 訂單編號, 包裹應收, 商品成本, 物流運費, 物流運費_RMB, 商家備註, 取貨狀態, 品項內容 
+                                                        SELECT 訂單編號, 包裹應收, 商品成本, 物流運費, 物流運費_RMB, 商家備註, 取貨狀態, 品項內容, 物流編號
                                                         FROM customer_orders 
-                                                        WHERE 姓名=? AND 電話=? AND (物流編號 IS NULL OR TRIM(物流編號)='') 
-                                                        ORDER BY 訂單日期 ASC LIMIT 1
+                                                        WHERE 姓名=? AND 電話=? 
+                                                        ORDER BY 訂單日期 DESC LIMIT 1
                                                     """, (c_name, c_phone))
                                                     db_row = cursor.fetchone()
                                             else:
                                                 # 一般報表：第一關先用訂單編號精準找
                                                 if target_oid:
-                                                    cursor.execute("SELECT 訂單編號, 包裹應收, 商品成本, 物流運費, 物流運費_RMB, 商家備註, 取貨狀態, 品項內容 FROM customer_orders WHERE 訂單編號=?", (target_oid,))
+                                                    cursor.execute("SELECT 訂單編號, 包裹應收, 商品成本, 物流運費, 物流運費_RMB, 商家備註, 取貨狀態, 品項內容, 物流編號 FROM customer_orders WHERE 訂單編號=?", (target_oid,))
                                                     db_row = cursor.fetchone()
                                                 # 第二關：如果第一關找不到，再用姓名+電話找空單
                                                 if not db_row and c_name and c_phone:
                                                     cursor.execute("""
-                                                        SELECT 訂單編號, 包裹應收, 商品成本, 物流運費, 物流運費_RMB, 商家備註, 取貨狀態, 品項內容 
+                                                        SELECT 訂單編號, 包裹應收, 商品成本, 物流運費, 物流運費_RMB, 商家備註, 取貨狀態, 品項內容, 物流編號
                                                         FROM customer_orders 
                                                         WHERE 姓名=? AND 電話=? AND (物流編號 IS NULL OR TRIM(物流編號)='') 
                                                         ORDER BY 訂單日期 ASC LIMIT 1
@@ -2202,8 +2202,8 @@ elif menu == "訂單明細":
                                             
                                             # 🌟 找到訂單後，開始執行資料寫入與搬移
                                             if db_row:
-                                                # 提取新訂單的現有資料
-                                                real_oid, db_revenue, db_cost, db_shipping, db_shipping_rmb, db_merch_note, current_db_status, db_items = db_row
+                                                # 提取新訂單的現有資料 (多撈了 db_logi_num)
+                                                real_oid, db_revenue, db_cost, db_shipping, db_shipping_rmb, db_merch_note, current_db_status, db_items, db_logi_num = db_row
                                                 
                                                 raw_status = str(row.get('狀態', '')).strip() if has_status else None
                                                 status_map = {
@@ -2215,16 +2215,33 @@ elif menu == "訂單明細":
                                                 if raw_status in status_map: new_status = status_map[raw_status]
                                                 elif raw_status in STATUS_LIST: new_status = raw_status
                                                 
-                                                new_logi_num = str(row['物流編號']).strip() if has_logi_num and str(row['物流編號']).strip() != "" else None
+                                                # 🌟 【修改：支援多物流單號累加】
+                                                current_logi_num = str(row['物流編號']).strip() if has_logi_num and str(row['物流編號']).strip() != "" else None
+                                                final_logi_num = str(db_logi_num).strip() if db_logi_num and str(db_logi_num) != "None" else ""
                                                 
+                                                if current_logi_num:
+                                                    if current_logi_num not in final_logi_num: # 確保不會重複加入同一個單號
+                                                        if final_logi_num:
+                                                            final_logi_num = f"{final_logi_num}, {current_logi_num}"
+                                                        else:
+                                                            final_logi_num = current_logi_num
+                                                
+                                                if not final_logi_num: final_logi_num = None
+
+                                                # 🌟 【修改：運費累加】三個包裹有三個運費，必須把它們加起來
                                                 if has_fee and str(row['物流運費']).strip() != "":
-                                                    new_fee_rmb = float(row['物流運費'])
+                                                    current_fee_rmb = float(row['物流運費'])
+                                                    # 如果是重出報表，且資料庫已經有運費(代表是第2、3個包裹)，就把它加上去
+                                                    if is_reship_row:
+                                                        new_fee_rmb = float(db_shipping_rmb if db_shipping_rmb else 0.0) + current_fee_rmb
+                                                    else:
+                                                        new_fee_rmb = current_fee_rmb
                                                     new_fee_twd = new_fee_rmb * exchange_rate
                                                 else:
                                                     new_fee_rmb = float(db_shipping_rmb if db_shipping_rmb is not None else 0.0)
                                                     new_fee_twd = float(db_shipping)
                                                     
-                                                if new_logi_num and not new_status:
+                                                if final_logi_num and not new_status:
                                                     if current_db_status in ['待出貨', '備貨中', None, '']:
                                                         new_status = '配送中'
 
@@ -2237,31 +2254,34 @@ elif menu == "訂單明細":
                                                 
                                                 updates, params = [], []
                                                 
-                                                # 🌟 【第三關智能搬移】如果是重出單，去舊單搬品項與寫詳細備註給新單
+                                                # 🌟 【第三關智能搬移：支援多包裹品項與備註累加】
                                                 if is_reship_row and old_logi_num_in_remark:
-                                                    # 反查舊訂單買了什麼
-                                                    cursor.execute("SELECT 品項內容 FROM customer_orders WHERE 物流編號=?", (old_logi_num_in_remark,))
+                                                    cursor.execute("SELECT 品項內容 FROM customer_orders WHERE 物流編號 LIKE ?", (f"%{old_logi_num_in_remark}%",))
                                                     old_order_row = cursor.fetchone()
                                                     
                                                     if old_order_row:
                                                         old_items = str(old_order_row[0])
                                                         
-                                                        # 1. 將舊品項寫入新訂單
-                                                        updates.append("品項內容=?")
-                                                        params.append(old_items)
+                                                        # 1. 將舊品項「附加」到新訂單 (避免第2個包裹蓋掉第1個包裹帶來的品項)
+                                                        current_items = str(db_items) if db_items and str(db_items) != "None" else ""
+                                                        if old_items not in current_items:
+                                                            final_items = f"{current_items}\n{old_items}".strip()
+                                                            updates.append("品項內容=?")
+                                                            params.append(final_items)
                                                         
-                                                        # 2. 仔細寫入商家備註
+                                                        # 2. 仔細寫入商家備註 (同樣做附加處理，防重複寫)
                                                         current_note = str(db_merch_note) if db_merch_note and str(db_merch_note) != "None" else ""
                                                         today_str = pd.Timestamp.today().strftime('%Y-%m-%d')
                                                         auto_note = f"[系統] {today_str} 接收重出物流報表\n👉 從原訂單 (物流單號:{old_logi_num_in_remark}) 轉單重出而來\n👉 原客戶點了什麼保留紀錄：\n{old_items}"
-                                                        new_merch_note = f"{current_note}\n{auto_note}".strip()
                                                         
-                                                        updates.append("商家備註=?")
-                                                        params.append(new_merch_note)
+                                                        if auto_note not in current_note:
+                                                            new_merch_note = f"{current_note}\n\n{auto_note}".strip()
+                                                            updates.append("商家備註=?")
+                                                            params.append(new_merch_note)
 
                                                 # 一般更新寫入 (為新訂單掛上新運費與物流號)
                                                 if new_status: updates.append("取貨狀態=?"); params.append(new_status)
-                                                if new_logi_num: updates.append("物流編號=?"); params.append(new_logi_num) 
+                                                if final_logi_num: updates.append("物流編號=?"); params.append(final_logi_num) 
                                                 if new_date: updates.append("取貨日期=?"); params.append(new_date)
                                                 
                                                 updates.append("物流運費=?"); params.append(new_fee_twd)
