@@ -1981,7 +1981,8 @@ elif menu == "訂單明細":
                             '訂單編號': '訂單編號', '建立日期': '訂單日期', '收件人': '姓名', '貨號': '品項內容',
                             '總計金額': '包裹應收', '聯絡電話': '電話', '連絡電話': '電話', 'Email': '信箱', '信箱': '信箱', 
                             '運送超商': '門市', '超商代號': '店號',
-                            '顧客備註': '顧客備註', '商家備註': '商家備註'
+                            '顧客備註': '顧客備註', '商家備註': '商家備註',
+                            '超商寄貨編號(拋單後取得)': '物流編號'  # 🌟 1. 新增物流編號對應
                         }
                         df_imp = df_imp.rename(columns=col_mapping)
                         
@@ -2016,15 +2017,18 @@ elif menu == "訂單明細":
                                     else:
                                         init_status = '待出貨'
 
-                                    # 🌟 修正 1：處理空日期，將 Excel 空字串轉換為 None (對應資料庫的 NULL)
+                                    # 🌟 處理空日期
                                     raw_date = str(row.get('訂單日期', '')).strip()
                                     order_date = raw_date if raw_date else None
+                                    
+                                    # 🌟 2. 抓取對應好的物流編號
+                                    logi_num = str(row.get('物流編號', '')).strip()
 
-                                    # 🌟 修正 2：寫入資料庫，修復日期欄位 NULL 報錯問題
+                                    # 🌟 3. 寫入資料庫，加入對物流編號的處理，並確保不會覆蓋掉已有的單號
                                     cursor.execute("""
                                         INSERT INTO customer_orders 
                                         (訂單編號, 訂單日期, 姓名, 電話, 信箱, 門市, 店號, 品項內容, 下單總數, 包裹應收, 商品成本, 物流運費, 出貨成本, 訂單損益, 物流編號, 取貨狀態, 取貨日期, 顧客備註, 商家備註)
-                                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, ?, 0.0, 0.0, 0.0, ?, '', ?, NULL, ?, ?)
+                                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, ?, 0.0, 0.0, 0.0, ?, ?, ?, NULL, ?, ?)
                                         ON CONFLICT(訂單編號) DO UPDATE SET
                                             訂單日期 = excluded.訂單日期,
                                             姓名 = excluded.姓名,
@@ -2035,12 +2039,13 @@ elif menu == "訂單明細":
                                             品項內容 = excluded.品項內容,
                                             包裹應收 = excluded.包裹應收,
                                             訂單損益 = excluded.包裹應收 - customer_orders.出貨成本,
+                                            物流編號 = CASE WHEN excluded.物流編號 != '' THEN excluded.物流編號 ELSE customer_orders.物流編號 END,
                                             取貨狀態 = CASE WHEN excluded.取貨狀態 = '已取消' THEN '已取消' ELSE customer_orders.取貨狀態 END,
                                             顧客備註 = excluded.顧客備註,
                                             商家備註 = excluded.商家備註;
                                     """, (
                                         str(row['訂單編號']).strip(), 
-                                        order_date,  # 🌟 修正 3：使用處理過防呆的日期變數
+                                        order_date, 
                                         str(row.get('姓名', '')),
                                         str(row.get('電話', '')), 
                                         str(row.get('信箱', '')), 
@@ -2049,6 +2054,7 @@ elif menu == "訂單明細":
                                         str(row.get('品項內容', '')), 
                                         rev, 
                                         rev, 
+                                        logi_num,  # 🌟 傳入物流編號
                                         init_status,
                                         str(row.get('顧客備註', '')), 
                                         str(row.get('商家備註', ''))
