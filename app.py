@@ -2091,32 +2091,29 @@ elif menu == "訂單明細":
                     try:
                         df_logi = pd.read_csv(uploaded_logi) if uploaded_logi.name.endswith('.csv') else pd.read_excel(uploaded_logi, engine='openpyxl')
                         
-                        # 幫您自動適配物流系統繁簡體亂流，並加入您指定的最新對應
-                        # 🌟 1. 新增『承运单号』與『客户备注』的對應
+                        # 🌟 1. 擴充 mapping，加入『承运单号』與『客户备注』
                         l_map = {
                             '订单号': '訂單編號', '订单编号': '訂單編號', '訂單號': '訂單編號', '订单号码': '訂單編號',
                             '状态': '狀態', '订单状态': '狀態', '取貨狀態': '狀態',
                             '运单号': '物流編號', '交货单号': '物流編號', '发货单号': '物流編號', '物流單號': '物流編號', '承运单号': '物流編號',
                             '运费': '物流運費', '实际运费': '物流運費',
                             '末条时间': '取貨日期', '取货时间': '取貨日期',
-                            '客户备注': '匯入備註'
+                            '客户备注': '商家備註', '商家備註': '商家備註'
                         }
                         df_logi = df_logi.rename(columns=l_map)
                         
-                        # 🌟 2. 放寬檢查條件，允許用物流編號作為替代主鍵
-                        has_oid = '訂單編號' in df_logi.columns
-                        has_logi_num_col = '物流編號' in df_logi.columns
-                        
-                        if not has_oid and not has_logi_num_col:
-                            st.error("❌ 檔案中找不到比對基準『訂單編號』或『承运单号(物流編號)』，無法比對。")
+                        # 🌟 2. 條件放寬：只要有『訂單編號』或『物流編號(承运单号)』其中一個就能進行比對
+                        if '訂單編號' not in df_logi.columns and '物流編號' not in df_logi.columns:
+                            st.error("❌ 檔案中找不到基準欄位『訂單編號』或『承运单号(物流編號)』，無法比對。")
                         else:
                             has_status = '狀態' in df_logi.columns
+                            has_logi_num = '物流編號' in df_logi.columns
                             has_fee = '物流運費' in df_logi.columns
                             has_date = '取貨日期' in df_logi.columns
-                            has_note = '匯入備註' in df_logi.columns
+                            has_note = '商家備註' in df_logi.columns
                             
-                            if not (has_status or has_logi_num_col or has_fee or has_date):
-                                st.error("❌ 檔案中必須包含『狀態』、『运单号』、『運費』或『末条时间』至少其中一欄。")
+                            if not (has_status or has_logi_num or has_fee or has_date or has_note):
+                                st.error("❌ 檔案中必須包含『狀態』、『物流編號』、『運費』或『客户备注』至少其中一欄。")
                             else:
                                 if has_fee:
                                     if df_logi['物流運費'].dtype == object: df_logi['物流運費'] = df_logi['物流運費'].astype(str).str.replace(',', '')
@@ -2128,99 +2125,110 @@ elif menu == "訂單明細":
                                 with get_db() as conn:
                                     cursor = conn.cursor()
                                     for _, row in df_logi.iterrows():
-                                        oid = str(row['訂單編號']).strip() if has_oid else ""
-                                        imp_logi = str(row['物流編號']).strip() if has_logi_num_col else ""
+                                        # 安全取得訂單編號與物流編號
+                                        oid = str(row.get('訂單編號', '')).strip() if '訂單編號' in df_logi.columns else ""
+                                        
+                                        # 🌟 3. 處理「多了『物流編號』幾個字」的問題：強制過濾多餘文字與冒號
+                                        raw_logi = str(row.get('物流編號', '')).strip() if has_logi_num else ""
+                                        import_logi = raw_logi.replace('物流編號', '').replace('运单号', '').replace('承运单号', '').replace(':', '').replace('：', '').strip()
+                                        
+                                        if not oid and not import_logi:
+                                            continue
                                         
                                         db_row = None
-                                        match_type = None # 記錄是用什麼方式對應到的 (OID 或 LOGI)
+                                        is_fallback = False
                                         
-                                        # 🌟 3. 雙重比對機制：先找單號，找不到再找物流號
+                                        # (A) 優先：使用「訂單編號」尋找系統訂單
                                         if oid:
                                             cursor.execute("SELECT 訂單編號, 包裹應收, 商品成本, 物流運費, 物流運費_RMB, 商家備註 FROM customer_orders WHERE 訂單編號=?", (oid,))
                                             db_row = cursor.fetchone()
-                                            if db_row: match_type = 'OID'
                                             
-                                        if not db_row and imp_logi:
-                                            cursor.execute("SELECT 訂單編號, 包裹應收, 商品成本, 物流運費, 物流運費_RMB, 商家備註 FROM customer_orders WHERE 物流編號=?", (imp_logi,))
+                                        # (B) 備用：如果訂單編號對不上 (或根本沒填)，改用「物流編號(承运单号)」去反查訂單
+                                        if not db_row and import_logi:
+                                            cursor.execute("SELECT 訂單編號, 包裹應收, 商品成本, 物流運費, 物流運費_RMB, 商家備註 FROM customer_orders WHERE 物流編號 LIKE ?", (f'%{import_logi}%',))
                                             db_row = cursor.fetchone()
-                                            if db_row: match_type = 'LOGI'
-                                        
-                                        if db_row:
-                                            db_oid, db_revenue, db_cost, db_shipping, db_shipping_rmb, db_note = db_row
-                                            
-                                            raw_status = str(row['狀態']).strip() if has_status and str(row['狀態']).strip() != "" else None
-                                            
-                                            status_map = {
-                                                '在途': '配送中', '待取件': '已送達待取', '签收': '簽收',
-                                                '退回': '退回', '退货上架': '已上架', '客诉': '客訴', '已重出': '已重出'
-                                            }
-                                            
-                                            new_status = None
-                                            if raw_status in status_map:
-                                                new_status = status_map[raw_status]
-                                            elif raw_status in STATUS_LIST:
-                                                new_status = raw_status
-                                                
-                                            new_logi_num = imp_logi if imp_logi != "" else None
-                                            
-                                            # 🌟 4. 運費計算邏輯：重出單要累加，一般單直接覆蓋
-                                            if has_fee and str(row['物流運費']).strip() != "":
-                                                imp_fee_rmb = float(row['物流運費'])
-                                                imp_fee_twd = imp_fee_rmb * exchange_rate
-                                                
-                                                if match_type == 'LOGI':
-                                                    # 重出單（以物流號對應）：累加既有運費
-                                                    new_fee_rmb = float(db_shipping_rmb if db_shipping_rmb is not None else 0.0) + imp_fee_rmb
-                                                    new_fee_twd = float(db_shipping) + imp_fee_twd
-                                                else:
-                                                    # 一般單（以訂單號對應）：直接覆蓋
-                                                    new_fee_rmb = imp_fee_rmb
-                                                    new_fee_twd = imp_fee_twd
-                                            else:
-                                                new_fee_rmb = float(db_shipping_rmb if db_shipping_rmb is not None else 0.0)
-                                                new_fee_twd = float(db_shipping)
-                                                
-                                            if new_logi_num and not new_status:
-                                                new_status = '配送中'
+                                            if db_row:
+                                                is_fallback = True  # 標記為：透過物流單號反查到的 (重出單)
 
-                                            new_date = None
-                                            if new_status == '簽收' and has_date and str(row['取貨日期']).strip() != "":
-                                                new_date = str(row['取貨日期']).strip()
-                                                
-                                            calc_ship = float(db_cost) + new_fee_twd
-                                            calc_profit = float(db_revenue) - calc_ship
-                                            
+                                        if db_row:
+                                            db_oid, db_revenue, db_cost, db_shipping, db_shipping_rmb, db_merchant_note = db_row
                                             updates, params = [], []
-                                            if new_status: updates.append("取貨狀態=?"); params.append(new_status)
-                                            if new_logi_num and match_type == 'OID': 
-                                                # 如果是用 OID 找到的，才允許更新物流編號；若是用物流編號找到的就不必再更新了
-                                                updates.append("物流編號=?"); params.append(new_logi_num)
-                                            if new_date: updates.append("取貨日期=?"); params.append(new_date)
+                                            import_fee_rmb_str = str(row['物流運費']).strip() if has_fee else ""
                                             
-                                            # 🌟 5. 重出單（LOGI對應）如果有『客户备注』，追加到系統的『商家備註』
-                                            if match_type == 'LOGI' and has_note and str(row['匯入備註']).strip() != "":
-                                                imp_note = str(row['匯入備註']).strip()
-                                                old_note = str(db_note if db_note else "").strip()
-                                                # 避免重複附加相同的備註
-                                                if imp_note not in old_note:
-                                                    new_note = f"{old_note} | 重出追加: {imp_note}" if old_note else f"重出追加: {imp_note}"
-                                                    updates.append("商家備註=?"); params.append(new_note)
-                                            
-                                            updates.append("物流運費=?"); params.append(new_fee_twd)
-                                            updates.append("物流運費_RMB=?"); params.append(new_fee_rmb)
-                                            updates.append("出貨成本=?"); params.append(calc_ship)
-                                            updates.append("訂單損益=?"); params.append(calc_profit)
-                                            
-                                            # 統一使用資料庫中抓到的正確訂單編號作為條件
-                                            params.append(db_oid)
-                                            
+                                            # 🌟 4. 【重出單專用邏輯】(透過承运单号比對成功的)
+                                            if is_fallback:
+                                                # 4-1. 運費「累加」邏輯
+                                                if import_fee_rmb_str != "":
+                                                    add_fee_rmb = float(import_fee_rmb_str)
+                                                    add_fee_twd = add_fee_rmb * exchange_rate
+                                                    
+                                                    new_total_rmb = float(db_shipping_rmb if db_shipping_rmb is not None else 0.0) + add_fee_rmb
+                                                    new_total_twd = float(db_shipping if db_shipping is not None else 0.0) + add_fee_twd
+                                                    
+                                                    updates.append("物流運費_RMB=?"); params.append(new_total_rmb)
+                                                    updates.append("物流運費=?"); params.append(new_total_twd)
+                                                    
+                                                    # 重新核算利潤
+                                                    calc_ship = float(db_cost) + new_total_twd
+                                                    calc_profit = float(db_revenue) - calc_ship
+                                                    updates.append("出貨成本=?"); params.append(calc_ship)
+                                                    updates.append("訂單損益=?"); params.append(calc_profit)
+                                                    
+                                                # 4-2. 客戶備註「附加」邏輯
+                                                if has_note:
+                                                    import_note = str(row['商家備註']).strip()
+                                                    if import_note:
+                                                        current_note = str(db_merchant_note or "").strip()
+                                                        # 防止重複匯入相同的備註
+                                                        if import_note not in current_note:
+                                                            new_note = f"{current_note}\n[重出]: {import_note}".strip() if current_note else f"[重出]: {import_note}"
+                                                            updates.append("商家備註=?"); params.append(new_note)
+                                                            
+                                            # 🌟 5. 【一般單專用邏輯】(透過訂單編號比對成功的)
+                                            else:
+                                                raw_status = str(row['狀態']).strip() if has_status and str(row['狀態']).strip() != "" else None
+                                                status_map = {
+                                                    '在途': '配送中', '待取件': '已送達待取', '签收': '簽收', '退回': '退回',
+                                                    '退货上架': '已上架', '客诉': '客訴', '已重出': '已重出'
+                                                }
+                                                new_status = status_map.get(raw_status) or (raw_status if raw_status in STATUS_LIST else None)
+                                                
+                                                if import_logi and not new_status:
+                                                    new_status = '配送中'
+                                                    
+                                                if new_status: updates.append("取貨狀態=?"); params.append(new_status)
+                                                if import_logi: updates.append("物流編號=?"); params.append(import_logi)
+                                                
+                                                new_date = None
+                                                if new_status == '簽收' and has_date and str(row['取貨日期']).strip() != "":
+                                                    new_date = str(row['取貨日期']).strip()
+                                                if new_date: updates.append("取貨日期=?"); params.append(new_date)
+                                                
+                                                # 一般單的運費是「覆蓋」邏輯
+                                                if import_fee_rmb_str != "":
+                                                    new_fee_rmb = float(import_fee_rmb_str)
+                                                    new_fee_twd = new_fee_rmb * exchange_rate
+                                                else:
+                                                    new_fee_rmb = float(db_shipping_rmb if db_shipping_rmb is not None else 0.0)
+                                                    new_fee_twd = float(db_shipping if db_shipping is not None else 0.0)
+                                                    
+                                                updates.append("物流運費_RMB=?"); params.append(new_fee_rmb)
+                                                updates.append("物流運費=?"); params.append(new_fee_twd)
+                                                
+                                                calc_ship = float(db_cost) + new_fee_twd
+                                                calc_profit = float(db_revenue) - calc_ship
+                                                updates.append("出貨成本=?"); params.append(calc_ship)
+                                                updates.append("訂單損益=?"); params.append(calc_profit)
+
+                                            # 將最終結果寫入資料庫
                                             if updates:
+                                                params.append(db_oid)
                                                 cursor.execute(f"UPDATE customer_orders SET {', '.join(updates)} WHERE 訂單編號=?", tuple(params))
                                                 update_count += 1
                                     conn.commit()
                                 
                                 log_system_action("訂單明細", current_operator, "批量更新物流", f"比對更新了 {update_count} 筆訂單資訊，匯率設定：{exchange_rate}")
-                                st.success(f"✅ 成功為 {update_count} 筆訂單掛載了最新物流與狀態資訊！(已依匯率 {exchange_rate} 轉換為台幣)")
+                                st.success(f"✅ 成功為 {update_count} 筆訂單掛載了最新物流資訊！(已依匯率 {exchange_rate} 轉換台幣，重出單運費已累加)")
                                 time.sleep(1.5); st.rerun()
                     except Exception as e:
                         st.error(f"❌ 更新失敗，詳情：{str(e)}")
