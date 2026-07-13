@@ -1395,22 +1395,32 @@ elif menu == "訂單明細":
     # 🌟 3. 營運數據看板
     st.subheader("📊 營運數據看板")
     c_time, c_custom = st.columns([1, 2])
-    time_filter = c_time.selectbox("📅 選擇統計區間", ["全部", "今日", "本月", "本季", "今年", "自訂區間"])
+    # 👇 這裡新增了「本週」選項
+    time_filter = c_time.selectbox("📅 選擇統計區間", ["全部", "今日", "本週", "本月", "本季", "今年", "自訂區間"])
     
     df_dash = df_orders.copy()
     if not df_dash.empty:
         df_dash['訂單日期_dt'] = pd.to_datetime(df_dash['訂單日期'], errors='coerce')
         now = pd.Timestamp.today()
         
-        if time_filter == "今日": df_dash = df_dash[df_dash['訂單日期_dt'].dt.date == now.date()]
-        elif time_filter == "本月": df_dash = df_dash[(df_dash['訂單日期_dt'].dt.year == now.year) & (df_dash['訂單日期_dt'].dt.month == now.month)]
+        if time_filter == "今日": 
+            df_dash = df_dash[df_dash['訂單日期_dt'].dt.date == now.date()]
+        elif time_filter == "本週": 
+            # 👇 這裡新增「本週」的判斷邏輯 (依據 ISO 標準，週一到週日為一週)
+            current_year = now.isocalendar().year
+            current_week = now.isocalendar().week
+            df_dash = df_dash[(df_dash['訂單日期_dt'].dt.isocalendar().year == current_year) & (df_dash['訂單日期_dt'].dt.isocalendar().week == current_week)]
+        elif time_filter == "本月": 
+            df_dash = df_dash[(df_dash['訂單日期_dt'].dt.year == now.year) & (df_dash['訂單日期_dt'].dt.month == now.month)]
         elif time_filter == "本季":
             current_quarter = (now.month - 1) // 3 + 1
             df_dash = df_dash[(df_dash['訂單日期_dt'].dt.year == now.year) & (df_dash['訂單日期_dt'].dt.quarter == current_quarter)]
-        elif time_filter == "今年": df_dash = df_dash[df_dash['訂單日期_dt'].dt.year == now.year]
+        elif time_filter == "今年": 
+            df_dash = df_dash[df_dash['訂單日期_dt'].dt.year == now.year]
         elif time_filter == "自訂區間":
             dates = c_custom.date_input("選擇自訂日期區間", [])
-            if len(dates) == 2: df_dash = df_dash[(df_dash['訂單日期_dt'].dt.date >= dates[0]) & (df_dash['訂單日期_dt'].dt.date <= dates[1])]
+            if len(dates) == 2: 
+                df_dash = df_dash[(df_dash['訂單日期_dt'].dt.date >= dates[0]) & (df_dash['訂單日期_dt'].dt.date <= dates[1])]
     
     total_orders = len(df_dash)
     total_revenue = df_dash['包裹應收'].sum() if not df_dash.empty else 0
@@ -1418,11 +1428,14 @@ elif menu == "訂單明細":
     total_shipping = df_dash['物流運費'].sum() if not df_dash.empty else 0
     total_est_profit = df_dash['訂單損益'].sum() if not df_dash.empty else 0
     
-    # 🌟 更新狀態對應邏輯 (簽收=成功, 退回=失敗, 已取消=取消, 異常處理=客訴/已上架/已重出)
+    # 👇 🌟 更新你指定的狀態對應邏輯
     picked_up = len(df_dash[df_dash['取貨狀態'] == '簽收']) if not df_dash.empty else 0
-    returned = len(df_dash[df_dash['取貨狀態'].isin(['客訴', '已上架', '已重出'])]) if not df_dash.empty else 0
+    # 總退回數：包含 退回、已上架、已重出、客訴
+    unclaimed = len(df_dash[df_dash['取貨狀態'].isin(['退回', '已上架', '已重出', '客訴'])]) if not df_dash.empty else 0
+    # 未處理訂單：只算 待出貨
+    pending = len(df_dash[df_dash['取貨狀態'] == '待出貨']) if not df_dash.empty else 0
+    # 總取消數：只算 已取消
     cancelled = len(df_dash[df_dash['取貨狀態'] == '已取消']) if not df_dash.empty else 0
-    unclaimed = len(df_dash[df_dash['取貨狀態'] == '退回']) if not df_dash.empty else 0
     
     actual_profit = 0
     if not df_dash.empty:
@@ -1447,8 +1460,9 @@ elif menu == "訂單明細":
     
     m6, m7, m8, m9, m10 = st.columns(5)
     m6.metric("✅ 總簽收數", f"{picked_up:,}")
-    m7.metric("❌ 總退回數", f"{unclaimed:,}")
-    m8.metric("🔄 異常與客訴", f"{returned:,}")
+    # 👇 這裡的標題跟變數都換成你指定的新邏輯
+    m7.metric("❌ 總退回數", f"{unclaimed:,}", help="包含：退回、已上架、已重出、客訴")
+    m8.metric("⏳ 未處理訂單", f"{pending:,}", help="僅計算狀態為「待出貨」的訂單")
     m9.metric("🚫 總取消數", f"{cancelled:,}")
     m10.metric("💎 總實際利潤", f"${actual_profit:,.0f}", help="實際利潤 = (簽收的訂單損益) - (退回所損失的物流運費)")
 
