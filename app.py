@@ -1977,12 +1977,13 @@ elif menu == "訂單明細":
                     try:
                         df_imp = pd.read_csv(uploaded_order) if uploaded_order.name.endswith('.csv') else pd.read_excel(uploaded_order, engine='openpyxl')
                         
+                        # 🌟 1. 這裡新增了「超商寄貨編號(拋單後取得)」對應到「物流編號」
                         col_mapping = {
                             '訂單編號': '訂單編號', '建立日期': '訂單日期', '收件人': '姓名', '貨號': '品項內容',
                             '總計金額': '包裹應收', '聯絡電話': '電話', '連絡電話': '電話', 'Email': '信箱', '信箱': '信箱', 
                             '運送超商': '門市', '超商代號': '店號',
                             '顧客備註': '顧客備註', '商家備註': '商家備註',
-                            '超商寄貨編號(拋單後取得)': '物流編號'  # 🌟 1. 新增物流編號對應
+                            '超商寄貨編號(拋單後取得)': '物流編號', '物流編號': '物流編號'
                         }
                         df_imp = df_imp.rename(columns=col_mapping)
                         
@@ -2008,7 +2009,6 @@ elif menu == "訂單明細":
                                 cursor = conn.cursor()
                                 count = 0
                                 for _, row in df_grouped.iterrows():
-                                    # 🌟 保留原有的金額與狀態判斷
                                     rev = float(row.get('包裹應收', 0.0))
                                     
                                     raw_order_status = str(row.get('訂單狀態', row.get('订单状态', ''))).strip()
@@ -2017,14 +2017,22 @@ elif menu == "訂單明細":
                                     else:
                                         init_status = '待出貨'
 
-                                    # 🌟 處理空日期
                                     raw_date = str(row.get('訂單日期', '')).strip()
                                     order_date = raw_date if raw_date else None
                                     
-                                    # 🌟 2. 抓取對應好的物流編號
-                                    logi_num = str(row.get('物流編號', '')).strip()
+                                    # 🌟 2. 新增物流編號處理邏輯 (全家防呆與補 0)
+                                    store_name = str(row.get('門市', '')).strip()
+                                    raw_logi = str(row.get('物流編號', '')).strip()
+                                    
+                                    if raw_logi and raw_logi.lower() not in ['nan', 'none']:
+                                        if raw_logi.endswith('.0'): raw_logi = raw_logi[:-2] # 避免 Excel 讀成浮點數
+                                        # 如果是全家且開頭沒有0，就自動補上0
+                                        if '全家' in store_name and not raw_logi.startswith('0'):
+                                            raw_logi = '0' + raw_logi
+                                    else:
+                                        raw_logi = ''
 
-                                    # 🌟 3. 寫入資料庫，加入對物流編號的處理，並確保不會覆蓋掉已有的單號
+                                    # 🌟 3. 將原本寫死的 '' 換成傳入的變數，並在 UPDATE 時如果新資料有單號則覆蓋
                                     cursor.execute("""
                                         INSERT INTO customer_orders 
                                         (訂單編號, 訂單日期, 姓名, 電話, 信箱, 門市, 店號, 品項內容, 下單總數, 包裹應收, 商品成本, 物流運費, 出貨成本, 訂單損益, 物流編號, 取貨狀態, 取貨日期, 顧客備註, 商家備註)
@@ -2045,16 +2053,16 @@ elif menu == "訂單明細":
                                             商家備註 = excluded.商家備註;
                                     """, (
                                         str(row['訂單編號']).strip(), 
-                                        order_date, 
+                                        order_date,
                                         str(row.get('姓名', '')),
                                         str(row.get('電話', '')), 
                                         str(row.get('信箱', '')), 
-                                        str(row.get('門市', '')), 
+                                        store_name, 
                                         str(row.get('店號', '')),
                                         str(row.get('品項內容', '')), 
                                         rev, 
                                         rev, 
-                                        logi_num,  # 🌟 傳入物流編號
+                                        raw_logi,  # 🌟 新增對應的物流編號變數
                                         init_status,
                                         str(row.get('顧客備註', '')), 
                                         str(row.get('商家備註', ''))
@@ -2062,7 +2070,7 @@ elif menu == "訂單明細":
                                     count += 1
                                 conn.commit()
                                 
-                            log_system_action("訂單明細", current_operator, "匯入訂單資料", f"成功批次合併與匯入了 {count} 筆訂單，包含新欄位")
+                            log_system_action("訂單明細", current_operator, "匯入訂單資料", f"成功批次合併與匯入了 {count} 筆訂單，並更新了物流單號")
                             st.success(f"✅ 成功匯入並智能合併為 {count} 筆獨立訂單！")
                             time.sleep(1.5); st.rerun()
                     except Exception as e:
