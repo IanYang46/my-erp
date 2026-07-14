@@ -1582,52 +1582,70 @@ elif menu == "訂單明細":
         )
 
         if can_edit:
-            # 🌟 將按鈕區塊改為 4 欄，新增「導出詳細資料」按鈕
-                c_save, c_export_label, c_export_detail, c_del = st.columns([1, 1, 1, 1])
+            # 🌟 將按鈕區塊改為 5 欄，新增「深港台重出」導出按鈕
+                c_save, c_export_label, c_export_detail, c_export_reship, c_del = st.columns(5)
                 
                 # 取得被勾選的訂單編號
                 selected_orders = edited_orders[edited_orders["🗑️ 勾選"] == True]['訂單編號'].tolist() if not edited_orders.empty and "🗑️ 勾選" in edited_orders.columns else []
 
                 with c_save:
                     if st.button("💾 儲存上方總表狀態變更", type="primary", use_container_width=True):
-                        try:
-                            with get_db() as conn:
-                                cursor = conn.cursor()
-                                for _, row in edited_orders.iterrows():
-                                    oid = str(row.get('訂單編號', '')).strip()
-                                    if pd.isna(oid) or oid == "": continue 
-                                    
-                                    orig_row = df_orders[df_orders['訂單編號'] == oid].iloc[0]
-                                    
-                                    u_date = row.get('訂單日期', orig_row.get('訂單日期', ''))
-                                    u_name = row.get('姓名', orig_row.get('姓名', ''))
-                                    u_phone = row.get('電話', orig_row.get('電話', ''))
-                                    u_email = row.get('信箱', orig_row.get('信箱', ''))
-                                    u_status = row.get('取貨狀態', orig_row.get('取貨狀態', '待出貨'))
-                                    u_logi = row.get('物流編號', orig_row.get('物流編號', ''))
-                                    
-                                    u_rev = float(row.get('包裹應收', orig_row.get('包裹應收', 0.0)))
-                                    u_cost = float(row.get('商品成本', orig_row.get('商品成本', 0.0)))
-                                    u_ship = float(row.get('物流運費', orig_row.get('物流運費', 0.0)))
-                                    
-                                    calc_ship_cost = u_cost + u_ship
-                                    calc_profit = u_rev - calc_ship_cost
-                                    
-                                    cursor.execute("""
-                                        UPDATE customer_orders SET 
-                                        訂單日期=?, 姓名=?, 電話=?, 信箱=?, 包裹應收=?, 商品成本=?, 物流運費=?, 出貨成本=?, 訂單損益=?, 物流編號=?, 取貨狀態=?
-                                        WHERE 訂單編號=?
-                                    """, (
-                                        str(u_date), str(u_name), str(u_phone), str(u_email),
-                                        u_rev, u_cost, u_ship, calc_ship_cost, calc_profit, 
-                                        str(u_logi), str(u_status), oid
-                                    ))
-                            conn.commit()
-                            log_system_action("訂單明細", current_operator, "更新訂單資料", "透過總表儲存了訂單狀態與變更")
-                            st.success("✅ 總表狀態資料已成功保存！")
-                            time.sleep(1); st.rerun()
-                        except Exception as e:
-                            st.error(f"❌ 儲存失敗：{str(e)}")
+                        # ... (這裡保留你原本 with c_save: 裡面的程式碼) ...
+
+                with c_export_label:
+                    if len(selected_orders) > 0:
+                        # ... (這裡保留你原本 with c_export_label: 裡面的程式碼) ...
+                    else:
+                        st.button("📥 請先勾選", disabled=True, use_container_width=True, key="btn_no_label")
+
+                with c_export_detail:
+                    if len(selected_orders) > 0:
+                        # ... (這裡保留你原本 with c_export_detail: 裡面的程式碼) ...
+                    else:
+                        st.button("📊 請先勾選", disabled=True, use_container_width=True, key="btn_no_detail")
+
+                # 🌟 新增功能：導出深港台重出表格區塊
+                with c_export_reship:
+                    if len(selected_orders) > 0:
+                        import io
+                        # 從選取的訂單建立新的 DataFrame
+                        df_selected_reship = df_orders[df_orders['訂單編號'].isin(selected_orders)].copy()
+                        df_reship = pd.DataFrame()
+                        
+                        # 依照你指定的固定格式填入與留白
+                        df_reship['主號'] = ""
+                        df_reship['袋號'] = ""
+                        df_reship['原單號'] = ""
+                        df_reship['運單重量'] = ""
+                        df_reship['收件人電話'] = df_selected_reship['電話']
+                        df_reship['收件人姓名'] = df_selected_reship['姓名']
+                        df_reship['超商代碼'] = df_selected_reship['店號']
+                        df_reship['超商名稱'] = df_selected_reship['門市']
+                        df_reship['超商地址'] = ""
+                        df_reship['代收貨款'] = df_selected_reship['包裹應收']
+                        df_reship['貨物價值'] = ""
+                        df_reship['品名'] = '香水'
+                        df_reship['寄件人公司'] = '深港台'
+                        df_reship['寄件人姓名'] = '深港台'
+                        df_reship['寄件人電話'] = '03-4498990'
+                        df_reship['寄件人地址'] = '桃園市中壢區內定八街790號'
+
+                        output_reship = io.BytesIO()
+                        with pd.ExcelWriter(output_reship, engine='openpyxl') as writer:
+                            df_reship.to_excel(writer, index=False, sheet_name='Sheet1')
+                        
+                        # 檔名自動抓取今天的月與日 (例如: 0713)
+                        file_name_reship = f"深港台重出{pd.Timestamp.today().strftime('%m%d')}.xlsx"
+
+                        st.download_button(
+                            label=f"📦 重出單 ({len(selected_orders)} 筆)",
+                            data=output_reship.getvalue(),
+                            file_name=file_name_reship,
+                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                            use_container_width=True
+                        )
+                    else:
+                        st.button("📦 請先勾選", disabled=True, use_container_width=True, key="btn_no_reship")
 
                 # 🌟 原有功能：導出列印面單區塊
                 with c_export_label:
