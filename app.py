@@ -1776,7 +1776,8 @@ elif menu == "訂單明細":
                     edit_email = c4.text_input("📧 聯絡信箱", value=target_order.get('信箱', ''))
                     edit_link = c5.text_input("訂單連結", value=target_order.get('訂單連結', ''))
 
-                    c6, c7, c8, c9 = st.columns(4)
+                    # 🌟 將 4 欄改成 5 欄，新增取貨日期編輯框
+                    c6, c7, c8, c9, c9a = st.columns(5)
                     edit_store = c6.text_input("取件門市", value=target_order.get('門市', ''))
                     edit_store_id = c7.text_input("門市店號", value=target_order.get('店號', ''))
                     edit_logistics = c8.text_input("物流編號", value=target_order.get('物流編號', ''))
@@ -1785,6 +1786,11 @@ elif menu == "訂單明細":
                     current_status = target_order.get('取貨狀態', '待出貨')
                     if current_status not in status_opts: status_opts.append(current_status)
                     edit_status = c9.selectbox("取貨狀態", options=status_opts, index=status_opts.index(current_status))
+                    
+                    # 讀取原本的取貨日期，並防呆避免顯示 nan
+                    raw_pickup = target_order.get('取貨日期', '')
+                    current_pickup = str(raw_pickup) if pd.notna(raw_pickup) and str(raw_pickup) != 'nan' else ''
+                    edit_pickup = c9a.text_input("取貨日期", value=current_pickup)
 
                     st.markdown("##### 💰 金額與成本核算 (應收與成本為台幣，運費請輸入人民幣)")
                     c10, c11, c12 = st.columns(3)
@@ -1817,17 +1823,17 @@ elif menu == "訂單明細":
                                 calc_single_profit = edit_revenue - calc_single_ship_cost
                                 
                                 with get_db() as conn:
-                                    # 🌟 新增寫入 物流運費_RMB 確保原價永久留存
+                                    # 🌟 寫入資料庫時加上 取貨日期
                                     conn.execute("""
                                         UPDATE customer_orders SET 
                                         訂單日期=?, 姓名=?, 電話=?, 信箱=?, 訂單連結=?, 
-                                        門市=?, 店號=?, 物流編號=?, 取貨狀態=?,
+                                        門市=?, 店號=?, 物流編號=?, 取貨狀態=?, 取貨日期=?,
                                         包裹應收=?, 商品成本=?, 物流運費=?, 物流運費_RMB=?, 出貨成本=?, 訂單損益=?,
                                         品項內容=?, 顧客備註=?, 商家備註=?
                                         WHERE 訂單編號=?
                                     """, (
                                         edit_date, edit_name, edit_phone, edit_email, edit_link,
-                                        edit_store, edit_store_id, edit_logistics, edit_status,
+                                        edit_store, edit_store_id, edit_logistics, edit_status, edit_pickup,
                                         edit_revenue, edit_cost, edit_shipping, edit_shipping_rmb, calc_single_ship_cost, calc_single_profit,
                                         new_items, edit_cust_note, edit_merch_note, selected_order
                                     ))
