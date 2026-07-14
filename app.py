@@ -1977,7 +1977,6 @@ elif menu == "訂單明細":
                     try:
                         df_imp = pd.read_csv(uploaded_order) if uploaded_order.name.endswith('.csv') else pd.read_excel(uploaded_order, engine='openpyxl')
                         
-                        # 🌟 1. 這裡新增了「超商寄貨編號(拋單後取得)」對應到「物流編號」
                         col_mapping = {
                             '訂單編號': '訂單編號', '建立日期': '訂單日期', '收件人': '姓名', '貨號': '品項內容',
                             '總計金額': '包裹應收', '聯絡電話': '電話', '連絡電話': '電話', 'Email': '信箱', '信箱': '信箱', 
@@ -2005,10 +2004,15 @@ elif menu == "訂單明細":
                                     
                             df_grouped = df_imp.groupby('訂單編號', as_index=False).agg(agg_funcs)
 
+                            # 🌟 1. 取得總筆數，並初始化新訂單匯入的進度條
+                            total_rows = len(df_grouped)
+                            progress_bar = st.progress(0, text=f"準備匯入 {total_rows} 筆訂單...")
+
                             with get_db() as conn:
                                 cursor = conn.cursor()
                                 count = 0
-                                for _, row in df_grouped.iterrows():
+                                # 🌟 2. 加入 enumerate 來追蹤目前的迴圈次數 (i)
+                                for i, (_, row) in enumerate(df_grouped.iterrows()):
                                     rev = float(row.get('包裹應收', 0.0))
                                     
                                     raw_order_status = str(row.get('訂單狀態', row.get('订单状态', ''))).strip()
@@ -2020,19 +2024,16 @@ elif menu == "訂單明細":
                                     raw_date = str(row.get('訂單日期', '')).strip()
                                     order_date = raw_date if raw_date else None
                                     
-                                    # 🌟 2. 新增物流編號處理邏輯 (全家防呆與補 0)
                                     store_name = str(row.get('門市', '')).strip()
                                     raw_logi = str(row.get('物流編號', '')).strip()
                                     
                                     if raw_logi and raw_logi.lower() not in ['nan', 'none']:
-                                        if raw_logi.endswith('.0'): raw_logi = raw_logi[:-2] # 避免 Excel 讀成浮點數
-                                        # 如果是全家且開頭沒有0，就自動補上0
+                                        if raw_logi.endswith('.0'): raw_logi = raw_logi[:-2] 
                                         if '全家' in store_name and not raw_logi.startswith('0'):
                                             raw_logi = '0' + raw_logi
                                     else:
                                         raw_logi = ''
 
-                                    # 🌟 3. 將原本寫死的 '' 換成傳入的變數，並在 UPDATE 時如果新資料有單號則覆蓋
                                     cursor.execute("""
                                         INSERT INTO customer_orders 
                                         (訂單編號, 訂單日期, 姓名, 電話, 信箱, 門市, 店號, 品項內容, 下單總數, 包裹應收, 商品成本, 物流運費, 出貨成本, 訂單損益, 物流編號, 取貨狀態, 取貨日期, 顧客備註, 商家備註)
@@ -2062,12 +2063,16 @@ elif menu == "訂單明細":
                                         str(row.get('品項內容', '')), 
                                         rev, 
                                         rev, 
-                                        raw_logi,  # 🌟 新增對應的物流編號變數
+                                        raw_logi, 
                                         init_status,
                                         str(row.get('顧客備註', '')), 
                                         str(row.get('商家備註', ''))
                                     ))
                                     count += 1
+                                    
+                                    # 🌟 3. 每次迴圈結束更新進度條與文字
+                                    progress_bar.progress((i + 1) / total_rows, text=f"匯入進度：{i + 1} / {total_rows} 筆 (成功寫入: {count} 筆)")
+                                    
                                 conn.commit()
                                 
                             log_system_action("訂單明細", current_operator, "匯入訂單資料", f"成功批次合併與匯入了 {count} 筆訂單，並更新了物流單號")
@@ -2076,129 +2081,122 @@ elif menu == "訂單明細":
                     except Exception as e:
                         st.error(f"❌ 匯入失敗，詳情：{str(e)}")
             
-        exp2 = st.expander("🚚 2. 批量導入【更新物流單號、狀態與運費】", expanded=False)
-        with exp2:
-            st.caption("💡 系統會以表格內的『訂單編號/订单号』尋找系統中對應的單號，並替換該單的【狀態】、【物流單號/运单号】、【運費/运费】。並重新幫您核算單筆利潤。")
-            
-            # 🌟 移除獨立設定，改為直接顯示並套用側邊欄的全域匯率
-            st.info(f"💱 系統將自動套用側邊欄目前的匯率：**{rate}**。若物流單內填寫的是人民幣，系統會自動轉換為台幣存檔。")
-            uploaded_logi = st.file_uploader("選擇物流更新檔案", type=["csv", "xlsx"], key="logi_uploader")
-            
-            # 將全域 rate 對應給下方的批量換算邏輯
-            exchange_rate = rate
-            
-            if uploaded_logi and st.button("🚀 執行【物流資訊】比對更新", type="primary", key="btn_update_logi"):
-                    try:
-                        df_logi = pd.read_csv(uploaded_logi) if uploaded_logi.name.endswith('.csv') else pd.read_excel(uploaded_logi, engine='openpyxl')
-                        
-                        # 幫您自動適配物流系統繁簡體亂流，並加入您指定的最新對應
-                        l_map = {
-                            '订单号': '訂單編號', '订单编号': '訂單編號', '訂單號': '訂單編號', '订单号码': '訂單編號',
-                            '状态': '狀態', '订单状态': '狀態', '取貨狀態': '狀態',
-                            '运单号': '物流編號', '交货单号': '物流編號', '发货单号': '物流編號', '物流單號': '物流編號',
-                            '运费': '物流運費', '实际运费': '物流運費',
-                            '末条时间': '取貨日期', '取货时间': '取貨日期'
-                        }
-                        df_logi = df_logi.rename(columns=l_map)
-                        
-                        if '訂單編號' not in df_logi.columns:
-                            st.error("❌ 檔案中找不到基準欄位『訂單編號』(或订单号码)，無法比對。")
-                        else:
-                            df_logi = df_logi[df_logi['訂單編號'].astype(str).str.strip() != ""]
+            exp2 = st.expander("🚚 2. 批量導入【更新物流單號、狀態與運費】", expanded=False)
+            with exp2:
+                st.caption("💡 系統會以表格內的『訂單編號/订单号』尋找系統中對應的單號，並替換該單的【狀態】、【物流單號/运单号】、【運費/运费】。並重新幫您核算單筆利潤。")
+                
+                st.info(f"💱 系統將自動套用側邊欄目前的匯率：**{rate}**。若物流單內填寫的是人民幣，系統會自動轉換為台幣存檔。")
+                uploaded_logi = st.file_uploader("選擇物流更新檔案", type=["csv", "xlsx"], key="logi_uploader")
+                
+                exchange_rate = rate
+                
+                if uploaded_logi and st.button("🚀 執行【物流資訊】比對更新", type="primary", key="btn_update_logi"):
+                        try:
+                            df_logi = pd.read_csv(uploaded_logi) if uploaded_logi.name.endswith('.csv') else pd.read_excel(uploaded_logi, engine='openpyxl')
                             
-                            has_status = '狀態' in df_logi.columns
-                            has_logi_num = '物流編號' in df_logi.columns
-                            has_fee = '物流運費' in df_logi.columns
-                            has_date = '取貨日期' in df_logi.columns
+                            l_map = {
+                                '订单号': '訂單編號', '订单编号': '訂單編號', '訂單號': '訂單編號', '订单号码': '訂單編號',
+                                '状态': '狀態', '订单状态': '狀態', '取貨狀態': '狀態',
+                                '运单号': '物流編號', '交货单号': '物流編號', '发货单号': '物流編號', '物流單號': '物流編號',
+                                '运费': '物流運費', '实际运费': '物流運費',
+                                '末条时间': '取貨日期', '取货时间': '取貨日期'
+                            }
+                            df_logi = df_logi.rename(columns=l_map)
                             
-                            if not (has_status or has_logi_num or has_fee or has_date):
-                                st.error("❌ 檔案中必須包含『狀態』、『发货单号』、『運費』或『末条时间』至少其中一欄。")
+                            if '訂單編號' not in df_logi.columns:
+                                st.error("❌ 檔案中找不到基準欄位『訂單編號』(或订单号码)，無法比對。")
                             else:
-                                if has_fee:
-                                    if df_logi['物流運費'].dtype == object: df_logi['物流運費'] = df_logi['物流運費'].astype(str).str.replace(',', '')
-                                    df_logi['物流運費'] = pd.to_numeric(df_logi['物流運費'], errors='coerce').fillna(0.0)
+                                df_logi = df_logi[df_logi['訂單編號'].astype(str).str.strip() != ""]
+                                
+                                has_status = '狀態' in df_logi.columns
+                                has_logi_num = '物流編號' in df_logi.columns
+                                has_fee = '物流運費' in df_logi.columns
+                                has_date = '取貨日期' in df_logi.columns
+                                
+                                if not (has_status or has_logi_num or has_fee or has_date):
+                                    st.error("❌ 檔案中必須包含『狀態』、『发货单号』、『運費』或『末条时间』至少其中一欄。")
+                                else:
+                                    if has_fee:
+                                        if df_logi['物流運費'].dtype == object: df_logi['物流運費'] = df_logi['物流運費'].astype(str).str.replace(',', '')
+                                        df_logi['物流運費'] = pd.to_numeric(df_logi['物流運費'], errors='coerce').fillna(0.0)
+                                        
+                                    df_logi = df_logi.fillna("")
+                                    update_count = 0
                                     
-                                df_logi = df_logi.fillna("")
-                                update_count = 0
-                                
-                                with get_db() as conn:
-                                    cursor = conn.cursor()
-                                    for _, row in df_logi.iterrows():
-                                        oid = str(row['訂單編號']).strip()
-                                        
-                                        # 🌟 加入撈取 物流運費_RMB
-                                        cursor.execute("SELECT 包裹應收, 商品成本, 物流運費, 物流運費_RMB FROM customer_orders WHERE 訂單編號=?", (oid,))
-                                        db_row = cursor.fetchone()
-                                        
-                                        if db_row:
-                                            db_revenue, db_cost, db_shipping, db_shipping_rmb = db_row
+                                    # 🌟 4. 取得總筆數，並初始化物流更新的進度條
+                                    total_logi_rows = len(df_logi)
+                                    progress_bar_logi = st.progress(0, text=f"準備比對更新 {total_logi_rows} 筆物流資料...")
+                                    
+                                    with get_db() as conn:
+                                        cursor = conn.cursor()
+                                        # 🌟 5. 加入 enumerate 來追蹤目前的迴圈次數 (i)
+                                        for i, (_, row) in enumerate(df_logi.iterrows()):
+                                            oid = str(row['訂單編號']).strip()
                                             
-                                            raw_status = str(row['狀態']).strip() if has_status and str(row['狀態']).strip() != "" else None
+                                            cursor.execute("SELECT 包裹應收, 商品成本, 物流運費, 物流運費_RMB FROM customer_orders WHERE 訂單編號=?", (oid,))
+                                            db_row = cursor.fetchone()
                                             
-                                            # 🌟 新增：物流狀態智能對應字典 (外部狀態 -> 系統狀態)
-                                            status_map = {
-                                                '在途': '配送中',
-                                                '待取件': '已送達待取',
-                                                '签收': '簽收',
-                                                '退回': '退回',
-                                                '退货上架': '已上架',
-                                                '客诉': '客訴',
-                                                '已重出': '已重出'
-                                            }
-                                            
-                                            new_status = None
-                                            if raw_status in status_map:
-                                                new_status = status_map[raw_status]
-                                            elif raw_status in STATUS_LIST:
-                                                # 如果匯入的狀態原本就等於系統內的標準狀態，也直接放行
-                                                new_status = raw_status
+                                            if db_row:
+                                                db_revenue, db_cost, db_shipping, db_shipping_rmb = db_row
                                                 
-                                            new_logi_num = str(row['物流編號']).strip() if has_logi_num and str(row['物流編號']).strip() != "" else None
-                                            
-                                            # 🌟 邏輯修正：將 Excel 匯入的運費鎖定為人民幣，並自動推算台幣
-                                            if has_fee and str(row['物流運費']).strip() != "":
-                                                new_fee_rmb = float(row['物流運費'])
-                                                new_fee_twd = new_fee_rmb * exchange_rate
-                                            else:
-                                                new_fee_rmb = float(db_shipping_rmb if db_shipping_rmb is not None else 0.0)
-                                                new_fee_twd = float(db_shipping)
+                                                raw_status = str(row['狀態']).strip() if has_status and str(row['狀態']).strip() != "" else None
                                                 
-                                            # 🚀 自動化：如果有匯入物流單號，且表格內沒有特別指定新狀態，自動轉為「配送中」
-                                            if new_logi_num and not new_status:
-                                                new_status = '配送中'
+                                                status_map = {
+                                                    '在途': '配送中', '待取件': '已送達待取', '签收': '簽收',
+                                                    '退回': '退回', '退货上架': '已上架', '客诉': '客訴', '已重出': '已重出'
+                                                }
+                                                
+                                                new_status = None
+                                                if raw_status in status_map:
+                                                    new_status = status_map[raw_status]
+                                                elif raw_status in STATUS_LIST:
+                                                    new_status = raw_status
+                                                    
+                                                new_logi_num = str(row['物流編號']).strip() if has_logi_num and str(row['物流編號']).strip() != "" else None
+                                                
+                                                if has_fee and str(row['物流運費']).strip() != "":
+                                                    new_fee_rmb = float(row['物流運費'])
+                                                    new_fee_twd = new_fee_rmb * exchange_rate
+                                                else:
+                                                    new_fee_rmb = float(db_shipping_rmb if db_shipping_rmb is not None else 0.0)
+                                                    new_fee_twd = float(db_shipping)
+                                                    
+                                                if new_logi_num and not new_status:
+                                                    new_status = '配送中'
 
-                                            # 🌟 限制：取貨日期欄只有在狀態被改為『簽收』時，才允許導入覆蓋
-                                            new_date = None
-                                            if new_status == '簽收' and has_date and str(row['取貨日期']).strip() != "":
-                                                new_date = str(row['取貨日期']).strip()
+                                                new_date = None
+                                                if new_status == '簽收' and has_date and str(row['取貨日期']).strip() != "":
+                                                    new_date = str(row['取貨日期']).strip()
+                                                    
+                                                calc_ship = float(db_cost) + new_fee_twd
+                                                calc_profit = float(db_revenue) - calc_ship
                                                 
-                                            # 自動結算新出貨成本與損益 (此時的 new_fee_twd 已經是台幣了)
-                                            calc_ship = float(db_cost) + new_fee_twd
-                                            calc_profit = float(db_revenue) - calc_ship
+                                                updates, params = [], []
+                                                if new_status: updates.append("取貨狀態=?"); params.append(new_status)
+                                                if new_logi_num: updates.append("物流編號=?"); params.append(new_logi_num)
+                                                if new_date: updates.append("取貨日期=?"); params.append(new_date)
+                                                
+                                                updates.append("物流運費=?"); params.append(new_fee_twd)
+                                                updates.append("物流運費_RMB=?"); params.append(new_fee_rmb)
+                                                updates.append("出貨成本=?"); params.append(calc_ship)
+                                                updates.append("訂單損益=?"); params.append(calc_profit)
+                                                
+                                                params.append(oid)
+                                                
+                                                if updates:
+                                                    cursor.execute(f"UPDATE customer_orders SET {', '.join(updates)} WHERE 訂單編號=?", tuple(params))
+                                                    update_count += 1
                                             
-                                            updates, params = [], []
-                                            if new_status: updates.append("取貨狀態=?"); params.append(new_status)
-                                            if new_logi_num: updates.append("物流編號=?"); params.append(new_logi_num)
-                                            if new_date: updates.append("取貨日期=?"); params.append(new_date)
+                                            # 🌟 6. 每次迴圈結束更新進度條與文字
+                                            progress_bar_logi.progress((i + 1) / total_logi_rows, text=f"更新進度：{i + 1} / {total_logi_rows} 筆 (成功比對: {update_count} 筆)")
                                             
-                                            # 🌟 補回遺漏的寫入語法：更新運費與重新結算的成本、損益
-                                            updates.append("物流運費=?"); params.append(new_fee_twd)
-                                            updates.append("物流運費_RMB=?"); params.append(new_fee_rmb)
-                                            updates.append("出貨成本=?"); params.append(calc_ship)
-                                            updates.append("訂單損益=?"); params.append(calc_profit)
-                                            
-                                            params.append(oid)
-                                            
-                                            if updates:
-                                                cursor.execute(f"UPDATE customer_orders SET {', '.join(updates)} WHERE 訂單編號=?", tuple(params))
-                                                update_count += 1
-                                    conn.commit()
-                                
-                                log_system_action("訂單明細", current_operator, "批量更新物流", f"比對更新了 {update_count} 筆訂單資訊，匯率設定：{exchange_rate}")
-                                st.success(f"✅ 成功為 {update_count} 筆訂單掛載了最新物流與狀態資訊！(已依匯率 {exchange_rate} 轉換為台幣)")
-                                time.sleep(1.5); st.rerun()
-                    except Exception as e:
-                        st.error(f"❌ 更新失敗，詳情：{str(e)}")
+                                        conn.commit()
+                                        
+                                    log_system_action("訂單明細", current_operator, "批量更新物流", f"比對更新了 {update_count} 筆訂單資訊，匯率設定：{exchange_rate}")
+                                    st.success(f"✅ 成功為 {update_count} 筆訂單掛載了最新物流與狀態資訊！(已依匯率 {exchange_rate} 轉換為台幣)")
+                                    time.sleep(1.5); st.rerun()
+                        except Exception as e:
+                            st.error(f"❌ 更新失敗，詳情：{str(e)}")
 
 elif menu == "財務報表":
     st.title("📈 財務與利潤分析")
