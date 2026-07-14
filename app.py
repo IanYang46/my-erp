@@ -2211,7 +2211,7 @@ elif menu == "訂單明細":
             # =========== 以下為新增的 exp3：依物流單號(承运单号)對應更新 ===========
             exp3 = st.expander("💰 3. 批量導入【依物流單號更新運費與狀態】", expanded=False)
             with exp3:
-                st.caption("💡 系統會以表格內的『承运单号』尋找系統中對應的『物流編號』，並替換該單的【狀態】(状态) 與【運費】(运费)，同時重新核算單筆利潤。")
+                st.caption("💡 系統會以表格內的『承运单号』尋找系統中對應的『物流編號』，並替換該單的【狀態】(状态) 與【運費】(运费)，若狀態為簽收則同步更新【取貨時間】(末条时间)，同時重新核算單筆利潤。")
                 st.info(f"💱 系統將自動套用側邊欄目前的匯率：**{rate}**。若運費欄填寫的是人民幣，系統會自動轉換為台幣存檔。")
                 
                 uploaded_track = st.file_uploader("選擇依物流單號更新之檔案", type=["csv", "xlsx"], key="track_uploader")
@@ -2220,11 +2220,12 @@ elif menu == "訂單明細":
                     try:
                         df_track = pd.read_csv(uploaded_track) if uploaded_track.name.endswith('.csv') else pd.read_excel(uploaded_track, engine='openpyxl')
                         
-                        # 欄位映射：把外部表單的名字統一換成我們程式看得懂的
+                        # 🌟 新增：將「末条时间」、「取货时间」加入映射字典
                         t_map = {
                             '承运单号': '物流編號', '承運單號': '物流編號', '物流單號': '物流編號', '物流单号': '物流編號',
                             '状态': '狀態', '狀態': '狀態', '订单状态': '狀態', '取貨狀態': '狀態',
-                            '运费': '物流運費', '運費': '物流運費', '实际运费': '物流運費'
+                            '运费': '物流運費', '運費': '物流運費', '实际运费': '物流運費',
+                            '末条时间': '取貨日期', '末條時間': '取貨日期', '取货时间': '取貨日期', '取貨時間': '取貨日期'
                         }
                         df_track = df_track.rename(columns=t_map)
                         
@@ -2236,9 +2237,10 @@ elif menu == "訂單明細":
                             
                             has_status = '狀態' in df_track.columns
                             has_fee = '物流運費' in df_track.columns
+                            has_date = '取貨日期' in df_track.columns  # 🌟 新增：偵測是否有時間欄位
                             
-                            if not (has_status or has_fee):
-                                st.error("❌ 檔案中必須包含『状态』或『运费』至少其中一欄。")
+                            if not (has_status or has_fee or has_date):
+                                st.error("❌ 檔案中必須包含『状态』、『运费』或『末条时间』至少其中一欄。")
                             else:
                                 if has_fee:
                                     if df_track['物流運費'].dtype == object: df_track['物流運費'] = df_track['物流運費'].astype(str).str.replace(',', '')
@@ -2255,7 +2257,6 @@ elif menu == "訂單明細":
                                     for i, (_, row) in enumerate(df_track.iterrows()):
                                         t_num = str(row['物流編號']).strip()
                                         
-                                        # 依物流單號尋找訂單 (用 fetchall 是因為若有多筆訂單合併同一包寄出，要一起更新)
                                         cursor.execute("SELECT 訂單編號, 包裹應收, 商品成本, 物流運費_RMB FROM customer_orders WHERE 物流編號=?", (t_num,))
                                         db_rows = cursor.fetchall() 
                                         
@@ -2265,7 +2266,6 @@ elif menu == "訂單明細":
                                                 
                                                 raw_status = str(row['狀態']).strip() if has_status and str(row['狀態']).strip() != "" else None
                                                 
-                                                # 大陸物流狀態轉換字典
                                                 status_map = {
                                                     '在途': '配送中', '待取件': '已送達待取', '签收': '簽收',
                                                     '退回': '退回', '退货上架': '已上架', '客诉': '客訴', '已重出': '已重出'
@@ -2276,8 +2276,12 @@ elif menu == "訂單明細":
                                                     new_status = status_map[raw_status]
                                                 elif raw_status in STATUS_LIST:
                                                     new_status = raw_status
+
+                                                # 🌟 新增：擷取簽收時間
+                                                new_date = None
+                                                if new_status == '簽收' and has_date and str(row['取貨日期']).strip() != "":
+                                                    new_date = str(row['取貨日期']).strip()
                                                     
-                                                # 如果有運費，則寫入 RMB 欄位並自動乘以匯率轉換為台幣
                                                 if has_fee and str(row['物流運費']).strip() != "":
                                                     new_fee_rmb = float(row['物流運費'])
                                                     new_fee_twd = new_fee_rmb * rate
@@ -2285,7 +2289,6 @@ elif menu == "訂單明細":
                                                     new_fee_rmb = float(db_shipping_rmb if db_shipping_rmb is not None else 0.0)
                                                     new_fee_twd = new_fee_rmb * rate
                                                     
-                                                # 重新核算成本與損益
                                                 calc_ship = float(db_cost) + new_fee_twd
                                                 calc_profit = float(db_revenue) - calc_ship
                                                 
@@ -2293,13 +2296,18 @@ elif menu == "訂單明細":
                                                 if new_status: 
                                                     updates.append("取貨狀態=?")
                                                     params.append(new_status)
+                                                    
+                                                # 🌟 新增：如果狀態是簽收且有時間，寫入資料庫
+                                                if new_date:
+                                                    updates.append("取貨日期=?")
+                                                    params.append(new_date)
                                                 
                                                 updates.append("物流運費_RMB=?"); params.append(new_fee_rmb)
                                                 updates.append("物流運費=?"); params.append(new_fee_twd)
                                                 updates.append("出貨成本=?"); params.append(calc_ship)
                                                 updates.append("訂單損益=?"); params.append(calc_profit)
                                                 
-                                                params.append(oid) # 條件：該筆訂單編號
+                                                params.append(oid)
                                                 
                                                 if updates:
                                                     cursor.execute(f"UPDATE customer_orders SET {', '.join(updates)} WHERE 訂單編號=?", tuple(params))
@@ -2310,7 +2318,7 @@ elif menu == "訂單明細":
                                     conn.commit()
                                     
                                 log_system_action("訂單明細", current_operator, "依物流單號更新", f"比對更新了 {update_count} 筆訂單，匯率設定：{rate}")
-                                st.success(f"✅ 成功依物流單號為 {update_count} 筆訂單更新了運費與狀態！")
+                                st.success(f"✅ 成功依物流單號為 {update_count} 筆訂單更新了運費、狀態與時間！")
                                 time.sleep(1.5); st.rerun()
                     except Exception as e:
                         st.error(f"❌ 更新失敗，詳情：{str(e)}")
