@@ -1344,6 +1344,13 @@ elif menu == "訂單明細":
     with get_db() as conn:
         df_orders = pd.read_sql("SELECT * FROM customer_orders ORDER BY 訂單日期 DESC", conn)
 
+    # 🌟 終極防呆：處理 PostgreSQL 自動轉小寫問題，若無欄位則強制建立
+    if not df_orders.empty:
+        if '物流運費_rmb' in df_orders.columns:
+            df_orders = df_orders.rename(columns={'物流運費_rmb': '物流運費_RMB'})
+        if '物流運費_RMB' not in df_orders.columns:
+            df_orders['物流運費_RMB'] = 0.0
+
     # 🌟 2. 資料預處理與重複客偵測
     if not df_orders.empty:
         # 防呆補空值
@@ -1375,9 +1382,10 @@ elif menu == "訂單明細":
         df_orders['品項內容_原始'] = df_orders['品項內容'].apply(clean_and_preview)
         df_orders['品項預覽'] = df_orders['品項內容_原始'].apply(lambda x: x.replace('\n', ' ｜ '))
         
-        # 確保財務欄位為數值型態
+        # 確保財務欄位為數值型態 (加上防呆檢查：欄位存在才進行轉換)
         for col in ['包裹應收', '商品成本', '物流運費', '物流運費_RMB', '出貨成本', '訂單損益']:
-            df_orders[col] = pd.to_numeric(df_orders[col], errors='coerce').fillna(0.0)
+            if col in df_orders.columns:
+                df_orders[col] = pd.to_numeric(df_orders[col], errors='coerce').fillna(0.0)
 
         # 👇 智能重複客偵測邏輯 (只要姓名、電話或信箱其一重複大於1次，就標記)
         name_counts = df_orders[df_orders['姓名'] != '']['姓名'].value_counts()
