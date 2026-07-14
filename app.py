@@ -1883,6 +1883,7 @@ elif menu == "訂單明細":
                                     new_items, edit_cust_note, edit_merch_note, selected_order
                                 ))
                                 conn.commit()
+                                
                                 log_system_action("訂單明細", current_operator, "編輯單筆完整訂單", f"全面更新了訂單 {selected_order} 的詳細資訊與備註")
                                 st.success(f"✅ 訂單 {selected_order} 資訊更新成功！出貨成本結算為 {calc_single_ship_cost:,.0f}，損益為 {calc_single_profit:,.0f}。")
                                 time.sleep(1.5); st.rerun()
