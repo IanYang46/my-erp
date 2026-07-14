@@ -1376,7 +1376,7 @@ elif menu == "訂單明細":
         df_orders['品項預覽'] = df_orders['品項內容_原始'].apply(lambda x: x.replace('\n', ' ｜ '))
         
         # 確保財務欄位為數值型態
-        for col in ['包裹應收', '商品成本', '物流運費', '出貨成本', '訂單損益']:
+        for col in ['包裹應收', '商品成本', '物流運費', '物流運費_RMB', '出貨成本', '訂單損益']:
             df_orders[col] = pd.to_numeric(df_orders[col], errors='coerce').fillna(0.0)
 
         # 👇 智能重複客偵測邏輯 (只要姓名、電話或信箱其一重複大於1次，就標記)
@@ -1783,8 +1783,10 @@ elif menu == "訂單明細":
                     edit_revenue = c10.number_input("包裹應收 (TWD)", value=float(target_order.get('包裹應收', 0.0)), step=10.0)
                     edit_cost = c11.number_input("商品成本 (TWD)", value=float(target_order.get('商品成本', 0.0)), step=10.0)
                     
-                    # 🌟 運費直接讀取資料庫專屬的 RMB 欄位，不再因為匯率變動而失真
-                    current_shipping_rmb = float(target_order.get('物流運費_RMB', 0.0))
+                    # 🌟 雙重防呆：確保讀取到的 RMB 運費有效，若是空值或 NaN 則預設為 0.0
+                    raw_rmb = target_order.get('物流運費_RMB', 0.0)
+                    current_shipping_rmb = float(raw_rmb) if pd.notna(raw_rmb) else 0.0
+                    
                     edit_shipping_rmb = c12.number_input("物流運費 (RMB)", value=current_shipping_rmb, step=1.0)
                     edit_shipping = edit_shipping_rmb * rate  # 換算為台幣供後續運算
                     
