@@ -1864,26 +1864,22 @@ elif menu == "訂單明細":
                                 calc_single_ship_cost = edit_cost + edit_shipping
                                 calc_single_profit = edit_revenue - calc_single_ship_cost
                                 
-                                # 在執行更新前，處理空日期
-                            sql_pickup = edit_pickup if edit_pickup and edit_pickup.strip() != "" else None
-                            
-                            with get_db() as conn:
-                                # 🌟 修改這裡：如果取貨日期是空值，傳入 None，資料庫會寫入 NULL
-                                conn.execute("""
-                                    UPDATE customer_orders SET 
-                                    訂單日期=?, 姓名=?, 電話=?, 信箱=?, 訂單連結=?, 
-                                    門市=?, 店號=?, 物流編號=?, 取貨狀態=?, 取貨日期=?,
-                                    包裹應收=?, 商品成本=?, 物流運費=?, 物流運費_RMB=?, 出貨成本=?, 訂單損益=?,
-                                    品項內容=?, 顧客備註=?, 商家備註=?
-                                    WHERE 訂單編號=?
-                                """, (
-                                    edit_date, edit_name, edit_phone, edit_email, edit_link,
-                                    edit_store, edit_store_id, edit_logistics, edit_status, sql_pickup,
-                                    edit_revenue, edit_cost, edit_shipping, edit_shipping_rmb, calc_single_ship_cost, calc_single_profit,
-                                    new_items, edit_cust_note, edit_merch_note, selected_order
-                                ))
-                                conn.commit()
-                                
+                                with get_db() as conn:
+                                    # 🌟 寫入資料庫時加上 取貨日期
+                                    conn.execute("""
+                                        UPDATE customer_orders SET 
+                                        訂單日期=?, 姓名=?, 電話=?, 信箱=?, 訂單連結=?, 
+                                        門市=?, 店號=?, 物流編號=?, 取貨狀態=?, 取貨日期=?,
+                                        包裹應收=?, 商品成本=?, 物流運費=?, 物流運費_RMB=?, 出貨成本=?, 訂單損益=?,
+                                        品項內容=?, 顧客備註=?, 商家備註=?
+                                        WHERE 訂單編號=?
+                                    """, (
+                                        edit_date, edit_name, edit_phone, edit_email, edit_link,
+                                        edit_store, edit_store_id, edit_logistics, edit_status, edit_pickup,
+                                        edit_revenue, edit_cost, edit_shipping, edit_shipping_rmb, calc_single_ship_cost, calc_single_profit,
+                                        new_items, edit_cust_note, edit_merch_note, selected_order
+                                    ))
+                                    conn.commit()
                                 log_system_action("訂單明細", current_operator, "編輯單筆完整訂單", f"全面更新了訂單 {selected_order} 的詳細資訊與備註")
                                 st.success(f"✅ 訂單 {selected_order} 資訊更新成功！出貨成本結算為 {calc_single_ship_cost:,.0f}，損益為 {calc_single_profit:,.0f}。")
                                 time.sleep(1.5); st.rerun()
