@@ -1864,6 +1864,9 @@ elif menu == "訂單明細":
                                 calc_single_ship_cost = edit_cost + edit_shipping
                                 calc_single_profit = edit_revenue - calc_single_ship_cost
                                 
+                                # 🌟 防呆：將空字串轉換為 None，讓資料庫存入 NULL
+                                sql_pickup = edit_pickup if edit_pickup and edit_pickup.strip() != "" else None
+                                
                                 with get_db() as conn:
                                     # 🌟 寫入資料庫時加上 取貨日期
                                     conn.execute("""
@@ -1875,7 +1878,7 @@ elif menu == "訂單明細":
                                         WHERE 訂單編號=?
                                     """, (
                                         edit_date, edit_name, edit_phone, edit_email, edit_link,
-                                        edit_store, edit_store_id, edit_logistics, edit_status, edit_pickup,
+                                        edit_store, edit_store_id, edit_logistics, edit_status, sql_pickup,
                                         edit_revenue, edit_cost, edit_shipping, edit_shipping_rmb, calc_single_ship_cost, calc_single_profit,
                                         new_items, edit_cust_note, edit_merch_note, selected_order
                                     ))
