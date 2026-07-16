@@ -1426,7 +1426,8 @@ elif menu == "訂單明細":
         elif time_filter == "今年": 
             df_dash = df_dash[df_dash['訂單日期_dt'].dt.year == now.year]
         elif time_filter == "自訂區間":
-            dates = c_custom.date_input("選擇自訂日期區間", [])
+            # 🌟 加上 format="YYYY/MM/DD"，讓選出來的日期符合台灣閱讀習慣
+            dates = c_custom.date_input("選擇自訂日期區間", [], format="YYYY/MM/DD")
             if len(dates) == 2: 
                 df_dash = df_dash[(df_dash['訂單日期_dt'].dt.date >= dates[0]) & (df_dash['訂單日期_dt'].dt.date <= dates[1])]
     
