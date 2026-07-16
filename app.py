@@ -1582,73 +1582,11 @@ elif menu == "訂單明細":
         )
 
         if can_edit:
-            # 🌟 將按鈕區塊改為 5 欄，新增「重出單」導出按鈕
-            c_save, c_export_label, c_export_detail, c_export_reship, c_del = st.columns(5)
+            # 🌟 將按鈕區塊改回 4 欄，移除「儲存上方總表狀態變更」按鈕
+            c_export_label, c_export_detail, c_export_reship, c_del = st.columns(4)
             
             # 取得被勾選的訂單編號
             selected_orders = edited_orders[edited_orders["🗑️ 勾選"] == True]['訂單編號'].tolist() if not edited_orders.empty and "🗑️ 勾選" in edited_orders.columns else []
-
-            with c_save:
-                if st.button("💾 儲存上方總表狀態變更", type="primary", use_container_width=True):
-                    try:
-                        # 🌟 智能升級：透過 Streamlit Session State 只抓取「真正被修改過」的儲存格
-                        editor_state = st.session_state.get("orders_editor", {})
-                        edited_rows = editor_state.get("edited_rows", {})
-                        
-                        if not edited_rows:
-                            st.warning("⚠️ 尚未偵測到任何修改，無需儲存！(請先在表格內點擊修改狀態或金額)")
-                        else:
-                            with get_db() as conn:
-                                cursor = conn.cursor()
-                                update_count = 0
-                                
-                                # 只針對有被修改的那幾筆訂單進行迴圈與寫入
-                                for row_idx_str, changes in edited_rows.items():
-                                    row_idx = int(row_idx_str)
-                                    
-                                    # 防呆確保索引正確
-                                    if row_idx in df_display.index:
-                                        orig_disp_row = df_display.loc[row_idx]
-                                        oid = str(orig_disp_row.get('訂單編號', '')).strip()
-                                        if pd.isna(oid) or not oid: continue 
-                                        
-                                        # 取得該筆訂單原本在資料庫的完整狀態
-                                        orig_row = df_orders[df_orders['訂單編號'] == oid].iloc[0]
-                                        
-                                        # 若有修改該欄位，則取修改後的新值 (changes)；若無，則保留原始值 (orig_row)
-                                        u_date = changes.get('訂單日期', orig_row.get('訂單日期', ''))
-                                        u_name = changes.get('姓名', orig_row.get('姓名', ''))
-                                        u_phone = changes.get('電話', orig_row.get('電話', ''))
-                                        u_email = changes.get('信箱', orig_row.get('信箱', ''))
-                                        u_status = changes.get('取貨狀態', orig_row.get('取貨狀態', '待出貨'))
-                                        u_logi = changes.get('物流編號', orig_row.get('物流編號', ''))
-                                        
-                                        u_rev = float(changes.get('包裹應收', orig_row.get('包裹應收', 0.0)))
-                                        u_cost = float(changes.get('商品成本', orig_row.get('商品成本', 0.0)))
-                                        u_ship = float(changes.get('物流運費', orig_row.get('物流運費', 0.0)))
-                                        
-                                        calc_ship_cost = u_cost + u_ship
-                                        calc_profit = u_rev - calc_ship_cost
-                                        
-                                        cursor.execute("""
-                                            UPDATE customer_orders SET 
-                                            訂單日期=?, 姓名=?, 電話=?, 信箱=?, 包裹應收=?, 商品成本=?, 物流運費=?, 出貨成本=?, 訂單損益=?, 物流編號=?, 取貨狀態=?
-                                            WHERE 訂單編號=?
-                                        """, (
-                                            str(u_date), str(u_name), str(u_phone), str(u_email),
-                                            u_rev, u_cost, u_ship, calc_ship_cost, calc_profit, 
-                                            str(u_logi), str(u_status), oid
-                                        ))
-                                        update_count += 1
-                                        
-                                # 🌟 致命錯誤修正：將 conn.commit() 往內縮排，確保在連線關閉前執行存檔！
-                                conn.commit()
-                                
-                            log_system_action("訂單明細", current_operator, "更新總表資料", f"透過總表儲存了 {update_count} 筆狀態與變更")
-                            st.success(f"✅ 成功保存了 {update_count} 筆訂單的變更！")
-                            time.sleep(1); st.rerun()
-                    except Exception as e:
-                        st.error(f"❌ 儲存失敗：{str(e)}")
 
             # 🌟 原有功能：導出列印面單區塊
             with c_export_label:
