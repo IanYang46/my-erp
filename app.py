@@ -1426,10 +1426,24 @@ elif menu == "訂單明細":
         elif time_filter == "今年": 
             df_dash = df_dash[df_dash['訂單日期_dt'].dt.year == now.year]
         elif time_filter == "自訂區間":
-            # 🌟 加上 format="YYYY/MM/DD"，讓選出來的日期符合台灣閱讀習慣
-            dates = c_custom.date_input("選擇自訂日期區間", [], format="YYYY/MM/DD")
-            if len(dates) == 2: 
-                df_dash = df_dash[(df_dash['訂單日期_dt'].dt.date >= dates[0]) & (df_dash['訂單日期_dt'].dt.date <= dates[1])]
+            # 建立三欄：年、月、日
+            c_y, c_m, c_d = st.columns(3)
+            
+            # 設定年份與月份範圍
+            years = list(range(2025, 2028)) # 可依照需要調整年份範圍
+            months = list(range(1, 13))
+            days = list(range(1, 32))
+            
+            # 預設選取當前日期
+            sel_y = c_y.selectbox("年份", years, index=years.index(now.year))
+            sel_m = c_m.selectbox("月份", months, index=months.index(now.month))
+            sel_d = c_d.selectbox("日期", days, index=days.index(now.day))
+            
+            # 組合出一個 datetime 物件來篩選
+            selected_date = pd.Timestamp(year=sel_y, month=sel_m, day=sel_d)
+            
+            # 篩選邏輯 (顯示該日期當天的訂單)
+            df_dash = df_dash[df_dash['訂單日期_dt'].dt.date == selected_date.date()]
     
     total_orders = len(df_dash)
     total_revenue = df_dash['包裹應收'].sum() if not df_dash.empty else 0
