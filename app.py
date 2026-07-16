@@ -1426,24 +1426,33 @@ elif menu == "訂單明細":
         elif time_filter == "今年": 
             df_dash = df_dash[df_dash['訂單日期_dt'].dt.year == now.year]
         elif time_filter == "自訂區間":
-            # 建立三欄：年、月、日
-            c_y, c_m, c_d = st.columns(3)
+            # 建立開始與結束日期的選單
+            st.write("🗓️ **請設定日期範圍**")
             
-            # 設定年份與月份範圍
-            years = list(range(2025, 2028)) # 可依照需要調整年份範圍
-            months = list(range(1, 13))
-            days = list(range(1, 32))
+            # 第一列：開始日期
+            c1, c2, c3 = st.columns(3)
+            start_y = c1.selectbox("開始年份", list(range(2025, 2028)), index=0)
+            start_m = c2.selectbox("開始月份", list(range(1, 13)), index=0)
+            start_d = c3.selectbox("開始日期", list(range(1, 32)), index=0)
             
-            # 預設選取當前日期
-            sel_y = c_y.selectbox("年份", years, index=years.index(now.year))
-            sel_m = c_m.selectbox("月份", months, index=months.index(now.month))
-            sel_d = c_d.selectbox("日期", days, index=days.index(now.day))
+            # 第二列：結束日期
+            c4, c5, c6 = st.columns(3)
+            end_y = c4.selectbox("結束年份", list(range(2025, 2028)), index=0)
+            end_m = c5.selectbox("結束月份", list(range(1, 13)), index=11) # 預設選12月
+            end_d = c6.selectbox("結束日期", list(range(1, 32)), index=30) # 預設選31號
             
-            # 組合出一個 datetime 物件來篩選
-            selected_date = pd.Timestamp(year=sel_y, month=sel_m, day=sel_d)
-            
-            # 篩選邏輯 (顯示該日期當天的訂單)
-            df_dash = df_dash[df_dash['訂單日期_dt'].dt.date == selected_date.date()]
+            # 轉換為 Timestamp 物件以便比對
+            try:
+                start_dt = pd.Timestamp(year=start_y, month=start_m, day=start_d)
+                end_dt = pd.Timestamp(year=end_y, month=end_m, day=end_d)
+                
+                if start_dt > end_dt:
+                    st.error("❌ 開始日期不能晚於結束日期！")
+                else:
+                    # 篩選邏輯：包含開始與結束當天
+                    df_dash = df_dash[(df_dash['訂單日期_dt'] >= start_dt) & (df_dash['訂單日期_dt'] <= end_dt)]
+            except ValueError:
+                st.warning("⚠️ 請確認選擇的日期是否合理 (例如：2月沒有30號)")
     
     total_orders = len(df_dash)
     total_revenue = df_dash['包裹應收'].sum() if not df_dash.empty else 0
