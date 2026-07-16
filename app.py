@@ -433,7 +433,7 @@ if 'logged_in' not in st.session_state:
             if st.form_submit_button("登入"):
                 with get_db() as conn:
                     cursor = conn.cursor()
-                    cursor.execute("SELECT role, nickname FROM users WHERE username=? AND password=?", (user, encode_pw(pw)))
+                    cursor.execute("SELECT role, nickname FROM users WHERE username=%s AND password=%s", (user, encode_pw(pw)))
                     res = cursor.fetchone()
                     if res:
                         user_role, user_nick = res[0], res[1]
