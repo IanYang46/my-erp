@@ -390,7 +390,7 @@ if 'logged_in' not in st.session_state:
     if auto_login_user:
         with get_db() as conn:
             cursor = conn.cursor()
-            cursor.execute("SELECT role, nickname, last_active FROM users WHERE username = ?", (auto_login_user,))
+            cursor.execute("SELECT role, nickname, last_active FROM users WHERE username = %s", (auto_login_user,))
             res = cursor.fetchone()
             if res:
                 user_role, user_nick, db_last_active = res[0], res[1], (res[2] if res[2] else 0)
