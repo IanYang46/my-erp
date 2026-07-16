@@ -2305,10 +2305,19 @@ elif menu == "訂單明細":
                                 
                                 with get_db() as conn:
                                     cursor = conn.cursor()
+                                    
+                                    # 🌟 新增：紀錄這次上傳處理過的訂單，用來累加同訂單的多筆運費
+                                    processed_orders = set()
+                                    
                                     for i, (_, row) in enumerate(df_track.iterrows()):
                                         t_num = str(row['物流編號']).strip()
                                         
-                                        cursor.execute("SELECT 訂單編號, 包裹應收, 商品成本, 物流運費_RMB FROM customer_orders WHERE 物流編號=?", (t_num,))
+                                        # ⚠️ 極度重要防呆：如果單號是空的，直接跳過，避免搜尋到全部訂單
+                                        if not t_num: 
+                                            continue
+                                        
+                                        # 🌟 修改 1：改用 LIKE 模糊搜尋，只要包含該單號就能比對成功！
+                                        cursor.execute("SELECT 訂單編號, 包裹應收, 商品成本, 物流運費_RMB FROM customer_orders WHERE 物流編號 LIKE ?", (f"%{t_num}%",))
                                         db_rows = cursor.fetchall() 
                                         
                                         if db_rows:
@@ -2328,18 +2337,29 @@ elif menu == "訂單明細":
                                                 elif raw_status in STATUS_LIST:
                                                     new_status = raw_status
 
-                                                # 🌟 新增：擷取簽收時間
                                                 new_date = None
                                                 if new_status == '簽收' and has_date and str(row['取貨日期']).strip() != "":
                                                     new_date = str(row['取貨日期']).strip()
                                                     
+                                                # 🌟 修改 2：多包裹的智能運費累加邏輯 (防覆蓋)
                                                 if has_fee and str(row['物流運費']).strip() != "":
-                                                    new_fee_rmb = float(row['物流運費'])
-                                                    new_fee_twd = new_fee_rmb * rate
-                                                else:
-                                                    new_fee_rmb = float(db_shipping_rmb if db_shipping_rmb is not None else 0.0)
-                                                    new_fee_twd = new_fee_rmb * rate
+                                                    current_row_fee = float(row['物流運費'])
                                                     
+                                                    if oid not in processed_orders:
+                                                        # 此訂單在「這份表格」第一次遇到：以表格運費為主
+                                                        new_fee_rmb = current_row_fee
+                                                        processed_orders.add(oid)
+                                                    else:
+                                                        # 發現多個包裹！讀取剛寫入的運費，並將第二筆以上的運費「加上去」
+                                                        cursor.execute("SELECT 物流運費_RMB FROM customer_orders WHERE 訂單編號=?", (oid,))
+                                                        latest_fee_row = cursor.fetchone()
+                                                        latest_fee = float(latest_fee_row[0]) if latest_fee_row and latest_fee_row[0] is not None else 0.0
+                                                        new_fee_rmb = latest_fee + current_row_fee
+                                                else:
+                                                    # 表格沒填運費：保留資料庫原有運費
+                                                    new_fee_rmb = float(db_shipping_rmb if db_shipping_rmb is not None else 0.0)
+                                                    
+                                                new_fee_twd = new_fee_rmb * rate
                                                 calc_ship = float(db_cost) + new_fee_twd
                                                 calc_profit = float(db_revenue) - calc_ship
                                                 
