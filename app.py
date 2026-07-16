@@ -163,8 +163,15 @@ st.markdown(enterprise_erp_style, unsafe_allow_html=True)
 # --- 2. 穩定的資料庫連線 (終極智能包裝器 + 高速連線池) ---
 @st.cache_resource
 def get_connection_pool():
-    # 🌟 建立執行緒安全的連線池，保持 1~20 個常駐連線，避免重複握手造成的卡頓
-    return pool.ThreadedConnectionPool(1, 20, st.secrets["DB_URL"])
+    # 🌟 建立執行緒安全的連線池，並加入 Keepalives 心跳機制，防止雲端連線超時中斷！
+    return pool.ThreadedConnectionPool(
+        1, 20, 
+        st.secrets["DB_URL"],
+        keepalives=1,
+        keepalives_idle=30,     # 閒置 30 秒後開始發送心跳確認
+        keepalives_interval=10, # 每 10 秒發送一次
+        keepalives_count=5      # 允許失敗 5 次
+    )
 
 class PostgresCursorWrapper:
     def __init__(self, cursor):
