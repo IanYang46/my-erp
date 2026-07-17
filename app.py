@@ -1825,10 +1825,16 @@ elif menu == "訂單明細":
                     if current_status not in status_opts: status_opts.append(current_status)
                     edit_status = c9.selectbox("取貨狀態", options=status_opts, index=status_opts.index(current_status))
                     
-                    # 讀取原本的取貨日期，並防呆避免顯示 nan
-                    raw_pickup = target_order.get('取貨日期', '')
-                    current_pickup = str(raw_pickup) if pd.notna(raw_pickup) and str(raw_pickup) != 'nan' else ''
-                    edit_pickup = c9a.text_input("取貨日期", value=current_pickup)
+                    # 🌟 將取貨日期改為「日期選擇器 (日曆)」，並安全解析舊資料
+                    raw_pickup = target_order.get('取貨日期', None)
+                    parsed_date = None
+                    if pd.notna(raw_pickup) and str(raw_pickup).strip() not in ['', 'nan', 'None']:
+                        try:
+                            parsed_date = pd.to_datetime(raw_pickup).date()
+                        except:
+                            parsed_date = None
+                    
+                    edit_pickup = c9a.date_input("取貨日期", value=parsed_date, format="YYYY/MM/DD")
 
                     st.markdown("##### 💰 金額與成本核算 (應收與成本為台幣，運費請輸入人民幣)")
                     c10, c11, c12 = st.columns(3)
