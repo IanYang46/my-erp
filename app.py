@@ -377,7 +377,8 @@ if 'logged_in' in st.session_state and st.session_state['logged_in']:
         if cookie_manager.get('erp_auto_login'):
             cookie_manager.delete('erp_auto_login', key="del_cookie_timeout")
         with get_db() as conn:
-            conn.execute("UPDATE users SET last_active = 0 WHERE username = ?", (username_to_clear,))
+            # 🌟 這裡加上 str()
+            conn.execute("UPDATE users SET last_active = 0 WHERE username = ?", (str(username_to_clear),))
             conn.commit()
         st.warning("⚠️ 由於長時間未操作，為保護系統安全，已為您自動登出。")
         time.sleep(2)
@@ -397,13 +398,15 @@ if 'logged_in' not in st.session_state:
     if auto_login_user:
         with get_db() as conn:
             cursor = conn.cursor()
-            cursor.execute("SELECT role, nickname, last_active FROM users WHERE username = %s", (auto_login_user,))
+            # 🌟 第 1 處修改
+            cursor.execute("SELECT role, nickname, last_active FROM users WHERE username = %s", (str(auto_login_user),))
             res = cursor.fetchone()
             if res:
                 user_role, user_nick, db_last_active = res[0], res[1], (res[2] if res[2] else 0)
                 
                 if time.time() - db_last_active < TIMEOUT_SECONDS:
-                    cursor.execute("SELECT module, can_view, can_edit, can_upload, can_download FROM user_perms WHERE username=?", (auto_login_user,))
+                    # 🌟 第 2 處修改：加上 str()
+                    cursor.execute("SELECT module, can_view, can_edit, can_upload, can_download FROM user_perms WHERE username=?", (str(auto_login_user),))
                     perms_data = cursor.fetchall()
                     perm_dict = {row[0]: {'can_view': bool(row[1]), 'can_edit': bool(row[2]), 'can_upload': bool(row[3]), 'can_download': bool(row[4])} for row in perms_data}
                     
@@ -412,7 +415,8 @@ if 'logged_in' not in st.session_state:
                         'nickname': user_nick if user_nick else auto_login_user, 'perms': perm_dict,
                         'last_active': time.time()
                     })
-                    conn.execute("UPDATE users SET last_active = ? WHERE username = ?", (time.time(), auto_login_user))
+                    # 🌟 第 3 處修改：加上 str()
+                    conn.execute("UPDATE users SET last_active = ? WHERE username = ?", (time.time(), str(auto_login_user)))
                     conn.commit()
                     st.rerun() # 成功登入，重整進入系統
                 else:
@@ -491,7 +495,8 @@ if 'logged_in' not in st.session_state:
                             cursor.execute("INSERT INTO users (username, password, nickname, role) VALUES (?, ?, '', 'CS')", (new_user, encode_pw(new_pw)))
                             conn.commit()
                             st.success(f"註冊成功！帳號【{new_user}】已建立，請通知管理員開放權限後登入。")
-                    except sqlite3.IntegrityError:
+                    # 🌟 將 sqlite3 改成 psycopg2
+                    except psycopg2.IntegrityError:
                         st.error("❌ 該帳號名稱已被註冊。")
     st.stop()
 
