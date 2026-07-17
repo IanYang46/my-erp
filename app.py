@@ -269,6 +269,15 @@ def init_db_v7():
             出貨成本 REAL, 訂單損益 REAL, 物流編號 TEXT, 取貨狀態 TEXT DEFAULT '待出貨', 取貨日期 DATE,
             信箱 TEXT DEFAULT '', 顧客備註 TEXT DEFAULT '', 商家備註 TEXT DEFAULT ''
         )''')
+        
+        # 👇 新增 10. 每日廣告費紀錄表 👇
+        cursor.execute('''CREATE TABLE IF NOT EXISTS daily_ad_spend (
+            date DATE PRIMARY KEY, 
+            spend_usd REAL, 
+            exchange_rate REAL, 
+            spend_twd REAL
+        )''')
+        # 👆 新增結束 👆
 
         conn.commit()
         
@@ -578,14 +587,90 @@ menu = st.sidebar.radio(
 
 # --- 7. 各大模組骨架預覽 ---
 
-if menu == "首頁":
-    st.title("🏠 系統首頁 (Dashboard)")
-    st.write("這裡是未來的數據儀表板，登入後一眼掌握公司營運狀況。")
-    c1, c2, c3, c4 = st.columns(4)
-    c1.metric("本月總營業額", "---")
-    c2.metric("待處理訂單", "---")
-    c3.metric("低於安全庫存商品", "---")
-    c4.metric("本月採購支出", "---")
+elif menu == "首頁":
+    st.title("🏠 營運儀表板 (Dashboard)")
+    st.write("一眼掌握今日與昨日的關鍵營業數據，包含廣告成效 (ROAS) 追蹤。")
+    
+    # --- 1. 廣告費手動輸入區 ---
+    with st.expander("✍️ 手動輸入每日廣告費 (USD)", expanded=True):
+        with st.form("ad_spend_form"):
+            c_date, c_usd, c_rate = st.columns(3)
+            input_date = c_date.date_input("選擇紀錄日期", value=pd.Timestamp.today().date())
+            input_usd = c_usd.number_input("廣告花費 (USD 美金)", min_value=0.0, step=1.0)
+            
+            # 預設匯率設為 32.0，可自由修改
+            input_rate = c_rate.number_input("美金轉台幣匯率", value=32.0, step=0.1)
+            
+            if st.form_submit_button("💾 儲存並換算廣告費", type="primary", use_container_width=True):
+                spend_twd = input_usd * input_rate
+                with get_db() as conn:
+                    # 使用 PostgreSQL 的 ON CONFLICT 語法確保同一天重複輸入會直接覆蓋更新
+                    conn.execute("""
+                        INSERT INTO daily_ad_spend (date, spend_usd, exchange_rate, spend_twd) 
+                        VALUES (?, ?, ?, ?) 
+                        ON CONFLICT (date) DO UPDATE SET 
+                        spend_usd=EXCLUDED.spend_usd, exchange_rate=EXCLUDED.exchange_rate, spend_twd=EXCLUDED.spend_twd
+                    """, (str(input_date), input_usd, input_rate, spend_twd))
+                    conn.commit()
+                st.success(f"✅ 成功儲存 {input_date} 廣告費！系統已依匯率 {input_rate} 轉換為台幣：${spend_twd:,.0f}")
+                time.sleep(1)
+                st.rerun()
+
+    st.divider()
+
+    # --- 2. 數據計算與撈取 ---
+    today = pd.Timestamp.today().date()
+    yesterday = today - pd.Timedelta(days=1)
+    
+    with get_db() as conn:
+        # 從資料庫撈取所需的營收與廣告費，使用 Pandas 進行安全解析
+        df_orders = pd.read_sql("SELECT 訂單日期, 包裹應收 FROM customer_orders", conn)
+        df_ad = pd.read_sql("SELECT date, spend_twd FROM daily_ad_spend", conn)
+
+    # 確保日期格式為安全的 Date 格式以便精準比對
+    if not df_orders.empty:
+        df_orders['訂單日期_dt'] = pd.to_datetime(df_orders['訂單日期'], errors='coerce').dt.date
+        # 確保包裹應收是數字
+        df_orders['包裹應收'] = pd.to_numeric(df_orders['包裹應收'], errors='coerce').fillna(0.0)
+    else:
+        df_orders = pd.DataFrame(columns=['訂單日期_dt', '包裹應收'])
+        
+    if not df_ad.empty:
+        df_ad['date_dt'] = pd.to_datetime(df_ad['date']).dt.date
+    else:
+        df_ad = pd.DataFrame(columns=['date_dt', 'spend_twd'])
+
+    # --- 計算：今日 ---
+    today_rev = df_orders[df_orders['訂單日期_dt'] == today]['包裹應收'].sum()
+    today_ad_row = df_ad[df_ad['date_dt'] == today]
+    today_ad = today_ad_row['spend_twd'].sum() if not today_ad_row.empty else 0
+    today_roas = (today_rev / today_ad) if today_ad > 0 else 0
+
+    # --- 計算：昨日 ---
+    yesterday_rev = df_orders[df_orders['訂單日期_dt'] == yesterday]['包裹應收'].sum()
+    yesterday_ad_row = df_ad[df_ad['date_dt'] == yesterday]
+    yesterday_ad = yesterday_ad_row['spend_twd'].sum() if not yesterday_ad_row.empty else 0
+    yesterday_roas = (yesterday_rev / yesterday_ad) if yesterday_ad > 0 else 0
+
+    # --- 3. 畫面渲染 ---
+    with st.container(border=True):
+        st.markdown("#### 🟢 今日即時數據概況")
+        c1, c2, c3 = st.columns(3)
+        c1.metric("今日營業額 (TWD)", f"${today_rev:,.0f}")
+        c2.metric("今日廣告費 (TWD)", f"${today_ad:,.0f}" if today_ad > 0 else "尚未輸入")
+        
+        # 動態調整 ROAS 顯示，如果沒有廣告費就不顯示數字
+        roas_display_today = f"{today_roas:.2f} x" if today_ad > 0 else "N/A"
+        c3.metric("今日預估 ROAS", roas_display_today)
+
+    with st.container(border=True):
+        st.markdown("#### 🔵 昨日總結數據")
+        c4, c5, c6 = st.columns(3)
+        c4.metric("昨日營業額 (TWD)", f"${yesterday_rev:,.0f}")
+        c5.metric("昨日廣告費 (TWD)", f"${yesterday_ad:,.0f}" if yesterday_ad > 0 else "尚未輸入")
+        
+        roas_display_yest = f"{yesterday_roas:.2f} x" if yesterday_ad > 0 else "N/A"
+        c6.metric("昨日預估 ROAS", roas_display_yest)
 
 elif menu == "商品訊息":
     st.title("📦 商品訊息管理")
