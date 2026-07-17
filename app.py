@@ -592,19 +592,17 @@ if menu == "首頁":
     st.write("一眼掌握今日與昨日的關鍵營業數據，包含廣告成效 (ROAS) 追蹤。")
     
     # --- 1. 廣告費手動輸入區 ---
-    with st.expander("✍️ 手動輸入每日廣告費 (USD)", expanded=True):
+    with st.expander("✍️ 手動輸入每日廣告費 (USD)", expanded=False):  # 預設收合版面較乾淨
         with st.form("ad_spend_form"):
             c_date, c_usd, c_rate = st.columns(3)
             input_date = c_date.date_input("選擇紀錄日期", value=pd.Timestamp.today().date())
             input_usd = c_usd.number_input("廣告花費 (USD 美金)", min_value=0.0, step=1.0)
-            
-            # 預設匯率設為 32.0，可自由修改
             input_rate = c_rate.number_input("美金轉台幣匯率", value=32.0, step=0.1)
             
             if st.form_submit_button("💾 儲存並換算廣告費", type="primary", use_container_width=True):
                 spend_twd = input_usd * input_rate
                 with get_db() as conn:
-                    # 使用 PostgreSQL 的 ON CONFLICT 語法確保同一天重複輸入會直接覆蓋更新
+                    # SQLite / Postgres 支援的覆蓋語法
                     conn.execute("""
                         INSERT INTO daily_ad_spend (date, spend_usd, exchange_rate, spend_twd) 
                         VALUES (?, ?, ?, ?) 
@@ -623,54 +621,178 @@ if menu == "首頁":
     yesterday = today - pd.Timedelta(days=1)
     
     with get_db() as conn:
-        # 從資料庫撈取所需的營收與廣告費，使用 Pandas 進行安全解析
-        df_orders = pd.read_sql("SELECT 訂單日期, 包裹應收 FROM customer_orders", conn)
+        # 【重要更新】把計算利潤需要的欄位一次全撈出來
+        df_orders = pd.read_sql("SELECT 訂單日期, 取貨狀態, 包裹應收, 商品成本, 物流運費 FROM customer_orders", conn)
         df_ad = pd.read_sql("SELECT date, spend_twd FROM daily_ad_spend", conn)
 
-    # 確保日期格式為安全的 Date 格式以便精準比對
+    # 資料清洗與型別轉換
     if not df_orders.empty:
         df_orders['訂單日期_dt'] = pd.to_datetime(df_orders['訂單日期'], errors='coerce').dt.date
-        # 確保包裹應收是數字
         df_orders['包裹應收'] = pd.to_numeric(df_orders['包裹應收'], errors='coerce').fillna(0.0)
+        df_orders['商品成本'] = pd.to_numeric(df_orders['商品成本'], errors='coerce').fillna(0.0)
+        df_orders['物流運費'] = pd.to_numeric(df_orders['物流運費'], errors='coerce').fillna(0.0)
+        df_orders['取貨狀態'] = df_orders['取貨狀態'].fillna('待出貨')
     else:
-        df_orders = pd.DataFrame(columns=['訂單日期_dt', '包裹應收'])
+        df_orders = pd.DataFrame(columns=['訂單日期_dt', '取貨狀態', '包裹應收', '商品成本', '物流運費'])
         
     if not df_ad.empty:
         df_ad['date_dt'] = pd.to_datetime(df_ad['date']).dt.date
     else:
         df_ad = pd.DataFrame(columns=['date_dt', 'spend_twd'])
 
-    # --- 計算：今日 ---
-    today_rev = df_orders[df_orders['訂單日期_dt'] == today]['包裹應收'].sum()
+    # --- 篩選今日與昨日資料 ---
+    df_today = df_orders[df_orders['訂單日期_dt'] == today]
+    df_yest = df_orders[df_orders['訂單日期_dt'] == yesterday]
+    
     today_ad_row = df_ad[df_ad['date_dt'] == today]
+    yest_ad_row = df_ad[df_ad['date_dt'] == yesterday]
+
+    # --- 計算今日 ---
+    today_orders_cnt = len(df_today)
+    today_rev = df_today['包裹應收'].sum()
     today_ad = today_ad_row['spend_twd'].sum() if not today_ad_row.empty else 0
     today_roas = (today_rev / today_ad) if today_ad > 0 else 0
 
-    # --- 計算：昨日 ---
-    yesterday_rev = df_orders[df_orders['訂單日期_dt'] == yesterday]['包裹應收'].sum()
-    yesterday_ad_row = df_ad[df_ad['date_dt'] == yesterday]
-    yesterday_ad = yesterday_ad_row['spend_twd'].sum() if not yesterday_ad_row.empty else 0
+    # --- 計算昨日 ---
+    yesterday_orders_cnt = len(df_yest)
+    yesterday_rev = df_yest['包裹應收'].sum()
+    yesterday_ad = yest_ad_row['spend_twd'].sum() if not yest_ad_row.empty else 0
     yesterday_roas = (yesterday_rev / yesterday_ad) if yesterday_ad > 0 else 0
 
-    # --- 3. 畫面渲染 ---
+    # --- 3. 畫面渲染：今日/昨日看板 ---
     with st.container(border=True):
-        st.markdown("#### 🟢 今日即時數據概況")
-        c1, c2, c3 = st.columns(3)
-        c1.metric("今日營業額 (TWD)", f"${today_rev:,.0f}")
-        c2.metric("今日廣告費 (TWD)", f"${today_ad:,.0f}" if today_ad > 0 else "尚未輸入")
-        
-        # 動態調整 ROAS 顯示，如果沒有廣告費就不顯示數字
-        roas_display_today = f"{today_roas:.2f} x" if today_ad > 0 else "N/A"
-        c3.metric("今日預估 ROAS", roas_display_today)
+        st.markdown("#### 🟢 今日即時數據")
+        c1, c2, c3, c4 = st.columns(4)
+        c1.metric("今日訂單數", f"{today_orders_cnt} 筆")
+        c2.metric("今日營業額", f"${today_rev:,.0f}")
+        c3.metric("今日廣告費", f"${today_ad:,.0f}" if today_ad > 0 else "未輸入")
+        c4.metric("今日預估 ROAS", f"{today_roas:.2f} x" if today_ad > 0 else "N/A")
 
     with st.container(border=True):
         st.markdown("#### 🔵 昨日總結數據")
-        c4, c5, c6 = st.columns(3)
-        c4.metric("昨日營業額 (TWD)", f"${yesterday_rev:,.0f}")
-        c5.metric("昨日廣告費 (TWD)", f"${yesterday_ad:,.0f}" if yesterday_ad > 0 else "尚未輸入")
+        c5, c6, c7, c8 = st.columns(4)
+        c5.metric("昨日訂單數", f"{yesterday_orders_cnt} 筆")
+        c6.metric("昨日營業額", f"${yesterday_rev:,.0f}")
+        c7.metric("昨日廣告費", f"${yesterday_ad:,.0f}" if yesterday_ad > 0 else "未輸入")
+        c8.metric("昨日預估 ROAS", f"{yesterday_roas:.2f} x" if yesterday_ad > 0 else "N/A")
+
+    st.divider()
+
+    # ==========================================
+    # --- 4. 上週數據詳細分析 (週一至週日) ---
+    # ==========================================
+    st.markdown("### 📅 上週營運詳細數據 (週一至週日)")
+    
+    # 算出上週一與上週日的日期
+    days_since_monday = today.weekday() # 0是週一, 6是週日
+    last_monday = today - pd.Timedelta(days=days_since_monday + 7)
+    
+    weekly_data = []
+    
+    # 建立統計變數 (為了最後算合計)
+    sum_orders = sum_rev = sum_prod_cost = sum_ship_fee = sum_ad = 0
+    sum_picked = sum_actual_rev = sum_actual_cost = 0
+
+    for i in range(7):
+        current_d = last_monday + pd.Timedelta(days=i)
+        day_str = current_d.strftime('%m/%d')
+        weekday_str = ["一", "二", "三", "四", "五", "六", "日"][i]
         
-        roas_display_yest = f"{yesterday_roas:.2f} x" if yesterday_ad > 0 else "N/A"
-        c6.metric("昨日預估 ROAS", roas_display_yest)
+        # 篩選當天訂單與廣告費
+        df_d = df_orders[df_orders['訂單日期_dt'] == current_d]
+        ad_d = df_ad[df_ad['date_dt'] == current_d]['spend_twd'].sum() if not df_ad.empty else 0
+        
+        # 基本指標
+        orders_cnt = len(df_d)
+        rev = df_d['包裹應收'].sum()
+        prod_cost = df_d['商品成本'].sum()
+        ship_fee = df_d['物流運費'].sum()
+        
+        # 狀態篩選 (判斷是否已簽收、已完結)
+        # 註：這裡依照常見用語設定，如果您的狀態名稱不同，可在此修改
+        picked_up_mask = df_d['取貨狀態'].isin(['已取件', '已完成', '已簽收'])
+        resolved_mask = df_d['取貨狀態'].isin(['已取件', '已完成', '已簽收', '已退回', '退件', '退貨', '取消'])
+        
+        picked_cnt = picked_up_mask.sum()
+        actual_rev = df_d.loc[picked_up_mask, '包裹應收'].sum()
+        actual_prod_cost = df_d.loc[picked_up_mask, '商品成本'].sum()
+        
+        # 成本與利潤計算
+        # 實際成本 = 已取件的商品成本 + 當天所有物流運費 (不管有沒有取都要付運費)
+        actual_cost = actual_prod_cost + ship_fee
+        
+        est_profit = rev - prod_cost - ship_fee - ad_d
+        actual_profit = actual_rev - actual_cost - ad_d
+        
+        pickup_rate = (picked_cnt / orders_cnt) if orders_cnt > 0 else 0
+        actual_roas = (actual_rev / ad_d) if ad_d > 0 else 0
+        
+        est_total_cost = prod_cost + ship_fee + ad_d
+        est_roi = (est_profit / est_total_cost) if est_total_cost > 0 else 0
+        
+        actual_total_cost = actual_cost + ad_d
+        actual_roi = (actual_profit / actual_total_cost) if actual_total_cost > 0 else 0
+        
+        # 判斷當日單是否全部跑完流程
+        if orders_cnt == 0:
+            status_label = "-"
+        elif (~resolved_mask).sum() == 0:
+            status_label = "✅ 已取退完成"
+        else:
+            status_label = "⏳ 進行中"
+            
+        weekly_data.append({
+            "日期": f"{day_str} ({weekday_str})", "狀態": status_label,
+            "訂單總數": orders_cnt, "已簽收數": picked_cnt, "取件率": pickup_rate,
+            "廣告費": ad_d, "物流運費": ship_fee, "商品成本": prod_cost,
+            "營業額": rev, "預估利潤": est_profit, "預估ROI": est_roi,
+            "實際收入": actual_rev, "實際成本": actual_cost, "實際利潤": actual_profit, 
+            "實際ROAS": actual_roas, "實際ROI": actual_roi
+        })
+        
+        # 累加合計數據
+        sum_orders += orders_cnt; sum_picked += picked_cnt
+        sum_rev += rev; sum_prod_cost += prod_cost; sum_ship_fee += ship_fee; sum_ad += ad_d
+        sum_actual_rev += actual_rev; sum_actual_cost += actual_cost
+
+    # 建立總計列
+    sum_est_profit = sum_rev - sum_prod_cost - sum_ship_fee - sum_ad
+    sum_actual_profit = sum_actual_rev - sum_actual_cost - sum_ad
+    sum_pickup_rate = (sum_picked / sum_orders) if sum_orders > 0 else 0
+    sum_actual_roas = (sum_actual_rev / sum_ad) if sum_ad > 0 else 0
+    sum_est_total_cost = sum_prod_cost + sum_ship_fee + sum_ad
+    sum_est_roi = (sum_est_profit / sum_est_total_cost) if sum_est_total_cost > 0 else 0
+    sum_actual_total_cost = sum_actual_cost + sum_ad
+    sum_actual_roi = (sum_actual_profit / sum_actual_total_cost) if sum_actual_total_cost > 0 else 0
+
+    weekly_data.append({
+        "日期": "🌟 本週合計", "狀態": "-", 
+        "訂單總數": sum_orders, "已簽收數": sum_picked, "取件率": sum_pickup_rate,
+        "廣告費": sum_ad, "物流運費": sum_ship_fee, "商品成本": sum_prod_cost,
+        "營業額": sum_rev, "預估利潤": sum_est_profit, "預估ROI": sum_est_roi,
+        "實際收入": sum_actual_rev, "實際成本": sum_actual_cost, "實際利潤": sum_actual_profit,
+        "實際ROAS": sum_actual_roas, "實際ROI": sum_actual_roi
+    })
+
+    # 轉為 DataFrame 並在前端顯示
+    df_weekly = pd.DataFrame(weekly_data)
+    
+    # 使用 Streamlit 原生表格，設定欄位格式讓它更好看
+    st.dataframe(
+        df_weekly,
+        use_container_width=True,
+        hide_index=True,
+        column_config={
+            "取件率": st.column_config.NumberColumn(format="%.1f%%", help="已簽收數 / 訂單總數"),
+            "預估ROI": st.column_config.NumberColumn(format="%.1f%%"),
+            "實際ROI": st.column_config.NumberColumn(format="%.1f%%"),
+            "實際ROAS": st.column_config.NumberColumn(format="%.2f x"),
+            "預估利潤": st.column_config.NumberColumn(format="$ %d"),
+            "實際利潤": st.column_config.NumberColumn(format="$ %d"),
+            "營業額": st.column_config.NumberColumn(format="$ %d"),
+            "實際收入": st.column_config.NumberColumn(format="$ %d")
+        }
+    )
 
 elif menu == "商品訊息":
     st.title("📦 商品訊息管理")
