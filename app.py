@@ -587,7 +587,7 @@ menu = st.sidebar.radio(
 
 # --- 7. 各大模組骨架預覽 ---
 
-elif menu == "首頁":
+if menu == "首頁":
     st.title("🏠 營運儀表板 (Dashboard)")
     st.write("一眼掌握今日與昨日的關鍵營業數據，包含廣告成效 (ROAS) 追蹤。")
     
