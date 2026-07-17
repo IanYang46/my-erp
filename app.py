@@ -377,7 +377,7 @@ if 'logged_in' in st.session_state and st.session_state['logged_in']:
         if cookie_manager.get('erp_auto_login'):
             cookie_manager.delete('erp_auto_login', key="del_cookie_timeout")
         with get_db() as conn:
-            # 🌟 這裡加上 str()
+            # 🌟 這裡的 username_to_clear 也務必確認有加上 str()
             conn.execute("UPDATE users SET last_active = 0 WHERE username = ?", (str(username_to_clear),))
             conn.commit()
         st.warning("⚠️ 由於長時間未操作，為保護系統安全，已為您自動登出。")
@@ -387,7 +387,8 @@ if 'logged_in' in st.session_state and st.session_state['logged_in']:
         # 有任何點擊或切換模組的短時間操作，刷新 Session 暫存，並立刻回寫資料庫存檔
         st.session_state['last_active'] = current_time
         with get_db() as conn:
-            conn.execute("UPDATE users SET last_active = ? WHERE username = ?", (current_time, st.session_state['user']))
+            # 🌟 這裡加上 str()，防止純數字帳號讓 PostgreSQL 崩潰
+            conn.execute("UPDATE users SET last_active = ? WHERE username = ?", (current_time, str(st.session_state['user'])))
             conn.commit()
 
 # 2. 狀況 B：若網頁剛被重開 (Session 暫存全空)，嘗試由 Cookie 與資料庫時間核對進行安全登入
