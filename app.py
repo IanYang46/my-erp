@@ -709,9 +709,11 @@ if menu == "首頁":
         ship_fee = df_d['物流運費'].sum()
         
         # 狀態篩選 (判斷是否已簽收、已完結)
-        # 註：這裡依照常見用語設定，如果您的狀態名稱不同，可在此修改
-        picked_up_mask = df_d['取貨狀態'].isin(['已取件', '已完成', '已簽收'])
-        resolved_mask = df_d['取貨狀態'].isin(['已取件', '已完成', '已簽收', '已退回', '退件', '退貨', '取消'])
+        # 1. 只有「簽收」代表真的有賺到錢 (用來計算實際營收與實際ROI)
+        picked_up_mask = df_d['取貨狀態'].isin(['簽收'])
+        
+        # 2. 只要是以下這六種狀態，就代表這筆單「已經跑到終點結案了」
+        resolved_mask = df_d['取貨狀態'].isin(['簽收', '退回', '已取消', '客訴', '已上架', '已重出'])
         
         picked_cnt = picked_up_mask.sum()
         actual_rev = df_d.loc[picked_up_mask, '包裹應收'].sum()
