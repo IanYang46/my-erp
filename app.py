@@ -1866,8 +1866,8 @@ elif menu == "訂單明細":
                                 calc_single_ship_cost = edit_cost + edit_shipping
                                 calc_single_profit = edit_revenue - calc_single_ship_cost
                                 
-                                # 🌟 防呆：將空字串轉換為 None，讓資料庫存入 NULL
-                                sql_pickup = edit_pickup if edit_pickup and edit_pickup.strip() != "" else None
+                                # 🌟 這裡是最關鍵的防呆：純日期物件轉換，絕對不能有 .strip()
+                                sql_pickup = edit_pickup.strftime('%Y-%m-%d') if edit_pickup else None
                                 
                                 with get_db() as conn:
                                     # 🌟 寫入資料庫時加上 取貨日期
