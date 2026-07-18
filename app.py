@@ -1783,6 +1783,10 @@ elif menu == "訂單明細":
 
         col_cfg = {
             "🗑️ 勾選": st.column_config.CheckboxColumn("🗑️ 刪除", default=False),
+            "⚠️ 警示": st.column_config.TextColumn("⚠️ 警示", disabled=True),
+            # 👇 新增這行：設定為 DatetimeColumn，並指定顯示格式包含時分秒 👇
+            "訂單日期": st.column_config.DatetimeColumn("訂單日期", format="YYYY-MM-DD HH:mm:ss", disabled=True),
+            # 👆 新增結束 👆
             "訂單編號": st.column_config.TextColumn("訂單編號", disabled=True),
             "訂單連結": st.column_config.LinkColumn("🔗 訂單連結"),
             "包裹應收": st.column_config.NumberColumn("包裹應收", format="$ %.0f"),
@@ -1809,6 +1813,13 @@ elif menu == "訂單明細":
             display_cols = ["🗑️ 勾選", "⚠️ 警示", "訂單編號", "訂單日期", "姓名", "電話", "品項預覽", "包裹應收", "出貨成本", "訂單損益", "物流編號", "取貨狀態"]
 
         if not df_display.empty:
+            # 1. 確保訂單日期是真正的 datetime 格式 (才能精準排序與格式化)
+            df_display['訂單日期'] = pd.to_datetime(df_display['訂單日期'], errors='coerce')
+            
+            # 2. 依照訂單日期排序 (由新到舊，最新的在最上面)
+            df_display = df_display.sort_values(by='訂單日期', ascending=False)
+            
+            # 3. 只保留要顯示的欄位
             df_display = df_display[display_cols]
         else:
             df_display = pd.DataFrame(columns=display_cols)
