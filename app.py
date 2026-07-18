@@ -1785,7 +1785,7 @@ elif menu == "訂單明細":
             "🗑️ 勾選": st.column_config.CheckboxColumn("🗑️ 刪除", default=False),
             "⚠️ 警示": st.column_config.TextColumn("⚠️ 警示", disabled=True),
             # 👇 新增這行：設定為 DatetimeColumn，並指定顯示格式包含時分秒 👇
-            "訂單日期": st.column_config.DatetimeColumn("訂單日期", format="YYYY-MM-DD HH:mm:ss", disabled=True),
+            "訂單日期": st.column_config.DatetimeColumn("訂單日期", format="YYYY-MM-DD HH:mm", disabled=True),
             # 👆 新增結束 👆
             "訂單編號": st.column_config.TextColumn("訂單編號", disabled=True),
             "訂單連結": st.column_config.LinkColumn("🔗 訂單連結"),
@@ -2304,8 +2304,17 @@ elif menu == "訂單明細":
                                     else:
                                         init_status = '待出貨'
 
-                                    raw_date = str(row.get('訂單日期', '')).strip()
-                                    order_date = raw_date if raw_date else None
+                                    # 修正日期時間抓取：使用 Pandas 內建功能確保時間格式被完整保留
+                                    raw_date = row.get('訂單日期')
+                                    if pd.isna(raw_date) or str(raw_date).strip() == '':
+                                        order_date = None
+                                    else:
+                                        # 嘗試將任何格式轉回標準的 YYYY-MM-DD HH:MM:SS 字串
+                                        try:
+                                            order_date = pd.to_datetime(raw_date).strftime('%Y-%m-%d %H:%M:%S')
+                                        except:
+                                            # 如果轉換失敗，就保留原始文字
+                                            order_date = str(raw_date).strip()
                                     
                                     store_name = str(row.get('門市', '')).strip()
                                     raw_logi = str(row.get('物流編號', '')).strip()
