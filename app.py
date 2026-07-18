@@ -1543,6 +1543,18 @@ elif menu == "訂單明細":
             cursor.execute("UPDATE customer_orders SET 物流運費_RMB = 物流運費 / ? WHERE 物流運費 > 0", (rate_val,))
             conn.commit()
 
+        # 👇👇👇 請把這段插入在這裡：升級資料庫的日期欄位型態 👇👇👇
+        try:
+            cursor.execute("SELECT data_type FROM information_schema.columns WHERE table_name = 'customer_orders' AND column_name = '訂單日期'")
+            dt_type = cursor.fetchone()
+            # 如果發現它還是純 DATE，就強制升級成 TIMESTAMP (包含時間)
+            if dt_type and dt_type[0].lower() == 'date':
+                cursor.execute("ALTER TABLE customer_orders ALTER COLUMN 訂單日期 TYPE TIMESTAMP USING 訂單日期::TIMESTAMP")
+                conn.commit()
+        except:
+            conn.rollback() # 防呆機制
+        # 👆👆👆 插入結束 👆👆👆
+
         rate = cursor.execute("SELECT value FROM settings WHERE key='exchange_rate'").fetchone()[0]
 
     new_rate = st.sidebar.number_input("當前人民幣匯率 (RMB to TWD)", value=rate, step=0.01, key="order_sidebar_rate")
