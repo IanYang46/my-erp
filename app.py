@@ -2268,6 +2268,11 @@ elif menu == "訂單明細":
                             '超商寄貨編號(拋單後取得)': '物流編號', '物流編號': '物流編號'
                         }
                         df_imp = df_imp.rename(columns=col_mapping)
+
+                        # 👇 新增這段：在資料被 fillna 和 groupby 破壞前，強制鎖定格式 (年-月-日 時:分) 👇
+                        if '訂單日期' in df_imp.columns:
+                            df_imp['訂單日期'] = pd.to_datetime(df_imp['訂單日期'], errors='coerce').dt.strftime('%Y-%m-%d %H:%M')
+                        # 👆 新增結束 👆
                         
                         if '訂單編號' not in df_imp.columns:
                             st.error("❌ 匯入失敗：檔案中找不到『訂單編號』欄位。")
