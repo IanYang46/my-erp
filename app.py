@@ -1688,18 +1688,27 @@ elif menu == "訂單明細":
         elif time_filter == "今年": 
             df_dash = df_dash[df_dash['訂單日期_dt'].dt.year == now.year]
         elif time_filter == "自訂區間":
+            import datetime
+            
+            # 👇 1. 這裡必須先設定好今天的日期與變數，不然下面找不到會報錯！
+            today = datetime.datetime.today()
+            year_list = list(range(2025, 2030))
+            default_year_idx = year_list.index(today.year) if today.year in year_list else 1
+            default_month_idx = today.month - 1
+            default_day_idx = today.day - 1
+
             # 建立開始與結束日期的選單
             st.write("🗓️ **請設定日期範圍**")
             
-            # 第一列：開始日期
+            # 第一列：開始日期 (預設為今天)
             c1, c2, c3 = st.columns(3)
-            start_y = c1.selectbox("開始年份", list(range(2025, 2028)), index=2026)
-            start_m = c2.selectbox("開始月份", list(range(1, 13)), index=7)
-            start_d = c3.selectbox("開始日期", list(range(1, 32)), index=0)
+            start_y = c1.selectbox("開始年份", year_list, index=default_year_idx)
+            start_m = c2.selectbox("開始月份", list(range(1, 13)), index=default_month_idx)
+            start_d = c3.selectbox("開始日期", list(range(1, 32)), index=default_day_idx)
             
-            # 第二列：結束日期
+            # 第二列：結束日期 (同樣預設為今天)
             c4, c5, c6 = st.columns(3)
-            end_y = c4.selectbox("結束年份", list(range(2025, 2028)), index=2026)
+            end_y = c4.selectbox("結束年份", year_list, index=default_year_idx)
             end_m = c5.selectbox("結束月份", list(range(1, 13)), index=11) # 預設選12月
             end_d = c6.selectbox("結束日期", list(range(1, 32)), index=30) # 預設選31號
             
