@@ -1617,10 +1617,9 @@ elif menu == "訂單明細":
         for _, r in df_prods.iterrows():
             c = str(r['編碼']).strip()
             if c:
-                b = str(r['品牌']).strip() if pd.notna(r['品牌']) else ""
+                # 只抓取「名稱」欄位，不組合「品牌」，避免疊字重複
                 n = str(r['名稱']).strip() if pd.notna(r['名稱']) else ""
-                # 將品牌與名稱組合 (例如: Diptyque 爵夢淡香精 75ml)
-                prod_map[c] = f"{b} {n}".strip() if b else n
+                prod_map[c] = n
                 
         # 依編碼長度由長到短排序，避免短編碼錯誤蓋掉長編碼的一部分 (例如 P02 被 P02B 蓋過)
         sorted_codes = sorted(prod_map.keys(), key=len, reverse=True)
