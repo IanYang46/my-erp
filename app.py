@@ -1693,13 +1693,13 @@ elif menu == "訂單明細":
             
             # 第一列：開始日期
             c1, c2, c3 = st.columns(3)
-            start_y = c1.selectbox("開始年份", list(range(2025, 2028)), index=0)
-            start_m = c2.selectbox("開始月份", list(range(1, 13)), index=0)
+            start_y = c1.selectbox("開始年份", list(range(2025, 2028)), index=2026)
+            start_m = c2.selectbox("開始月份", list(range(1, 13)), index=7)
             start_d = c3.selectbox("開始日期", list(range(1, 32)), index=0)
             
             # 第二列：結束日期
             c4, c5, c6 = st.columns(3)
-            end_y = c4.selectbox("結束年份", list(range(2025, 2028)), index=0)
+            end_y = c4.selectbox("結束年份", list(range(2025, 2028)), index=2026)
             end_m = c5.selectbox("結束月份", list(range(1, 13)), index=11) # 預設選12月
             end_d = c6.selectbox("結束日期", list(range(1, 32)), index=30) # 預設選31號
             
