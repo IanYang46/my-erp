@@ -2122,8 +2122,9 @@ elif menu == "訂單明細":
                     # 👇 更改提示字眼
                     new_items = st.text_area("📦 品項內容 (支援直接換行編輯，請保持原始編碼以利系統精準追蹤)", value=target_order.get('品項內容_原始', ''), height=150)
                     
-                    # 👇 新增這行：在編輯框下方顯示即時翻譯結果，讓員工對照看
-                    st.info(f"👁️ **系統自動翻譯對照**：\n{target_order.get('品項翻譯', '無品項')}")
+                    # 👇 修正這裡：使用 replace 把 * 加上跳脫字元 \\*，防止被系統誤認成斜體語法
+                    safe_preview = target_order.get('品項翻譯', '無品項').replace('*', '\\*')
+                    st.info(f"👁️ **系統自動翻譯對照**：\n\n{safe_preview}")
                     
                     c14, c15 = st.columns(2)
                     edit_cust_note = c14.text_area("👤 顧客備註", value=target_order.get('顧客備註', ''))
