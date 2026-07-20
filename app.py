@@ -1577,6 +1577,8 @@ elif menu == "訂單明細":
     # 🌟 1. 取得資料庫資料
     with get_db() as conn:
         df_orders = pd.read_sql("SELECT * FROM customer_orders ORDER BY 訂單日期 DESC", conn)
+        # 👇 新增這行：撈取商品資料庫來做翻譯比對
+        df_prods = pd.read_sql("SELECT 編碼, 品牌, 名稱 FROM products", conn)
 
     # 🌟 終極防呆：處理 PostgreSQL 自動轉小寫問題，若無欄位則強制建立
     if not df_orders.empty:
@@ -1610,11 +1612,38 @@ elif menu == "訂單明細":
         df_orders['電話'] = df_orders['電話'].apply(fix_phone)
         df_orders['店號'] = df_orders.apply(fix_store_id, axis=1)
 
+        # 👇 核心新增：建立商品編碼對應字典與翻譯函數
+        prod_map = {}
+        for _, r in df_prods.iterrows():
+            c = str(r['編碼']).strip()
+            if c:
+                b = str(r['品牌']).strip() if pd.notna(r['品牌']) else ""
+                n = str(r['名稱']).strip() if pd.notna(r['名稱']) else ""
+                # 將品牌與名稱組合 (例如: Diptyque 爵夢淡香精 75ml)
+                prod_map[c] = f"{b} {n}".strip() if b else n
+                
+        # 依編碼長度由長到短排序，避免短編碼錯誤蓋掉長編碼的一部分 (例如 P02 被 P02B 蓋過)
+        sorted_codes = sorted(prod_map.keys(), key=len, reverse=True)
+
+        def translate_items(text):
+            res = str(text) if pd.notna(text) else ""
+            if not res or res.strip() in ['nan', 'None']: return ""
+            for code in sorted_codes:
+                if code in res:
+                    # 執行精準替換
+                    res = res.replace(code, prod_map[code])
+            return res
+        # 👆 新增結束
+
         def clean_and_preview(val):
             if pd.isna(val) or str(val).strip() in ['nan', 'None']: return ""
             return str(val)
         df_orders['品項內容_原始'] = df_orders['品項內容'].apply(clean_and_preview)
-        df_orders['品項預覽'] = df_orders['品項內容_原始'].apply(lambda x: x.replace('\n', ' ｜ '))
+        
+        # 👇 變更：產生翻譯後的品項內容，並用於主表格預覽顯示
+        df_orders['品項翻譯'] = df_orders['品項內容_原始'].apply(translate_items)
+        df_orders['品項預覽'] = df_orders['品項翻譯'].apply(lambda x: x.replace('\n', ' ｜ '))
+        # 👆 變更結束
         
         # 確保財務欄位為數值型態 (加上防呆檢查：欄位存在才進行轉換)
         for col in ['包裹應收', '商品成本', '物流運費', '物流運費_RMB', '出貨成本', '訂單損益']:
@@ -1918,7 +1947,11 @@ elif menu == "訂單明細":
                     import io
                     df_selected_detail = df_orders[df_orders['訂單編號'].isin(selected_orders)].copy()
                     
-                    cols_to_drop = ['is_repeat', '品項內容_原始', '品項預覽', '下單總數', '物流運費_RMB']
+                    # 👇 新增這行：將匯出表單內的編碼替換為翻譯後的中文明細
+                    df_selected_detail['品項內容'] = df_selected_detail['品項翻譯']
+                    
+                    # 👇 修改這行：要把 '品項翻譯' 也加入忽略清單，不要匯出多餘的欄位
+                    cols_to_drop = ['is_repeat', '品項內容_原始', '品項預覽', '品項翻譯', '下單總數', '物流運費_RMB']
                     df_selected_detail = df_selected_detail.drop(columns=[c for c in cols_to_drop if c in df_selected_detail.columns])
 
                     output_detail = io.BytesIO()
@@ -2086,7 +2119,11 @@ elif menu == "訂單明細":
                     db_profit = float(target_order.get('訂單損益', 0.0))
                     st.caption(f"📝 目前存檔狀態 👉 系統結算之出貨總成本：**{db_ship_cost:,.0f}** ｜ 訂單最終損益：**{db_profit:,.0f}**")
 
-                    new_items = st.text_area("📦 品項內容 (支援直接在此處換行編輯)", value=target_order.get('品項內容_原始', ''), height=180)
+                    # 👇 更改提示字眼
+                    new_items = st.text_area("📦 品項內容 (支援直接換行編輯，請保持原始編碼以利系統精準追蹤)", value=target_order.get('品項內容_原始', ''), height=150)
+                    
+                    # 👇 新增這行：在編輯框下方顯示即時翻譯結果，讓員工對照看
+                    st.info(f"👁️ **系統自動翻譯對照**：\n{target_order.get('品項翻譯', '無品項')}")
                     
                     c14, c15 = st.columns(2)
                     edit_cust_note = c14.text_area("👤 顧客備註", value=target_order.get('顧客備註', ''))
