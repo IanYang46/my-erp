@@ -687,28 +687,61 @@ if menu == "首頁":
     st.divider()
 
     # ==========================================
-    # --- 3. 廣告費手動輸入區 (退到月看板下方) ---
+    # --- 3. 廣告費區間輸入與漏填檢查 ---
     # ==========================================
-    with st.expander("✍️ 手動輸入每日廣告費 (USD)", expanded=False): 
+    with st.expander("✍️ 手動輸入區間廣告費 (USD) 與 漏填檢查", expanded=False): 
+        
+        # 👇 升級 1：自動比對並列出漏填廣告費的日期
+        if not df_orders.empty:
+            # 找出有訂單的日期集合，與有廣告費的日期集合
+            order_dates = set(df_orders['訂單日期_dt'].dropna())
+            ad_dates = set(df_ad['date_dt'].dropna()) if not df_ad.empty else set()
+            # 兩者相減，得出漏填的日期，並由舊到新排序
+            missing_dates = sorted(list(order_dates - ad_dates))
+        else:
+            missing_dates = []
+            
+        if missing_dates:
+            missing_str = ", ".join([d.strftime('%Y-%m-%d') for d in missing_dates[:7]])
+            if len(missing_dates) > 7:
+                missing_str += f" ...等共 {len(missing_dates)} 天"
+            st.warning(f"⚠️ 發現有訂單但【未填廣告費】的日期：\n{missing_str}")
+        else:
+            st.success("✅ 太棒了！目前所有有訂單的日期皆已填寫廣告費。")
+
+        # 👇 升級 2：區間廣告費表單
         with st.form("ad_spend_form"):
-            c_date, c_usd, c_rate = st.columns(3)
-            input_date = c_date.date_input("選擇紀錄日期", value=today)
-            input_usd = c_usd.number_input("廣告花費 (USD 美金)", min_value=0.0, step=1.0)
+            st.caption("💡 提示：輸入這段期間的『總花費』，系統會自動幫您平均分攤到每一天。")
+            c_start, c_end, c_usd, c_rate = st.columns(4)
+            start_date = c_start.date_input("開始日期", value=today)
+            end_date = c_end.date_input("結束日期", value=today)
+            total_usd = c_usd.number_input("區間【總】花費(USD)", min_value=0.0, step=1.0)
             input_rate = c_rate.number_input("美金轉台幣匯率", value=32.0, step=0.1)
             
-            if st.form_submit_button("💾 儲存並換算廣告費", type="primary", use_container_width=True):
-                spend_twd = input_usd * input_rate
-                with get_db() as conn:
-                    conn.execute("""
-                        INSERT INTO daily_ad_spend (date, spend_usd, exchange_rate, spend_twd) 
-                        VALUES (?, ?, ?, ?) 
-                        ON CONFLICT (date) DO UPDATE SET 
-                        spend_usd=EXCLUDED.spend_usd, exchange_rate=EXCLUDED.exchange_rate, spend_twd=EXCLUDED.spend_twd
-                    """, (str(input_date), input_usd, input_rate, spend_twd))
-                    conn.commit()
-                st.success(f"✅ 成功儲存 {input_date} 廣告費！系統已依匯率 {input_rate} 轉換為台幣：${spend_twd:,.0f}")
-                time.sleep(1)
-                st.rerun()
+            if st.form_submit_button("💾 儲存並均分廣告費", type="primary", use_container_width=True):
+                if start_date > end_date:
+                    st.error("❌ 開始日期不能晚於結束日期！")
+                else:
+                    # 計算總天數與每日平均花費
+                    days_diff = (end_date - start_date).days + 1
+                    daily_usd = total_usd / days_diff
+                    daily_twd = daily_usd * input_rate
+                    
+                    with get_db() as conn:
+                        # 迴圈將每一天的平均花費寫入資料庫
+                        for i in range(days_diff):
+                            curr_d = start_date + pd.Timedelta(days=i)
+                            conn.execute("""
+                                INSERT INTO daily_ad_spend (date, spend_usd, exchange_rate, spend_twd) 
+                                VALUES (?, ?, ?, ?) 
+                                ON CONFLICT (date) DO UPDATE SET 
+                                spend_usd=EXCLUDED.spend_usd, exchange_rate=EXCLUDED.exchange_rate, spend_twd=EXCLUDED.spend_twd
+                            """, (str(curr_d), daily_usd, input_rate, daily_twd))
+                        conn.commit()
+                        
+                    st.success(f"✅ 成功分攤！區間 {start_date} ~ {end_date} (共 {days_diff} 天)。每日均分台幣約為 ${daily_twd:,.0f}")
+                    time.sleep(1.5)
+                    st.rerun()
 
     st.divider()
 
