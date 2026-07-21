@@ -3003,11 +3003,49 @@ elif menu == "財務報表":
                             # --- 畫面顯示區 ---
                             st.success(f"✅ 比對完成！您上傳的表格共 {len(df_logi)} 筆，成功與系統配對 {len(matched_df)} 筆訂單。")
                             
-                            # 👇 新增：把配對成功的完整清單顯示出來，讓您確認數據
-                            st.markdown("#### 📊 本次配對成功明細")
+                            # 👇 新增：每日結算匯總表 (清楚、直覺、可編輯日期)
+                            st.markdown("#### 📊 本次結款每日匯總")
                             if not matched_df.empty:
-                                show_matched = matched_df[['訂單編號', '物流編號', '系統應收台幣', '物流簽收金額', '系統手續費', '物流手續費', '系統結款_RMB', '物流結款人民幣']]
-                                st.dataframe(show_matched, use_container_width=True, hide_index=True)
+                                matched_df['訂單日期_dt'] = pd.to_datetime(matched_df['訂單日期'], errors='coerce')
+                                
+                                # 依「訂單日期」分組加總
+                                daily_summary = matched_df.groupby(matched_df['訂單日期_dt'].dt.strftime('%m/%d')).agg(
+                                    簽收單數=('物流編號', 'count'),
+                                    應收台幣=('系統應收台幣', 'sum'),
+                                    手續費=('系統手續費', 'sum'),
+                                    預估結款=('系統結款_RMB', 'sum'),
+                                    實際結款=('物流結款人民幣', 'sum') # 直接從上傳的物流單裡抓加總
+                                ).reset_index().rename(columns={'訂單日期_dt': '日期'})
+                                
+                                # 新增可讓您紀錄日期的空欄位
+                                daily_summary['結款日期'] = None
+                                daily_summary['匯款日期'] = None
+                                
+                                # 由新到舊排序
+                                daily_summary = daily_summary.sort_values('日期', ascending=False)
+                                
+                                st.data_editor(
+                                    daily_summary,
+                                    use_container_width=True,
+                                    hide_index=True,
+                                    column_config={
+                                        "日期": st.column_config.TextColumn(disabled=True),
+                                        "簽收單數": st.column_config.NumberColumn(format="%d 單", disabled=True),
+                                        "應收台幣": st.column_config.NumberColumn(format="$ %.0f", disabled=True),
+                                        "手續費": st.column_config.NumberColumn(format="-$ %.0f", disabled=True),
+                                        "預估結款": st.column_config.NumberColumn(format="¥ %.2f", disabled=True),
+                                        "實際結款": st.column_config.NumberColumn(format="¥ %.2f", disabled=True),
+                                        # 開放這兩個欄位給您點擊日曆填寫
+                                        "結款日期": st.column_config.DateColumn(),
+                                        "匯款日期": st.column_config.DateColumn()
+                                    }
+                                )
+                            
+                            # 把剛剛那陀又長又細的單筆明細「收折」起來，畫面才不會亂
+                            with st.expander("🔍 點此展開/收起【單筆配對明細】", expanded=False):
+                                if not matched_df.empty:
+                                    show_matched = matched_df[['訂單編號', '物流編號', '訂單日期', '系統應收台幣', '物流簽收金額', '系統手續費', '物流手續費', '系統結款_RMB', '物流結款人民幣']]
+                                    st.dataframe(show_matched, use_container_width=True, hide_index=True)
                             
                             st.divider()
 
