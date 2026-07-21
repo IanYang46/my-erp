@@ -2993,9 +2993,12 @@ elif menu == "財務報表":
                 # 🌟 第二步：物流對帳單上傳與自動抓錯
                 # ---------------------------------------------------------
                 st.markdown("### 📥 智能物流對帳 (單筆抓錯)")
-                st.caption("將物流公司給的 Excel/CSV 拖曳至此，系統會用『物流編號』逐筆核對，幫您抓出金額不對或漏給錢的訂單！")
+                st.caption("請先選擇結款日期，再將物流公司給的 Excel/CSV 拖曳至此，系統會自動抓出金額不符的單！")
                 
-                uploaded_receipt = st.file_uploader("上傳物流結款明細 (需包含：物流編號、簽收金額、手續費、結款人民幣)", type=["csv", "xlsx"])
+                # 👇 新增：在上傳前讓您先選好「結款日期」
+                col_d, col_u = st.columns([1, 2])
+                settle_date = col_d.date_input("🗓️ 選擇本次結款日期", value=pd.Timestamp.today())
+                uploaded_receipt = col_u.file_uploader("上傳物流明細 (需包含: 轉單號, 到付款, 手续费, 應退款)", type=["csv", "xlsx"])
                 
                 if uploaded_receipt:
                     try:
@@ -3007,12 +3010,12 @@ elif menu == "財務報表":
                             
                         df_logi.columns = df_logi.columns.astype(str).str.strip()
                         
-                        # 智能欄位配對
+                        # 👇 變更：精準配對您的物流公司表頭，相容全/半形括號
                         col_mappings = {
-                            '物流編號': ['物流編號', '运单号', '承运单号', '交货单号', '发货单号'],
-                            '物流簽收金額': ['簽收金額', '代收金额', '签收金额', '包裹應收', '金额'],
-                            '物流手續費': ['手續費', '手续费', '代收手续费'],
-                            '物流結款人民幣': ['結款的人民幣', '结款金额', '应结人民币', '结算人民币', '結款人民幣']
+                            '物流編號': ['轉單號', '物流編號', '运单号', '承运单号'],
+                            '物流簽收金額': ['到付款（TWD）', '到付款(TWD)', '簽收金額', '代收金额', '签收金额'],
+                            '物流手續費': ['手续费（TWD）', '手续费(TWD)', '手續費', '手续费'],
+                            '物流結款人民幣': ['應退款(人民币)', '应退款(人民币)', '應退款（人民币）', '結款的人民幣', '结款金额', '应结人民币']
                         }
                         
                         for target_col, aliases in col_mappings.items():
@@ -3023,7 +3026,7 @@ elif menu == "財務報表":
                                     df_logi = df_logi.drop(columns=matched_cols[1:])
                                     
                         if '物流編號' not in df_logi.columns:
-                            st.error("❌ 檔案中找不到基準欄位『物流編號 / 运单号』，無法比對。")
+                            st.error("❌ 檔案中找不到基準欄位『轉單號』，無法比對。請檢查表頭名稱。")
                         else:
                             df_logi['物流編號'] = df_logi['物流編號'].astype(str).str.strip()
                             df_logi = df_logi[df_logi['物流編號'] != ""]
@@ -3036,7 +3039,7 @@ elif menu == "財務報表":
                                 else:
                                     df_logi[col] = 0.0
                                     
-                            # 2. 開始交叉比對 (拿上面的 df_sys 系統資料去配對物流資料)
+                            # 2. 開始交叉比對
                             merged = pd.merge(df_sys, df_logi, on='物流編號', how='left', indicator=True)
                             
                             matched_df = merged[merged['_merge'] == 'both'].copy()
@@ -3044,9 +3047,12 @@ elif menu == "財務報表":
                             matched_df['手續費差'] = matched_df['物流手續費'] - matched_df['系統手續費']
                             matched_df['人民幣差'] = matched_df['物流結款人民幣'] - matched_df['系統結款_RMB']
                             
+                            # 👇 新增：將您選擇的結款日期加進去顯示，方便留存核對
+                            matched_df['結款日期'] = settle_date.strftime('%Y-%m-%d')
+                            
                             unsettled_df = merged[merged['_merge'] == 'left_only'].copy()
                             
-                            st.success(f"✅ 自動比對完成！您上傳的表格共 {len(df_logi)} 筆，成功與系統配對 {len(matched_df)} 筆訂單。")
+                            st.success(f"✅ 自動比對完成！本次設定結款日：{settle_date.strftime('%Y-%m-%d')}。共成功配對 {len(matched_df)} 筆訂單。")
                             
                             # 顯示異常清單
                             st.markdown("#### 🚨 比對異常清單 (需人工確認)")
@@ -3054,12 +3060,12 @@ elif menu == "財務報表":
                                 (matched_df['金額差'].abs() > 1) | 
                                 (matched_df['手續費差'].abs() > 1) | 
                                 (matched_df['人民幣差'].abs() > 1)
-                            ][['訂單編號', '物流編號', '系統應收台幣', '物流簽收金額', '系統手續費', '物流手續費', '系統結款_RMB', '物流結款人民幣']]
+                            ][['結款日期', '訂單編號', '物流編號', '系統應收台幣', '物流簽收金額', '系統手續費', '物流手續費', '系統結款_RMB', '物流結款人民幣']]
                             
                             if error_df.empty:
                                 st.info("🎉 太完美了！已配對的訂單中，所有金額與手續費皆與系統計算完全吻合！")
                             else:
-                                st.error(f"⚠️ 發現 {len(error_df)} 筆單一帳務不符，請核對：")
+                                st.error(f"⚠️ 發現 {len(error_df)} 筆帳務不符，請核對：")
                                 st.dataframe(error_df, use_container_width=True, hide_index=True)
                                 
                             st.divider()
