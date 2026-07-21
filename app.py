@@ -2912,11 +2912,137 @@ elif menu == "訂單明細":
 elif menu == "財務報表":
     st.title("📈 財務與利潤分析")
     if check_perm(role, "財務報表", "can_view"):
-        t1, t2, t3 = st.tabs(["💰 收支總表", "🏆 品牌/單品毛利分析", "💱 匯率與成本設定"])
+        # 👇 這裡把原本的 3 個頁籤增加為 4 個頁籤
+        t1, t2, t3, t4 = st.tabs(["💰 收支總表", "🏆 品牌/單品毛利分析", "🚚 物流結款核對 (詳細版)", "💱 匯率與成本設定"])
         with t1: st.info("統整銷售收入與採購支出。")
         with t2: st.info("利用 FIFO (先進先出) 邏輯，精準計算各品牌與單品的實際利潤率。")
-        with t3: st.info("設定當前人民幣/外幣匯率，讓進貨成本自動轉換為台幣。")
-    else: st.error("🚫 您無權限訪問此模組")
+        
+        # ==========================================
+        # --- 新增的第 3 頁籤：物流結款核對詳細版 ---
+        # ==========================================
+        with t3:
+            st.info("📥 上傳物流公司提供的結款收據，系統將為您逐筆交叉比對【簽收金額】、【手續費】、【人民幣】，並抓出漏結款的訂單！")
+            
+            c_rate, _ = st.columns([1, 3])
+            logi_rate = c_rate.number_input("💵 本次核對匯率 (1 人民幣 = ? 台幣)", value=4.50, step=0.01, key="fin_logi_rate")
+            
+            uploaded_receipt = st.file_uploader("上傳物流結款明細 (需包含：物流編號、簽收金額、手續費、結款人民幣)", type=["csv", "xlsx"])
+            
+            if uploaded_receipt:
+                try:
+                    # 1. 讀取上傳的物流明細表
+                    if uploaded_receipt.name.endswith('.csv'):
+                        df_logi = pd.read_csv(uploaded_receipt, dtype=str)
+                    else:
+                        df_logi = pd.read_excel(uploaded_receipt, dtype=str, engine='openpyxl')
+                        
+                    df_logi.columns = df_logi.columns.astype(str).str.strip()
+                    
+                    # 智能欄位配對 (尋找物流表中的關鍵欄位)
+                    col_mappings = {
+                        '物流編號': ['物流編號', '运单号', '承运单号', '交货单号', '发货单号'],
+                        '物流簽收金額': ['簽收金額', '代收金额', '签收金额', '包裹應收', '金额'],
+                        '物流手續費': ['手續費', '手续费', '代收手续费'],
+                        '物流結款人民幣': ['結款的人民幣', '结款金额', '应结人民币', '结算人民币', '結款人民幣']
+                    }
+                    
+                    for target_col, aliases in col_mappings.items():
+                        matched_cols = [c for c in df_logi.columns if c in aliases]
+                        if matched_cols:
+                            df_logi = df_logi.rename(columns={matched_cols[0]: target_col})
+                            if len(matched_cols) > 1:
+                                df_logi = df_logi.drop(columns=matched_cols[1:])
+                                
+                    if '物流編號' not in df_logi.columns:
+                        st.error("❌ 檔案中找不到基準欄位『物流編號 / 运单号』，無法比對。")
+                    else:
+                        df_logi['物流編號'] = df_logi['物流編號'].astype(str).str.strip()
+                        df_logi = df_logi[df_logi['物流編號'] != ""]
+                        df_logi = df_logi[df_logi['物流編號'] != "nan"]
+                        
+                        # 轉換數值格式
+                        for col in ['物流簽收金額', '物流手續費', '物流結款人民幣']:
+                            if col in df_logi.columns:
+                                df_logi[col] = pd.to_numeric(df_logi[col].astype(str).str.replace(',', ''), errors='coerce').fillna(0.0)
+                            else:
+                                df_logi[col] = 0.0 # 若檔案沒這欄位則補 0
+                        
+                        # 2. 從資料庫撈取系統內「已簽收」的單
+                        with get_db() as conn:
+                            df_db = pd.read_sql("SELECT 訂單編號, 物流編號, 包裹應收, 訂單日期 FROM customer_orders WHERE 取貨狀態='簽收'", conn)
+                        
+                        if df_db.empty:
+                            st.warning("系統目前沒有狀態為『簽收』的訂單。")
+                        else:
+                            df_db['物流編號'] = df_db['物流編號'].astype(str).str.strip()
+                            df_db['系統應收台幣'] = pd.to_numeric(df_db['包裹應收'], errors='coerce').fillna(0.0)
+                            
+                            # 系統自動計算：預估手續費與預估人民幣
+                            import numpy as np
+                            conditions = [df_db['系統應收台幣'] <= 9999, df_db['系統應收台幣'] >= 10000]
+                            choices = [30, 160]
+                            df_db['系統手續費'] = np.select(conditions, choices, default=30)
+                            
+                            df_db['系統結款_TWD'] = df_db['系統應收台幣'] - df_db['系統手續費']
+                            df_db['系統結款_RMB'] = (df_db['系統結款_TWD'] / logi_rate).round(2)
+                            
+                            # 3. 開始交叉比對 (利用物流編號串接)
+                            merged = pd.merge(df_db, df_logi, on='物流編號', how='left', indicator=True)
+                            
+                            # A. 雙方都有的單 (結款明細有、系統也有)
+                            matched_df = merged[merged['_merge'] == 'both'].copy()
+                            
+                            # 計算差異
+                            matched_df['金額差'] = matched_df['物流簽收金額'] - matched_df['系統應收台幣']
+                            matched_df['手續費差'] = matched_df['物流手續費'] - matched_df['系統手續費']
+                            matched_df['人民幣差'] = matched_df['物流結款人民幣'] - matched_df['系統結款_RMB']
+                            
+                            # B. 系統有簽收，但這次物流結款單「沒有」的單 (即未結款)
+                            unsettled_df = merged[merged['_merge'] == 'left_only'].copy()
+                            
+                            # --- 畫面顯示區 ---
+                            st.success(f"✅ 比對完成！您上傳的表格共 {len(df_logi)} 筆，成功與系統配對 {len(matched_df)} 筆訂單。")
+                            
+                            st.markdown("#### 🚨 比對異常清單 (需人工確認)")
+                            st.caption("以下訂單的金額、手續費或結算人民幣與系統計算**不符** (容許 1 元內小數點誤差)：")
+                            
+                            # 找出有差異的單 (差額大於 1，過濾掉匯率小數點進位問題)
+                            error_df = matched_df[
+                                (matched_df['金額差'].abs() > 1) | 
+                                (matched_df['手續費差'].abs() > 1) | 
+                                (matched_df['人民幣差'].abs() > 1)
+                            ][['訂單編號', '物流編號', '系統應收台幣', '物流簽收金額', '系統手續費', '物流手續費', '系統結款_RMB', '物流結款人民幣']]
+                            
+                            if error_df.empty:
+                                st.info("🎉 太完美了！已配對的訂單中，所有金額與手續費皆與系統計算完全吻合！")
+                            else:
+                                st.error(f"⚠️ 發現 {len(error_df)} 筆帳務不符！")
+                                st.dataframe(error_df, use_container_width=True, hide_index=True)
+                                
+                            st.divider()
+                                
+                            st.markdown("#### ⏳ 系統已簽收但【本次未結款】清單")
+                            st.caption("以下是系統顯示已簽收，但「不在您上傳的這份結款單中」的訂單。")
+                            # 為了避免顯示一兩年前早就結完的單，用拉桿控制顯示天數
+                            days_filter = st.slider("顯示最近幾天內簽收的訂單？(避免舊單干擾)", min_value=7, max_value=90, value=30)
+                            cutoff_date = pd.Timestamp.today() - pd.Timedelta(days=days_filter)
+                            
+                            unsettled_df['訂單日期_dt'] = pd.to_datetime(unsettled_df['訂單日期'], errors='coerce')
+                            unsettled_recent = unsettled_df[unsettled_df['訂單日期_dt'] >= cutoff_date]
+                            
+                            if unsettled_recent.empty:
+                                st.success(f"✅ 最近 {days_filter} 天內簽收的訂單，皆已出現在本次或歷史結款中了！")
+                            else:
+                                st.warning(f"📌 最近 {days_filter} 天內，共有 {len(unsettled_recent)} 筆已簽收但未在本次結款：")
+                                show_unsettled = unsettled_recent[['訂單編號', '物流編號', '訂單日期', '系統應收台幣', '系統手續費', '系統結款_RMB']]
+                                st.dataframe(show_unsettled, use_container_width=True, hide_index=True)
+                                
+                except Exception as e:
+                    st.error(f"❌ 處理檔案時發生錯誤，請確認檔案格式是否正確。詳情：{str(e)}")
+        
+        with t4: st.info("設定當前人民幣/外幣匯率，讓進貨成本自動轉換為台幣。")
+    else:
+        st.error("🚫 您無權限訪問此模組")
 
 elif menu == "權限管理":
     st.title("🔐 系統權限與帳號管理")
