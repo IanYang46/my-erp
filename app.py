@@ -666,26 +666,31 @@ if menu == "首頁":
     ad_pct_m = (ad_m / rev_m * 100) if rev_m > 0 else 0
     prod_pct_m = (prod_cost_m / rev_m * 100) if rev_m > 0 else 0
 
-    # 渲染月度看板 (分上下兩排，加入營業額)
+    # 渲染月度看板 (改為三排配置，避免數字被擠壓到看不見)
     with st.container(border=True):
-        # 👇 把第一排切成 6 個欄位，新增 m0 放在最前面顯示營業額
-        m0, m1, m2, m3, m4, m5 = st.columns(6)
-        m0.metric("營業額", f"${rev_m:,.0f}")
-        m1.metric("預估利潤", f"${est_profit_m:,.0f}")
-        m2.metric("實際利潤", f"${actual_profit_m:,.0f}")
-        m3.metric("總廣告費", f"${ad_m:,.0f}")
-        m4.metric("總運費", f"${ship_fee_m:,.0f}")
-        m5.metric("取件率", f"{pickup_rate_m:.1f}%")
+        # 第一排：營收與利潤指標 (4個)
+        m1, m2, m3, m4 = st.columns(4)
+        m1.metric("營業額", f"${rev_m:,.0f}")
+        m2.metric("預估利潤", f"${est_profit_m:,.0f}")
+        m3.metric("實際利潤", f"${actual_profit_m:,.0f}")
+        m4.metric("取件率", f"{pickup_rate_m:.1f}%")
         
-        st.divider() # 上下排分隔線
+        st.divider()
         
-        # 第二排維持 5 個欄位
-        m6, m7, m8, m9, m10 = st.columns(5)
-        m6.metric("預估 ROI", f"{est_roi_m:.2f}")
-        m7.metric("實際 ROAS", f"{actual_roas_m:.2f}")
-        m8.metric("實際 ROI", f"{actual_roi_m:.2f}")
-        m9.metric("廣告佔比", f"{ad_pct_m:.1f}%")
-        m10.metric("商品佔比", f"{prod_pct_m:.1f}%")
+        # 第二排：成本與花費指標 (4個)
+        m5, m6, m7, m8 = st.columns(4)
+        m5.metric("總廣告費", f"${ad_m:,.0f}")
+        m6.metric("總運費", f"${ship_fee_m:,.0f}")
+        m7.metric("廣告佔比", f"{ad_pct_m:.1f}%")
+        m8.metric("商品佔比", f"{prod_pct_m:.1f}%")
+
+        st.divider()
+        
+        # 第三排：投資報酬率指標 (切成4格但只放3個，維持寬度比例)
+        m9, m10, m11, _ = st.columns(4) 
+        m9.metric("預估 ROI", f"{est_roi_m:.2f}")
+        m10.metric("實際 ROI", f"{actual_roi_m:.2f}")
+        m11.metric("實際 ROAS", f"{actual_roas_m:.2f}")
 
     st.divider()
 
