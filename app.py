@@ -666,9 +666,11 @@ if menu == "首頁":
     ad_pct_m = (ad_m / rev_m * 100) if rev_m > 0 else 0
     prod_pct_m = (prod_cost_m / rev_m * 100) if rev_m > 0 else 0
 
-    # 渲染月度看板 (分上下兩排，每排 5 個指標)
+    # 渲染月度看板 (分上下兩排，加入營業額)
     with st.container(border=True):
-        m1, m2, m3, m4, m5 = st.columns(5)
+        # 👇 把第一排切成 6 個欄位，新增 m0 放在最前面顯示營業額
+        m0, m1, m2, m3, m4, m5 = st.columns(6)
+        m0.metric("營業額", f"${rev_m:,.0f}")
         m1.metric("預估利潤", f"${est_profit_m:,.0f}")
         m2.metric("實際利潤", f"${actual_profit_m:,.0f}")
         m3.metric("總廣告費", f"${ad_m:,.0f}")
@@ -677,6 +679,7 @@ if menu == "首頁":
         
         st.divider() # 上下排分隔線
         
+        # 第二排維持 5 個欄位
         m6, m7, m8, m9, m10 = st.columns(5)
         m6.metric("預估 ROI", f"{est_roi_m:.2f}")
         m7.metric("實際 ROAS", f"{actual_roas_m:.2f}")
