@@ -679,13 +679,17 @@ if menu == "首頁":
     st.divider()
 
     # ==========================================
-    # --- 4. 上週數據詳細分析 (週一至週日) ---
+    # --- 4. 單週數據詳細分析 (可自選週次) ---
     # ==========================================
-    st.markdown("### 📅 上週營運詳細數據 (週一至週日)")
+    st.markdown("### 📅 單週營運詳細數據 (週一至週日)")
     
-    # 算出上週一與上週日的日期
-    days_since_monday = today.weekday() # 0是週一, 6是週日
-    last_monday = today - pd.Timedelta(days=days_since_monday + 7)
+    # 👇 新增：讓使用者選擇想看的日期（系統會自動抓那週的週一）
+    selected_date = st.date_input("🗓️ 請點擊選擇想查看的週次 (點選該週的任一天即可)", value=today)
+    selected_dt = pd.Timestamp(selected_date)
+    
+    # 算出選擇日期的「該週週一」
+    days_since_monday = selected_dt.weekday() # 0是週一, 6是週日
+    target_monday = (selected_dt - pd.Timedelta(days=days_since_monday)).date()
     
     weekly_data = []
     
@@ -694,7 +698,7 @@ if menu == "首頁":
     sum_picked = sum_actual_rev = sum_actual_cost = 0
 
     for i in range(7):
-        current_d = last_monday + pd.Timedelta(days=i)
+        current_d = target_monday + pd.Timedelta(days=i)
         day_str = current_d.strftime('%m/%d')
         weekday_str = ["一", "二", "三", "四", "五", "六", "日"][i]
         
@@ -709,10 +713,7 @@ if menu == "首頁":
         ship_fee = df_d['物流運費'].sum()
         
         # 狀態篩選 (判斷是否已簽收、已完結)
-        # 1. 只有「簽收」代表真的有賺到錢 (用來計算實際營收與實際ROI)
         picked_up_mask = df_d['取貨狀態'].isin(['簽收'])
-        
-        # 2. 只要是以下這六種狀態，就代表這筆單「已經跑到終點結案了」
         resolved_mask = df_d['取貨狀態'].isin(['簽收', '退回', '已取消', '客訴', '已上架', '已重出'])
         
         picked_cnt = picked_up_mask.sum()
@@ -720,13 +721,13 @@ if menu == "首頁":
         actual_prod_cost = df_d.loc[picked_up_mask, '商品成本'].sum()
         
         # 成本與利潤計算
-        # 實際成本 = 已取件的商品成本 + 當天所有物流運費 (不管有沒有取都要付運費)
         actual_cost = actual_prod_cost + ship_fee
         
         est_profit = rev - prod_cost - ship_fee - ad_d
         actual_profit = actual_rev - actual_cost - ad_d
         
-        pickup_rate = (picked_cnt / orders_cnt) if orders_cnt > 0 else 0
+        # 👇 變更：取件率直接乘以 100，轉換成 0~100 的真實百分比數值
+        pickup_rate = (picked_cnt / orders_cnt * 100) if orders_cnt > 0 else 0
         actual_roas = (actual_rev / ad_d) if ad_d > 0 else 0
         
         est_total_cost = prod_cost + ship_fee + ad_d
@@ -760,7 +761,9 @@ if menu == "首頁":
     # 建立總計列
     sum_est_profit = sum_rev - sum_prod_cost - sum_ship_fee - sum_ad
     sum_actual_profit = sum_actual_rev - sum_actual_cost - sum_ad
-    sum_pickup_rate = (sum_picked / sum_orders) if sum_orders > 0 else 0
+    
+    # 👇 變更：取件率合計也乘以 100
+    sum_pickup_rate = (sum_picked / sum_orders * 100) if sum_orders > 0 else 0
     sum_actual_roas = (sum_actual_rev / sum_ad) if sum_ad > 0 else 0
     sum_est_total_cost = sum_prod_cost + sum_ship_fee + sum_ad
     sum_est_roi = (sum_est_profit / sum_est_total_cost) if sum_est_total_cost > 0 else 0
@@ -768,7 +771,7 @@ if menu == "首頁":
     sum_actual_roi = (sum_actual_profit / sum_actual_total_cost) if sum_actual_total_cost > 0 else 0
 
     weekly_data.append({
-        "日期": "🌟 本週合計", "狀態": "-", 
+        "日期": "🌟 該週合計", "狀態": "-", 
         "訂單總數": sum_orders, "已簽收數": sum_picked, "取件率": sum_pickup_rate,
         "廣告費": sum_ad, "物流運費": sum_ship_fee, "商品成本": sum_prod_cost,
         "營業額": sum_rev, "預估利潤": sum_est_profit, "預估ROI": sum_est_roi,
@@ -779,20 +782,24 @@ if menu == "首頁":
     # 轉為 DataFrame 並在前端顯示
     df_weekly = pd.DataFrame(weekly_data)
     
-    # 使用 Streamlit 原生表格，設定欄位格式讓它更好看
+    # 👇 變更：依照您的需求修改小數點與顯示格式
     st.dataframe(
         df_weekly,
         use_container_width=True,
         hide_index=True,
         column_config={
             "取件率": st.column_config.NumberColumn(format="%.1f%%", help="已簽收數 / 訂單總數"),
-            "預估ROI": st.column_config.NumberColumn(format="%.1f%%"),
-            "實際ROI": st.column_config.NumberColumn(format="%.1f%%"),
-            "實際ROAS": st.column_config.NumberColumn(format="%.2f x"),
-            "預估利潤": st.column_config.NumberColumn(format="$ %d"),
-            "實際利潤": st.column_config.NumberColumn(format="$ %d"),
-            "營業額": st.column_config.NumberColumn(format="$ %d"),
-            "實際收入": st.column_config.NumberColumn(format="$ %d")
+            "物流運費": st.column_config.NumberColumn(format="$ %.0f"),  # 移除小數點
+            "預估ROI": st.column_config.NumberColumn(format="%.2f"),     # 變成 0.00 格式，拿掉 %
+            "實際成本": st.column_config.NumberColumn(format="$ %.0f"),  # 移除小數點
+            "實際ROI": st.column_config.NumberColumn(format="%.2f"),     # 變成 0.00 格式
+            "實際ROAS": st.column_config.NumberColumn(format="%.2f"),    # 變成 0.00 格式
+            "預估利潤": st.column_config.NumberColumn(format="$ %.0f"),
+            "實際利潤": st.column_config.NumberColumn(format="$ %.0f"),
+            "營業額": st.column_config.NumberColumn(format="$ %.0f"),
+            "實際收入": st.column_config.NumberColumn(format="$ %.0f"),
+            "廣告費": st.column_config.NumberColumn(format="$ %.0f"),
+            "商品成本": st.column_config.NumberColumn(format="$ %.0f")
         }
     )
 
