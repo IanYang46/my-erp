@@ -755,8 +755,9 @@ if menu == "首頁":
     # ==========================================
     st.markdown("### 📅 單週營運詳細數據 (週一至週日)")
     
-    # 👇 新增：讓使用者選擇想看的日期（系統會自動抓那週的週一）
-    selected_date = st.date_input("🗓️ 請點擊選擇想查看的週次 (點選該週的任一天即可)", value=today)
+    # 👇 變更：先算出上週的日期，並設為日曆的預設值（系統依然會自動抓該週的週一）
+    last_week_default = today - pd.Timedelta(days=7)
+    selected_date = st.date_input("🗓️ 請點擊選擇想查看的週次 (點選該週的任一天即可)", value=last_week_default)
     selected_dt = pd.Timestamp(selected_date)
     
     # 算出選擇日期的「該週週一」
