@@ -918,86 +918,94 @@ if menu == "首頁":
     )
 
     # ==========================================
-    # --- 5. 物流代收結款預估與核對 (每週) ---
+    # --- 5. 歷史物流代收結款核對 (每週自動總結) ---
     # ==========================================
-    st.markdown("### 🚚 物流代收結款核對 (每週)")
-    st.caption("💡 供您與物流公司核對每週代收款項。您可以直接在表格中的『空白欄位』點擊打字，當作對帳計算機使用！")
+    st.markdown("### 🚚 歷史物流代收結款核對 (每週)")
+    st.caption("💡 系統已自動幫您撈取歷史以來『已簽收』的訂單，按週匯總。並自動依據包裹金額計算對應手續費，算出最終預估結款金額。")
 
     # 新增台幣換算人民幣的匯率輸入框
     c_rate_logi, _ = st.columns([1, 3])
     # 預設 4.5 代表 1 人民幣 = 4.5 台幣 (依您的實際請款匯率修改)
     logi_rate = c_rate_logi.number_input("💵 結款匯率 (1 人民幣 = ? 台幣)", value=4.50, step=0.01)
 
+    # 1. 篩選出所有歷史中「已簽收」的訂單
+    df_picked = df_orders[df_orders['取貨狀態'] == '簽收'].copy()
+
     recon_data = []
-    sum_recon_orders = 0
-    sum_recon_twd = 0
-    sum_recon_rmb = 0
 
-    # 利用前面已經算好的 target_monday (該週週一)，跑 7 天的迴圈
-    for i in range(7):
-        curr_d = target_monday + pd.Timedelta(days=i)
-        day_str = curr_d.strftime('%m/%d')
+    if not df_picked.empty:
+        import numpy as np
         
-        # 篩選當天訂單
-        df_d = df_orders[df_orders['訂單日期_dt'] == curr_d]
+        # 2. 自動計算每筆訂單的手續費
+        # 規則：包裹0-9999收30，10000-19999收160 (以10000為分界線)
+        conditions = [
+            df_picked['包裹應收'] <= 9999,
+            df_picked['包裹應收'] >= 10000
+        ]
+        choices = [30, 160]
+        df_picked['單筆手續費'] = np.select(conditions, choices, default=30)
         
-        # 僅計算取貨狀態為「簽收」的單
-        picked_mask = df_d['取貨狀態'].isin(['簽收'])
-        picked_cnt = picked_mask.sum()
-        picked_twd = df_d.loc[picked_mask, '包裹應收'].sum()
+        # 3. 找出該筆訂單所屬的週一與週日
+        df_picked['訂單日期_dt'] = pd.to_datetime(df_picked['訂單日期_dt'])
+        # 算出該日期的週一
+        df_picked['週一'] = df_picked['訂單日期_dt'] - pd.to_timedelta(df_picked['訂單日期_dt'].dt.weekday, unit='D')
+        df_picked['週日'] = df_picked['週一'] + pd.Timedelta(days=6)
         
-        # 換算預估應收人民幣
-        picked_rmb = (picked_twd / logi_rate) if logi_rate > 0 else 0
+        # 建立週次字串，例如 07/13-07/19
+        df_picked['週次'] = df_picked['週一'].dt.strftime('%m/%d') + "-" + df_picked['週日'].dt.strftime('%m/%d')
         
-        recon_data.append({
-            "日期": day_str,
-            "簽收單數": picked_cnt,
-            "應收台幣 (TWD)": picked_twd,
-            "預估結款 (RMB)": picked_rmb,
-            "實際結款 (RMB)": None,  # 留空讓使用者填寫
-            "手續費 (TWD)": None,    # 留空讓使用者填寫
-            "結款日期": None,        # 留空讓使用者填寫
-            "匯款日期": None         # 留空讓使用者填寫
-        })
+        # 4. 依照「週一」分組加總數據
+        df_grouped = df_picked.groupby(['週一', '週次']).agg(
+            簽收單數=('包裹應收', 'size'),
+            應收台幣=('包裹應收', 'sum'),
+            總手續費=('單筆手續費', 'sum')
+        ).reset_index()
         
-        # 累加合計
-        sum_recon_orders += picked_cnt
-        sum_recon_twd += picked_twd
-        sum_recon_rmb += picked_rmb
-
-    # 加上該週合計列
-    week_range_str = f"🌟 {target_monday.strftime('%m/%d')} - {(target_monday + pd.Timedelta(days=6)).strftime('%m/%d')} 合計"
-    recon_data.append({
-        "日期": week_range_str,
-        "簽收單數": sum_recon_orders,
-        "應收台幣 (TWD)": sum_recon_twd,
-        "預估結款 (RMB)": sum_recon_rmb,
-        "實際結款 (RMB)": None,
-        "手續費 (TWD)": None,
-        "結款日期": None,
-        "匯款日期": None
-    })
+        # 5. 時間排序：由新到舊 (最新的一週在最上面)
+        df_grouped = df_grouped.sort_values(by='週一', ascending=False)
+        
+        # 6. 計算預估結款並整理為表格資料
+        for _, row in df_grouped.iterrows():
+            # 應結給您的台幣 = 應收台幣 - 系統算出的總手續費
+            net_twd = row['應收台幣'] - row['總手續費']
+            # 換算預估應收人民幣
+            est_rmb = (net_twd / logi_rate) if logi_rate > 0 else 0
+            
+            recon_data.append({
+                "週次": row['週次'],
+                "簽收單數": int(row['簽收單數']),
+                "應收台幣 (TWD)": float(row['應收台幣']),
+                "手續費 (TWD)": float(row['總手續費']),
+                "預估結款 (RMB)": float(est_rmb),
+                "實際結款 (RMB)": None,  # 開放填寫
+                "結款日期": None,        # 開放填寫
+                "匯款日期": None         # 開放填寫
+            })
 
     df_recon = pd.DataFrame(recon_data)
 
-    # 👇 使用 data_editor 產生「可編輯」的表格
-    st.data_editor(
-        df_recon,
-        use_container_width=True,
-        hide_index=True,
-        column_config={
-            "日期": st.column_config.TextColumn(disabled=True), # 鎖定不給改
-            "簽收單數": st.column_config.NumberColumn(format="%d 單", disabled=True),
-            "應收台幣 (TWD)": st.column_config.NumberColumn(format="$ %.0f", disabled=True),
-            "預估結款 (RMB)": st.column_config.NumberColumn(format="¥ %.2f", disabled=True),
-            
-            # 以下四個欄位開放給您在網頁上直接打字編輯
-            "實際結款 (RMB)": st.column_config.NumberColumn(format="¥ %.2f"),
-            "手續費 (TWD)": st.column_config.NumberColumn(format="$ %.0f"),
-            "結款日期": st.column_config.DateColumn(),
-            "匯款日期": st.column_config.DateColumn(),
-        }
-    )
+    if df_recon.empty:
+        st.info("目前尚無任何『已簽收』的訂單可以核對。")
+    else:
+        # 👇 使用 data_editor 產生「可編輯」的表格
+        st.data_editor(
+            df_recon,
+            use_container_width=True,
+            hide_index=True,
+            column_config={
+                "週次": st.column_config.TextColumn(disabled=True),
+                "簽收單數": st.column_config.NumberColumn(format="%d 單", disabled=True),
+                "應收台幣 (TWD)": st.column_config.NumberColumn(format="$ %.0f", disabled=True),
+                # 系統算好的手續費直接帶入顯示
+                "手續費 (TWD)": st.column_config.NumberColumn(format="-$ %.0f", disabled=True),
+                "預估結款 (RMB)": st.column_config.NumberColumn(format="¥ %.2f", disabled=True),
+                
+                # 以下三個欄位開放給您在網頁上直接點擊、打字、選日曆編輯
+                "實際結款 (RMB)": st.column_config.NumberColumn(format="¥ %.2f"),
+                "結款日期": st.column_config.DateColumn(),
+                "匯款日期": st.column_config.DateColumn(),
+            }
+        )
 
 elif menu == "商品訊息":
     st.title("📦 商品訊息管理")
