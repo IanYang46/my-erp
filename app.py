@@ -854,9 +854,9 @@ if menu == "首頁":
         if orders_cnt == 0:
             status_label = "-"
         elif (~resolved_mask).sum() == 0:
-            status_label = "✅ 已取退完成"
+            status_label = "✅ 完成"
         else:
-            status_label = "⏳ 進行中"
+            status_label = "⏳ 進行"
             
         weekly_data.append({
             "日期": f"{day_str} ({weekday_str})", "狀態": status_label,
@@ -926,7 +926,7 @@ if menu == "首頁":
     # 新增台幣換算人民幣的匯率輸入框
     c_rate_logi, _ = st.columns([1, 3])
     # 預設 4.5 代表 1 人民幣 = 4.5 台幣 (依您的實際請款匯率修改)
-    logi_rate = c_rate_logi.number_input("💵 結款匯率 (1 人民幣 = ? 台幣)", value=4.50, step=0.01)
+    logi_rate = c_rate_logi.number_input("💵 結款匯率 (1 人民幣 = ? 台幣)", value=4.90, step=0.01)
 
     # 1. 篩選出所有歷史中「已簽收」的訂單
     df_picked = df_orders[df_orders['取貨狀態'] == '簽收'].copy()
