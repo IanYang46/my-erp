@@ -3003,6 +3003,14 @@ elif menu == "財務報表":
                             # --- 畫面顯示區 ---
                             st.success(f"✅ 比對完成！您上傳的表格共 {len(df_logi)} 筆，成功與系統配對 {len(matched_df)} 筆訂單。")
                             
+                            # 👇 新增：把配對成功的完整清單顯示出來，讓您確認數據
+                            st.markdown("#### 📊 本次配對成功明細")
+                            if not matched_df.empty:
+                                show_matched = matched_df[['訂單編號', '物流編號', '系統應收台幣', '物流簽收金額', '系統手續費', '物流手續費', '系統結款_RMB', '物流結款人民幣']]
+                                st.dataframe(show_matched, use_container_width=True, hide_index=True)
+                            
+                            st.divider()
+
                             st.markdown("#### 🚨 比對異常清單 (需人工確認)")
                             st.caption("以下訂單的金額、手續費或結算人民幣與系統計算**不符** (容許 1 元內小數點誤差)：")
                             
