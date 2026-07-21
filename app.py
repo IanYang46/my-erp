@@ -591,37 +591,13 @@ if menu == "首頁":
     st.title("🏠 營運儀表板 (Dashboard)")
     st.write("一眼掌握今日與昨日的關鍵營業數據，包含廣告成效 (ROAS) 追蹤。")
     
-    # --- 1. 廣告費手動輸入區 ---
-    with st.expander("✍️ 手動輸入每日廣告費 (USD)", expanded=False):  # 預設收合版面較乾淨
-        with st.form("ad_spend_form"):
-            c_date, c_usd, c_rate = st.columns(3)
-            input_date = c_date.date_input("選擇紀錄日期", value=pd.Timestamp.today().date())
-            input_usd = c_usd.number_input("廣告花費 (USD 美金)", min_value=0.0, step=1.0)
-            input_rate = c_rate.number_input("美金轉台幣匯率", value=32.0, step=0.1)
-            
-            if st.form_submit_button("💾 儲存並換算廣告費", type="primary", use_container_width=True):
-                spend_twd = input_usd * input_rate
-                with get_db() as conn:
-                    # SQLite / Postgres 支援的覆蓋語法
-                    conn.execute("""
-                        INSERT INTO daily_ad_spend (date, spend_usd, exchange_rate, spend_twd) 
-                        VALUES (?, ?, ?, ?) 
-                        ON CONFLICT (date) DO UPDATE SET 
-                        spend_usd=EXCLUDED.spend_usd, exchange_rate=EXCLUDED.exchange_rate, spend_twd=EXCLUDED.spend_twd
-                    """, (str(input_date), input_usd, input_rate, spend_twd))
-                    conn.commit()
-                st.success(f"✅ 成功儲存 {input_date} 廣告費！系統已依匯率 {input_rate} 轉換為台幣：${spend_twd:,.0f}")
-                time.sleep(1)
-                st.rerun()
-
-    st.divider()
-
-    # --- 2. 數據計算與撈取 ---
+    # ==========================================
+    # --- 1. 先把所有資料撈出來 (這樣才能放在最上面計算月度總覽) ---
+    # ==========================================
     today = pd.Timestamp.today().date()
     yesterday = today - pd.Timedelta(days=1)
     
     with get_db() as conn:
-        # 【重要更新】把計算利潤需要的欄位一次全撈出來
         df_orders = pd.read_sql("SELECT 訂單日期, 取貨狀態, 包裹應收, 商品成本, 物流運費 FROM customer_orders", conn)
         df_ad = pd.read_sql("SELECT date, spend_twd FROM daily_ad_spend", conn)
 
@@ -640,20 +616,116 @@ if menu == "首頁":
     else:
         df_ad = pd.DataFrame(columns=['date_dt', 'spend_twd'])
 
-    # --- 篩選今日與昨日資料 ---
+    # ==========================================
+    # --- 2. 🏆 每月營運總覽 (顯示在最上方的 10 項關鍵指標) ---
+    # ==========================================
+    st.markdown("### 🏆 每月營運總覽")
+    
+    # 建立年月選擇器 (預設為當前年月)
+    c_y, c_m, _ = st.columns([1, 1, 2])
+    year_options = list(range(2025, 2030))
+    default_y_idx = year_options.index(today.year) if today.year in year_options else 1
+    sel_y = c_y.selectbox("選擇年份", year_options, index=default_y_idx, key="month_y")
+    sel_m = c_m.selectbox("選擇月份", list(range(1, 13)), index=today.month - 1, key="month_m")
+
+    # 篩選出該月份的所有訂單與廣告費
+    mask_orders_m = (pd.to_datetime(df_orders['訂單日期_dt']).dt.year == sel_y) & (pd.to_datetime(df_orders['訂單日期_dt']).dt.month == sel_m)
+    df_m_orders = df_orders[mask_orders_m]
+    
+    mask_ad_m = (pd.to_datetime(df_ad['date_dt']).dt.year == sel_y) & (pd.to_datetime(df_ad['date_dt']).dt.month == sel_m)
+    df_m_ad = df_ad[mask_ad_m]
+
+    # --- 每月各項基礎數據計算 ---
+    ad_m = df_m_ad['spend_twd'].sum() if not df_m_ad.empty else 0
+    orders_cnt_m = len(df_m_orders)
+    rev_m = df_m_orders['包裹應收'].sum()
+    prod_cost_m = df_m_orders['商品成本'].sum()
+    ship_fee_m = df_m_orders['物流運費'].sum()
+
+    # 月度狀態篩選 (針對已簽收的實際收入)
+    picked_mask_m = df_m_orders['取貨狀態'].isin(['簽收'])
+    picked_cnt_m = picked_mask_m.sum()
+    actual_rev_m = df_m_orders.loc[picked_mask_m, '包裹應收'].sum()
+    actual_prod_m = df_m_orders.loc[picked_mask_m, '商品成本'].sum()
+
+    # --- 10 大關鍵指標深度計算 ---
+    actual_cost_m = actual_prod_m + ship_fee_m
+    est_profit_m = rev_m - prod_cost_m - ship_fee_m - ad_m
+    actual_profit_m = actual_rev_m - actual_cost_m - ad_m
+    
+    # 百分比與小數點格式轉換
+    pickup_rate_m = (picked_cnt_m / orders_cnt_m * 100) if orders_cnt_m > 0 else 0
+    
+    est_total_cost_m = prod_cost_m + ship_fee_m + ad_m
+    est_roi_m = (est_profit_m / est_total_cost_m) if est_total_cost_m > 0 else 0
+    
+    actual_total_cost_m = actual_cost_m + ad_m
+    actual_roi_m = (actual_profit_m / actual_total_cost_m) if actual_total_cost_m > 0 else 0
+    actual_roas_m = (actual_rev_m / ad_m) if ad_m > 0 else 0
+    
+    ad_pct_m = (ad_m / rev_m * 100) if rev_m > 0 else 0
+    prod_pct_m = (prod_cost_m / rev_m * 100) if rev_m > 0 else 0
+
+    # 渲染月度看板 (分上下兩排，每排 5 個指標)
+    with st.container(border=True):
+        m1, m2, m3, m4, m5 = st.columns(5)
+        m1.metric("預估利潤", f"${est_profit_m:,.0f}")
+        m2.metric("實際利潤", f"${actual_profit_m:,.0f}")
+        m3.metric("總廣告費", f"${ad_m:,.0f}")
+        m4.metric("總運費", f"${ship_fee_m:,.0f}")
+        m5.metric("取件率", f"{pickup_rate_m:.1f}%")
+        
+        st.divider() # 上下排分隔線
+        
+        m6, m7, m8, m9, m10 = st.columns(5)
+        m6.metric("預估 ROI", f"{est_roi_m:.2f}")
+        m7.metric("實際 ROAS", f"{actual_roas_m:.2f}")
+        m8.metric("實際 ROI", f"{actual_roi_m:.2f}")
+        m9.metric("廣告佔比", f"{ad_pct_m:.1f}%")
+        m10.metric("商品佔比", f"{prod_pct_m:.1f}%")
+
+    st.divider()
+
+    # ==========================================
+    # --- 3. 廣告費手動輸入區 (退到月看板下方) ---
+    # ==========================================
+    with st.expander("✍️ 手動輸入每日廣告費 (USD)", expanded=False): 
+        with st.form("ad_spend_form"):
+            c_date, c_usd, c_rate = st.columns(3)
+            input_date = c_date.date_input("選擇紀錄日期", value=today)
+            input_usd = c_usd.number_input("廣告花費 (USD 美金)", min_value=0.0, step=1.0)
+            input_rate = c_rate.number_input("美金轉台幣匯率", value=32.0, step=0.1)
+            
+            if st.form_submit_button("💾 儲存並換算廣告費", type="primary", use_container_width=True):
+                spend_twd = input_usd * input_rate
+                with get_db() as conn:
+                    conn.execute("""
+                        INSERT INTO daily_ad_spend (date, spend_usd, exchange_rate, spend_twd) 
+                        VALUES (?, ?, ?, ?) 
+                        ON CONFLICT (date) DO UPDATE SET 
+                        spend_usd=EXCLUDED.spend_usd, exchange_rate=EXCLUDED.exchange_rate, spend_twd=EXCLUDED.spend_twd
+                    """, (str(input_date), input_usd, input_rate, spend_twd))
+                    conn.commit()
+                st.success(f"✅ 成功儲存 {input_date} 廣告費！系統已依匯率 {input_rate} 轉換為台幣：${spend_twd:,.0f}")
+                time.sleep(1)
+                st.rerun()
+
+    st.divider()
+
+    # ==========================================
+    # --- 4. 計算今日與昨日看板數據 ---
+    # ==========================================
     df_today = df_orders[df_orders['訂單日期_dt'] == today]
     df_yest = df_orders[df_orders['訂單日期_dt'] == yesterday]
     
     today_ad_row = df_ad[df_ad['date_dt'] == today]
     yest_ad_row = df_ad[df_ad['date_dt'] == yesterday]
 
-    # --- 計算今日 ---
     today_orders_cnt = len(df_today)
     today_rev = df_today['包裹應收'].sum()
     today_ad = today_ad_row['spend_twd'].sum() if not today_ad_row.empty else 0
     today_roas = (today_rev / today_ad) if today_ad > 0 else 0
 
-    # --- 計算昨日 ---
     yesterday_orders_cnt = len(df_yest)
     yesterday_rev = df_yest['包裹應收'].sum()
     yesterday_ad = yest_ad_row['spend_twd'].sum() if not yest_ad_row.empty else 0
