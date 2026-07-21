@@ -1875,20 +1875,29 @@ elif menu == "訂單明細":
     </style>
     """, unsafe_allow_html=True)
     
-    m1, m2, m3, m4, m5 = st.columns(5)
+    # 第一排：核心營收與利潤 (4個欄位)
+    m1, m2, m3, m4 = st.columns(4)
     m1.metric("📦 總訂單數", f"{total_orders:,}")
     m2.metric("💰 總營業額", f"${total_revenue:,.0f}")
-    m3.metric("🛒 總成本", f"${total_cost:,.0f}")
-    m4.metric("🚚 總運費", f"${total_shipping:,.0f}")
-    m5.metric("📈 總預估利潤", f"${total_est_profit:,.0f}")
+    m3.metric("📈 總預估利潤", f"${total_est_profit:,.0f}")
+    m4.metric("💎 總實際利潤", f"${actual_profit:,.0f}", help="實際利潤 = (簽收的訂單損益) - (退回所損失的物流運費)")
     
-    m6, m7, m8, m9, m10 = st.columns(5)
-    m6.metric("✅ 總簽收數", f"{picked_up:,}")
-    # 👇 這裡的標題跟變數都換成你指定的新邏輯
-    m7.metric("❌ 總退回數", f"{unclaimed:,}", help="包含：退回、已上架、已重出、客訴")
-    m8.metric("⏳ 未處理訂單", f"{pending:,}", help="僅計算狀態為「待出貨」的訂單")
-    m9.metric("🚫 總取消數", f"{cancelled:,}")
-    m10.metric("💎 總實際利潤", f"${actual_profit:,.0f}", help="實際利潤 = (簽收的訂單損益) - (退回所損失的物流運費)")
+    # 增加一點排與排之間的呼吸空間
+    st.markdown("<br>", unsafe_allow_html=True) 
+
+    # 第二排：成本與物流狀態 (4個欄位)
+    m5, m6, m7, m8 = st.columns(4)
+    m5.metric("🛒 總成本", f"${total_cost:,.0f}")
+    m6.metric("🚚 總運費", f"${total_shipping:,.0f}")
+    m7.metric("✅ 總簽收數", f"{picked_up:,}")
+    m8.metric("❌ 總退回數", f"{unclaimed:,}", help="包含：退回、已上架、已重出、客訴")
+    
+    st.markdown("<br>", unsafe_allow_html=True)
+
+    # 第三排：待處理與取消 (切成 4 格但只放 2 個，維持一致的寬度)
+    m9, m10, _1, _2 = st.columns(4)
+    m9.metric("⏳ 未處理訂單", f"{pending:,}", help="僅計算狀態為「待出貨」的訂單")
+    m10.metric("🚫 總取消數", f"{cancelled:,}")
 
     st.divider()
     
