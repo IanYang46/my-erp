@@ -3133,11 +3133,9 @@ elif menu == "財務報表":
                                 
                             st.divider()
                             
-                            # 👇 變更：未結款清單邏輯大升級
+                            # 👇 變更：未結款清單邏輯大升級 (顯示歷史全部)
                             st.markdown("#### ⏳ 系統已簽收但【未結清】清單")
-                            st.caption("系統已經自動排除了『歷史已經存檔過』以及『本次您上傳』的訂單。以下是真正還沒結到款的漏網之魚！")
-                            days_filter = st.slider("顯示最近幾天內簽收的訂單？(避免舊單干擾)", min_value=7, max_value=90, value=30)
-                            cutoff_date = pd.Timestamp.today() - pd.Timedelta(days=days_filter)
+                            st.caption("系統已經自動排除了『歷史已經存檔過』以及『本次您上傳』的訂單。以下是歷史以來所有真正還沒結到款的漏網之魚！")
                             
                             # 只抓出「尚未存入資料庫」的單
                             df_unsettled_sys = df_sys[df_sys['已存結款日期'].isna()].copy()
@@ -3146,13 +3144,12 @@ elif menu == "財務報表":
                             merged_unsettled = pd.merge(df_unsettled_sys, df_logi, on='物流編號', how='left', indicator=True)
                             unsettled_df = merged_unsettled[merged_unsettled['_merge'] == 'left_only'].copy()
                             
-                            unsettled_recent = unsettled_df[unsettled_df['訂單日期_dt'] >= cutoff_date]
-                            
-                            if unsettled_recent.empty:
-                                st.success(f"✅ 恭喜！最近 {days_filter} 天內簽收的訂單，全部都已經結清了！")
+                            # 移除日期限制，直接看全部
+                            if unsettled_df.empty:
+                                st.success("✅ 恭喜！歷史以來所有已簽收的訂單，全部都已經結清了！")
                             else:
-                                st.warning(f"📌 最近 {days_filter} 天內，共有 {len(unsettled_recent)} 筆簽收單尚未收到款項：")
-                                show_unsettled = unsettled_recent[['訂單編號', '物流編號', '訂單日期', '系統應收台幣', '系統手續費', '系統結款_RMB']]
+                                st.warning(f"📌 歷史以來，共有 {len(unsettled_df)} 筆簽收單尚未收到款項：")
+                                show_unsettled = unsettled_df[['訂單編號', '物流編號', '訂單日期', '系統應收台幣', '系統手續費', '系統結款_RMB']]
                                 st.dataframe(show_unsettled, use_container_width=True, hide_index=True)
                                 
                     except Exception as e:
