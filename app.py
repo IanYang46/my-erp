@@ -3148,6 +3148,9 @@ elif menu == "財務報表":
                             if unsettled_df.empty:
                                 st.success("✅ 恭喜！歷史以來所有已簽收的訂單，全部都已經結清了！")
                             else:
+                                # 👇 新增這行：利用日期欄位進行排序，ascending=True 代表「從舊排到新」
+                                unsettled_df = unsettled_df.sort_values(by='訂單日期_dt', ascending=True)
+                                
                                 st.warning(f"📌 歷史以來，共有 {len(unsettled_df)} 筆簽收單尚未收到款項：")
                                 show_unsettled = unsettled_df[['訂單編號', '物流編號', '訂單日期', '系統應收台幣', '系統手續費', '系統結款_RMB']]
                                 st.dataframe(show_unsettled, use_container_width=True, hide_index=True)
