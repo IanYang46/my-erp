@@ -2946,21 +2946,30 @@ elif menu == "財務報表":
             st.caption("以下資料來自系統內部紀錄。如果該單已經核對儲存過，系統會自動帶入『實際結款』。")
             
             with get_db() as conn:
-                query = """
-                    SELECT c.訂單編號, c.物流編號, c.包裹應收, c.訂單日期, 
-                           s.結款日期 AS 已存結款日期, s.物流結款人民幣 AS 已存實際結款
-                    FROM customer_orders c
-                    LEFT JOIN logistics_settlements s ON c.物流編號 = s.物流編號
-                    WHERE c.取貨狀態='簽收'
-                """
-                df_db = pd.read_sql(query, conn)
+                # 👇 變更 1：分開讀取，方便我們先進行資料清洗與拆解
+                query_c = "SELECT 訂單編號, 物流編號, 包裹應收, 訂單日期 FROM customer_orders WHERE 取貨狀態='簽收'"
+                df_c = pd.read_sql(query_c, conn)
+                query_s = "SELECT 物流編號, 結款日期 AS 已存結款日期, 物流結款人民幣 AS 已存實際結款 FROM logistics_settlements"
+                df_s = pd.read_sql(query_s, conn)
                 
-            if df_db.empty:
+            if df_c.empty:
                 st.warning("系統目前沒有狀態為『簽收』的訂單。")
             else:
-                df_sys = df_db.copy()
+                # 👇 變更 2：自動剃除應收為 0 的單 (無須結帳)
+                df_c['系統應收台幣'] = pd.to_numeric(df_c['包裹應收'], errors='coerce').fillna(0.0)
+                df_c = df_c[df_c['系統應收台幣'] > 0].copy()
+                
+                # 👇 變更 3：處理合併物流單號 (自動將含斜線、逗號的字串拆成多筆獨立紀錄)
+                df_c['物流編號'] = df_c['物流編號'].astype(str).str.replace(' ', '')
+                df_c['物流編號'] = df_c['物流編號'].str.split(r'[/,、]')
+                df_c = df_c.explode('物流編號')
+                df_c['物流編號'] = df_c['物流編號'].str.strip()
+                df_c = df_c[df_c['物流編號'] != ""]
+                
+                # 結合資料庫結款紀錄
+                df_sys = pd.merge(df_c, df_s, on='物流編號', how='left')
+                
                 df_sys['訂單日期_dt'] = pd.to_datetime(df_sys['訂單日期'], errors='coerce')
-                df_sys['系統應收台幣'] = pd.to_numeric(df_sys['包裹應收'], errors='coerce').fillna(0.0)
                 
                 import numpy as np
                 conditions = [df_sys['系統應收台幣'] <= 9999, df_sys['系統應收台幣'] >= 10000]
@@ -2970,13 +2979,25 @@ elif menu == "財務報表":
                 df_sys['系統結款_TWD'] = df_sys['系統應收台幣'] - df_sys['系統手續費']
                 df_sys['系統結款_RMB'] = (df_sys['系統結款_TWD'] / logi_rate).round(2)
                 
-                daily_sys = df_sys.groupby(df_sys['訂單日期_dt'].dt.strftime('%m/%d')).agg(
-                    簽收單數=('物流編號', 'count'),
+                # 產生每日匯總表
+                # 預估部分：利用 drop_duplicates 避免一單被拆成多包裹時，預估總額翻倍
+                df_sys_unique = df_sys.drop_duplicates('訂單編號')
+                daily_est = df_sys_unique.groupby(df_sys_unique['訂單日期_dt'].dt.strftime('%m/%d')).agg(
+                    訂單數=('訂單編號', 'count'),
                     應收台幣=('系統應收台幣', 'sum'),
                     手續費=('系統手續費', 'sum'),
-                    預估結款=('系統結款_RMB', 'sum'),
-                    實際結款=('已存實際結款', 'sum') 
+                    預估結款=('系統結款_RMB', 'sum')
                 ).reset_index().rename(columns={'訂單日期_dt': '日期'})
+                
+                # 實際部分：將所有拆解出來的物流單據實際結款加總
+                daily_act = df_sys.groupby(df_sys['訂單日期_dt'].dt.strftime('%m/%d')).agg(
+                    實際結款=('已存實際結款', 'sum')
+                ).reset_index().rename(columns={'訂單日期_dt': '日期'})
+                
+                daily_sys = pd.merge(daily_est, daily_act, on='日期', how='left').fillna(0)
+                
+                # 👇 變更 4：新增差額欄位
+                daily_sys['差額'] = (daily_sys['實際結款'] - daily_sys['預估結款']).round(2)
                 
                 daily_sys = daily_sys.sort_values('日期', ascending=False)
                 
@@ -2986,11 +3007,12 @@ elif menu == "財務報表":
                     hide_index=True,
                     column_config={
                         "日期": st.column_config.TextColumn(disabled=True),
-                        "簽收單數": st.column_config.NumberColumn(format="%d 單", disabled=True),
+                        "訂單數": st.column_config.NumberColumn(format="%d 單", disabled=True),
                         "應收台幣": st.column_config.NumberColumn(format="$ %.0f", disabled=True),
                         "手續費": st.column_config.NumberColumn(format="-$ %.0f", disabled=True),
                         "預估結款": st.column_config.NumberColumn(format="¥ %.2f", disabled=True),
-                        "實際結款": st.column_config.NumberColumn(format="¥ %.2f", disabled=True)
+                        "實際結款": st.column_config.NumberColumn(format="¥ %.2f", disabled=True),
+                        "差額": st.column_config.NumberColumn(format="¥ %.2f", disabled=True)
                     }
                 )
 
