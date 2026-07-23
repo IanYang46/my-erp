@@ -3084,17 +3084,51 @@ elif menu == "財務報表":
 
                             # 顯示異常清單
                             st.markdown("#### 🚨 比對異常清單 (需人工確認)")
-                            error_df = matched_df[
+                            
+                            # 👇 變更：找出有差異的單，並準備加上「異常原因」
+                            error_mask = (
                                 (matched_df['金額差'].abs() > 1) | 
                                 (matched_df['手續費差'].abs() > 1) | 
                                 (matched_df['人民幣差'].abs() > 1)
-                            ][['結款日期', '訂單編號', '物流編號', '系統應收台幣', '物流簽收金額', '系統手續費', '物流手續費', '系統結款_RMB', '物流結款人民幣']]
+                            )
+                            error_full_df = matched_df[error_mask].copy()
                             
-                            if error_df.empty:
+                            if error_full_df.empty:
                                 st.info("🎉 太完美了！已配對的訂單中，所有金額與手續費皆與系統計算完全吻合！")
                             else:
-                                st.error(f"⚠️ 發現 {len(error_df)} 筆帳務不符，請核對：")
-                                st.dataframe(error_df, use_container_width=True, hide_index=True)
+                                # 👇 新增：自動化判斷差異，產生給人看的「白話文說明」
+                                def get_error_reason(row):
+                                    reasons = []
+                                    # 金額差 = 物流簽收金額 - 系統應收台幣
+                                    if abs(row['金額差']) > 1:
+                                        msg = f"物流少收 ${abs(row['金額差']):.0f}" if row['金額差'] < 0 else f"物流多收 ${row['金額差']:.0f}"
+                                        reasons.append(msg)
+                                        
+                                    # 手續費差 = 物流手續費 - 系統手續費
+                                    if abs(row['手續費差']) > 1:
+                                        msg = f"手續費少扣 ${abs(row['手續費差']):.0f}" if row['手續費差'] < 0 else f"手續費多扣 ${row['手續費差']:.0f}"
+                                        reasons.append(msg)
+                                        
+                                    # 人民幣差 = 物流結款人民幣 - 系統結款_RMB
+                                    if abs(row['人民幣差']) > 1:
+                                        msg = f"人民幣少給 ¥{abs(row['人民幣差']):.2f}" if row['人民幣差'] < 0 else f"人民幣多給 ¥{row['人民幣差']:.2f}"
+                                        reasons.append(msg)
+                                        
+                                    return "、".join(reasons)
+                                
+                                # 套用白話文說明邏輯
+                                error_full_df['📌 異常原因'] = error_full_df.apply(get_error_reason, axis=1)
+                                
+                                # 整理顯示欄位 (把異常原因擺在第一欄)
+                                show_error_df = error_full_df[[
+                                    '📌 異常原因', '結款日期', '訂單編號', '物流編號', 
+                                    '系統應收台幣', '物流簽收金額', 
+                                    '系統手續費', '物流手續費', 
+                                    '系統結款_RMB', '物流結款人民幣'
+                                ]]
+                                
+                                st.error(f"⚠️ 發現 {len(show_error_df)} 筆帳務不符，請核對以下異常原因：")
+                                st.dataframe(show_error_df, use_container_width=True, hide_index=True)
                                 
                             st.divider()
                             
