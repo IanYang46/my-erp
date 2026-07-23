@@ -3021,7 +3021,8 @@ elif menu == "財務報表":
                         else:
                             df_logi = pd.read_excel(uploaded_receipt, dtype=str, engine='openpyxl')
                             
-                        df_logi.columns = df_logi.columns.astype(str).str.strip()
+                        # 👇 變更：使用正規表達式 (regex) 暴力清除表頭中所有的「換行(\n)」、「空格」與「隱藏字元」！
+                        df_logi.columns = df_logi.columns.astype(str).str.replace(r'\s+', '', regex=True)
                         
                         col_mappings = {
                             '物流編號': ['轉單號', '物流編號', '运单号', '承运单号'],
