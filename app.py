@@ -2680,7 +2680,9 @@ elif menu == "訂單明細":
                                         str(row.get('店號', '')),
                                         str(row.get('品項內容', '')), 
                                         rev, 
-                                        rev, 
+                                        default_cost_twd,  # 👈 寫入台幣商品成本 (50RMB*匯率)
+                                        default_cost_twd,  # 👈 初始出貨成本 (因為還沒算運費，所以先等於商品成本)
+                                        init_profit,       # 👈 初始利潤 (應收 - 成本)
                                         raw_logi, 
                                         init_status,
                                         str(row.get('顧客備註', '')), 
