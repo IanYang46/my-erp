@@ -989,9 +989,7 @@ if menu == "首頁":
                     "應收台幣 (TWD)": float(row['應收台幣']),
                     "手續費 (TWD)": float(row['總手續費']),
                     "預估結款 (RMB)": float(est_rmb),
-                    "實際結款 (RMB)": None, 
-                    "結款日期": auto_settle_date.date(),  # 👈 自動預填下週五
-                    "匯款日期": None         
+                    "預估結款日期": auto_settle_date.date()  # 👈 改成預估結款日期
                 })
 
     df_recon = pd.DataFrame(recon_data)
@@ -999,23 +997,18 @@ if menu == "首頁":
     if df_recon.empty:
         st.info("目前尚無任何具備『取貨日期』的已簽收訂單可以核對。")
     else:
-        # 👇 使用 data_editor 產生「可編輯」的表格
-        st.data_editor(
+        # 👇 既然不需手動輸入資料了，改用 st.dataframe 呈現純報表，防呆又清晰
+        st.dataframe(
             df_recon,
             use_container_width=True,
             hide_index=True,
             column_config={
-                "週次": st.column_config.TextColumn(disabled=True),
-                "簽收單數": st.column_config.NumberColumn(format="%d 單", disabled=True),
-                "應收台幣 (TWD)": st.column_config.NumberColumn(format="$ %.0f", disabled=True),
-                # 系統算好的手續費直接帶入顯示
-                "手續費 (TWD)": st.column_config.NumberColumn(format="-$ %.0f", disabled=True),
-                "預估結款 (RMB)": st.column_config.NumberColumn(format="¥ %.2f", disabled=True),
-                
-                # 以下三個欄位開放給您在網頁上直接點擊、打字、選日曆編輯
-                "實際結款 (RMB)": st.column_config.NumberColumn(format="¥ %.2f"),
-                "結款日期": st.column_config.DateColumn(),
-                "匯款日期": st.column_config.DateColumn(),
+                "週次": st.column_config.TextColumn("週次"),
+                "簽收單數": st.column_config.NumberColumn("簽收單數", format="%d 單"),
+                "應收台幣 (TWD)": st.column_config.NumberColumn("應收台幣 (TWD)", format="$ %.0f"),
+                "手續費 (TWD)": st.column_config.NumberColumn("手續費 (TWD)", format="-$ %.0f"),
+                "預估結款 (RMB)": st.column_config.NumberColumn("預估結款 (RMB)", format="¥ %.2f"),
+                "預估結款日期": st.column_config.DateColumn("預估結款日期"),
             }
         )
 
