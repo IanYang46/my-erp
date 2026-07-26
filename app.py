@@ -973,12 +973,24 @@ if menu == "首頁":
             # 5. 時間排序：由新到舊 (最新的一週在最上面)
             df_grouped = df_grouped.sort_values(by='週一', ascending=False)
             
+            # 用於計算合計的變數
+            total_orders = 0
+            total_twd = 0
+            total_fee = 0
+            total_rmb = 0
+            
             # 6. 計算預估結款並整理為表格資料
             for _, row in df_grouped.iterrows():
                 # 應結給您的台幣 = 應收台幣 - 系統算出的總手續費
                 net_twd = row['應收台幣'] - row['總手續費']
                 # 換算預估應收人民幣
                 est_rmb = (net_twd / logi_rate) if logi_rate > 0 else 0
+                
+                # 累加合計數據
+                total_orders += int(row['簽收單數'])
+                total_twd += float(row['應收台幣'])
+                total_fee += float(row['總手續費'])
+                total_rmb += float(est_rmb)
                 
                 # 💡 智能推算：當週的週一加上 11 天，剛好就是「下週五」
                 auto_settle_date = row['週一'] + pd.Timedelta(days=11)
@@ -991,6 +1003,16 @@ if menu == "首頁":
                     "預估結款 (RMB)": float(est_rmb),
                     "預估結款日期": auto_settle_date.date()  # 👈 改成預估結款日期
                 })
+
+            # 👇 在迴圈結束後，將「總計」列加入資料最末端
+            recon_data.append({
+                "週次": "🌟 歷史總計",
+                "簽收單數": total_orders,
+                "應收台幣 (TWD)": total_twd,
+                "手續費 (TWD)": total_fee,
+                "預估結款 (RMB)": total_rmb,
+                "預估結款日期": None  # 總計列不需顯示日期
+            })
 
     df_recon = pd.DataFrame(recon_data)
 
