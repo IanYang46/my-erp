@@ -2357,10 +2357,17 @@ elif menu == "訂單明細":
                     
                     edit_pickup = c9a.date_input("取貨日期", value=parsed_date, format="YYYY/MM/DD")
 
-                    st.markdown("##### 💰 金額與成本核算 (應收與成本為台幣，運費請輸入人民幣)")
+                    st.markdown("##### 💰 金額與成本核算 (應收為台幣，成本與運費請輸入人民幣)")
                     c10, c11, c12 = st.columns(3)
                     edit_revenue = c10.number_input("包裹應收 (TWD)", value=float(target_order.get('包裹應收', 0.0)), step=10.0)
-                    edit_cost = c11.number_input("商品成本 (TWD)", value=float(target_order.get('商品成本', 0.0)), step=10.0)
+                    
+                    # 👇 將原本存的台幣成本反推回 RMB 顯示，預設空單為 50 RMB
+                    current_cost_twd = float(target_order.get('商品成本', 0.0))
+                    current_cost_rmb = (current_cost_twd / rate) if current_cost_twd > 0 else 50.0
+                    
+                    edit_cost_rmb = c11.number_input("商品成本 (RMB)", value=current_cost_rmb, step=5.0)
+                    edit_cost = edit_cost_rmb * rate  # 自動轉成台幣供後續存檔運算
+                    c11.caption(f"🔄 預估台幣成本：**{edit_cost:,.0f}** TWD")
                     
                     # 🌟 雙重防呆：確保讀取到的 RMB 運費有效，若是空值或 NaN 則預設為 0.0
                     raw_rmb = target_order.get('物流運費_RMB', 0.0)
@@ -2512,7 +2519,11 @@ elif menu == "訂單明細":
                 
                 c_ma10, c_ma11, c_ma12 = st.columns(3)
                 ma_revenue = c_ma10.number_input("包裹應收 (TWD)", value=0.0, step=10.0)
-                ma_cost = c_ma11.number_input("商品成本 (TWD)", value=0.0, step=10.0)
+                
+                # 👇 改為輸入 RMB，預設值帶入 50，並自動換算台幣存檔
+                ma_cost_rmb = c_ma11.number_input("商品成本 (RMB)", value=50.0, step=5.0)
+                ma_cost = ma_cost_rmb * rate
+                c_ma11.caption(f"🔄 預估台幣成本：**{ma_cost:,.0f}** TWD")
                 
                 # 🌟 新增時運費改為輸入 RMB 並自動換算台幣存檔
                 ma_shipping_rmb = c_ma12.number_input("物流運費 (RMB)", value=0.0, step=1.0)
@@ -2637,10 +2648,14 @@ elif menu == "訂單明細":
                                     else:
                                         raw_logi = ''
 
+                                    # 👇 暫定每筆訂單預設商品成本為 50 RMB，並換算台幣
+                                    default_cost_twd = 50.0 * rate
+                                    init_profit = rev - default_cost_twd
+                                    
                                     cursor.execute("""
                                         INSERT INTO customer_orders 
                                         (訂單編號, 訂單日期, 姓名, 電話, 信箱, 門市, 店號, 品項內容, 下單總數, 包裹應收, 商品成本, 物流運費, 出貨成本, 訂單損益, 物流編號, 取貨狀態, 取貨日期, 顧客備註, 商家備註)
-                                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, ?, 0.0, 0.0, 0.0, ?, ?, ?, NULL, ?, ?)
+                                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, 0.0, ?, ?, ?, ?, NULL, ?, ?)
                                         ON CONFLICT(訂單編號) DO UPDATE SET
                                             訂單日期 = excluded.訂單日期,
                                             姓名 = excluded.姓名,
