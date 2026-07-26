@@ -933,6 +933,12 @@ if menu == "首頁":
         df_picked = pd.read_sql("SELECT 包裹應收, 取貨日期 FROM customer_orders WHERE 取貨狀態='簽收'", conn)
 
     recon_data = []
+    
+    # 預設合計變數為 0
+    total_orders = 0
+    total_twd = 0
+    total_fee = 0
+    total_rmb = 0
 
     if not df_picked.empty:
         import numpy as np
@@ -973,12 +979,6 @@ if menu == "首頁":
             # 5. 時間排序：由新到舊 (最新的一週在最上面)
             df_grouped = df_grouped.sort_values(by='週一', ascending=False)
             
-            # 用於計算合計的變數
-            total_orders = 0
-            total_twd = 0
-            total_fee = 0
-            total_rmb = 0
-            
             # 6. 計算預估結款並整理為表格資料
             for _, row in df_grouped.iterrows():
                 # 應結給您的台幣 = 應收台幣 - 系統算出的總手續費
@@ -1004,21 +1004,22 @@ if menu == "首頁":
                     "預估結款日期": auto_settle_date.date()  # 👈 改成預估結款日期
                 })
 
-            # 👇 在迴圈結束後，將「總計」列加入資料最末端
-            recon_data.append({
-                "週次": "🌟 歷史總計",
-                "簽收單數": total_orders,
-                "應收台幣 (TWD)": total_twd,
-                "手續費 (TWD)": total_fee,
-                "預估結款 (RMB)": total_rmb,
-                "預估結款日期": None  # 總計列不需顯示日期
-            })
-
     df_recon = pd.DataFrame(recon_data)
 
     if df_recon.empty:
         st.info("目前尚無任何具備『取貨日期』的已簽收訂單可以核對。")
     else:
+        # 👇 將合計獨立拉出來，變成精美的看板顯示在表格上方
+        with st.container(border=True):
+            st.markdown("#### 🌟 歷史總結算")
+            c_tot1, c_tot2, c_tot3, c_tot4 = st.columns(4)
+            c_tot1.metric("總簽收單數", f"{total_orders} 單")
+            c_tot2.metric("總應收台幣", f"${total_twd:,.0f}")
+            c_tot3.metric("總手續費", f"-$ {total_fee:,.0f}")
+            c_tot4.metric("總預估結款", f"¥ {total_rmb:,.2f}")
+            
+        st.write("") # 增加一點間距
+
         # 👇 既然不需手動輸入資料了，改用 st.dataframe 呈現純報表，防呆又清晰
         st.dataframe(
             df_recon,
