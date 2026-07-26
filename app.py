@@ -928,13 +928,17 @@ if menu == "首頁":
     # 預設 4.5 代表 1 人民幣 = 4.5 台幣 (依您的實際請款匯率修改)
     logi_rate = c_rate_logi.number_input("💵 結款匯率 (1 人民幣 = ? 台幣)", value=4.90, step=0.01)
 
-    # 1. 篩選出所有歷史中「已簽收」的訂單
-    df_picked = df_orders[df_orders['取貨狀態'] == '簽收'].copy()
+    # 👇 修正重點：不拿現有的 df_orders，直接讓這個區塊去資料庫把需要的「取貨日期」撈出來！
+    with get_db() as conn:
+        df_picked = pd.read_sql("SELECT 包裹應收, 取貨日期 FROM customer_orders WHERE 取貨狀態='簽收'", conn)
 
     recon_data = []
 
     if not df_picked.empty:
         import numpy as np
+        
+        # 確保應收金額是數字格式，避免運算錯誤
+        df_picked['包裹應收'] = pd.to_numeric(df_picked['包裹應收'], errors='coerce').fillna(0.0)
         
         # 2. 自動計算每筆訂單的手續費
         # 規則：包裹0-9999收30，10000-19999收160 (以10000為分界線)
@@ -945,14 +949,14 @@ if menu == "首頁":
         choices = [30, 160]
         df_picked['單筆手續費'] = np.select(conditions, choices, default=30)
         
-        # 👇 變更核心：把計算基準從「訂單日期」改成「取貨日期」
+        # 3. 處理取貨日期
         df_picked['取貨日期_dt'] = pd.to_datetime(df_picked['取貨日期'], errors='coerce')
         
         # 排除沒有填寫取貨日期的異常單 (確保排週次不會報錯)
         df_picked = df_picked.dropna(subset=['取貨日期_dt'])
         
         if not df_picked.empty:
-            # 3. 找出該筆訂單取貨日期的週一與週日
+            # 找出該筆訂單取貨日期的週一與週日
             df_picked['週一'] = df_picked['取貨日期_dt'] - pd.to_timedelta(df_picked['取貨日期_dt'].dt.weekday, unit='D')
             df_picked['週日'] = df_picked['週一'] + pd.Timedelta(days=6)
             
