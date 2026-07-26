@@ -921,7 +921,7 @@ if menu == "首頁":
     # --- 5. 歷史物流代收結款核對 (每週自動總結) ---
     # ==========================================
     st.markdown("### 🚚 歷史物流代收結款核對 (每週)")
-    st.caption("💡 系統已自動幫您撈取歷史以來『已簽收』的訂單，按週匯總。並自動依據包裹金額計算對應手續費，算出最終預估結款金額。")
+    st.caption("💡 系統已自動幫您撈取歷史以來『已簽收』的訂單，按【取貨日期】的週次匯總。並自動依據包裹金額計算對應手續費，算出最終預估結款金額。")
 
     # 新增台幣換算人民幣的匯率輸入框
     c_rate_logi, _ = st.columns([1, 3])
@@ -945,47 +945,55 @@ if menu == "首頁":
         choices = [30, 160]
         df_picked['單筆手續費'] = np.select(conditions, choices, default=30)
         
-        # 3. 找出該筆訂單所屬的週一與週日
-        df_picked['訂單日期_dt'] = pd.to_datetime(df_picked['訂單日期_dt'])
-        # 算出該日期的週一
-        df_picked['週一'] = df_picked['訂單日期_dt'] - pd.to_timedelta(df_picked['訂單日期_dt'].dt.weekday, unit='D')
-        df_picked['週日'] = df_picked['週一'] + pd.Timedelta(days=6)
+        # 👇 變更核心：把計算基準從「訂單日期」改成「取貨日期」
+        df_picked['取貨日期_dt'] = pd.to_datetime(df_picked['取貨日期'], errors='coerce')
         
-        # 建立週次字串，例如 07/13-07/19
-        df_picked['週次'] = df_picked['週一'].dt.strftime('%m/%d') + "-" + df_picked['週日'].dt.strftime('%m/%d')
+        # 排除沒有填寫取貨日期的異常單 (確保排週次不會報錯)
+        df_picked = df_picked.dropna(subset=['取貨日期_dt'])
         
-        # 4. 依照「週一」分組加總數據
-        df_grouped = df_picked.groupby(['週一', '週次']).agg(
-            簽收單數=('包裹應收', 'size'),
-            應收台幣=('包裹應收', 'sum'),
-            總手續費=('單筆手續費', 'sum')
-        ).reset_index()
-        
-        # 5. 時間排序：由新到舊 (最新的一週在最上面)
-        df_grouped = df_grouped.sort_values(by='週一', ascending=False)
-        
-        # 6. 計算預估結款並整理為表格資料
-        for _, row in df_grouped.iterrows():
-            # 應結給您的台幣 = 應收台幣 - 系統算出的總手續費
-            net_twd = row['應收台幣'] - row['總手續費']
-            # 換算預估應收人民幣
-            est_rmb = (net_twd / logi_rate) if logi_rate > 0 else 0
+        if not df_picked.empty:
+            # 3. 找出該筆訂單取貨日期的週一與週日
+            df_picked['週一'] = df_picked['取貨日期_dt'] - pd.to_timedelta(df_picked['取貨日期_dt'].dt.weekday, unit='D')
+            df_picked['週日'] = df_picked['週一'] + pd.Timedelta(days=6)
             
-            recon_data.append({
-                "週次": row['週次'],
-                "簽收單數": int(row['簽收單數']),
-                "應收台幣 (TWD)": float(row['應收台幣']),
-                "手續費 (TWD)": float(row['總手續費']),
-                "預估結款 (RMB)": float(est_rmb),
-                "實際結款 (RMB)": None,  # 開放填寫
-                "結款日期": None,        # 開放填寫
-                "匯款日期": None         # 開放填寫
-            })
+            # 建立週次字串，例如 07/13-07/19
+            df_picked['週次'] = df_picked['週一'].dt.strftime('%m/%d') + "-" + df_picked['週日'].dt.strftime('%m/%d')
+            
+            # 4. 依照「週一」分組加總數據
+            df_grouped = df_picked.groupby(['週一', '週次']).agg(
+                簽收單數=('包裹應收', 'size'),
+                應收台幣=('包裹應收', 'sum'),
+                總手續費=('單筆手續費', 'sum')
+            ).reset_index()
+            
+            # 5. 時間排序：由新到舊 (最新的一週在最上面)
+            df_grouped = df_grouped.sort_values(by='週一', ascending=False)
+            
+            # 6. 計算預估結款並整理為表格資料
+            for _, row in df_grouped.iterrows():
+                # 應結給您的台幣 = 應收台幣 - 系統算出的總手續費
+                net_twd = row['應收台幣'] - row['總手續費']
+                # 換算預估應收人民幣
+                est_rmb = (net_twd / logi_rate) if logi_rate > 0 else 0
+                
+                # 💡 智能推算：當週的週一加上 11 天，剛好就是「下週五」
+                auto_settle_date = row['週一'] + pd.Timedelta(days=11)
+                
+                recon_data.append({
+                    "週次": row['週次'],
+                    "簽收單數": int(row['簽收單數']),
+                    "應收台幣 (TWD)": float(row['應收台幣']),
+                    "手續費 (TWD)": float(row['總手續費']),
+                    "預估結款 (RMB)": float(est_rmb),
+                    "實際結款 (RMB)": None, 
+                    "結款日期": auto_settle_date.date(),  # 👈 自動預填下週五
+                    "匯款日期": None         
+                })
 
     df_recon = pd.DataFrame(recon_data)
 
     if df_recon.empty:
-        st.info("目前尚無任何『已簽收』的訂單可以核對。")
+        st.info("目前尚無任何具備『取貨日期』的已簽收訂單可以核對。")
     else:
         # 👇 使用 data_editor 產生「可編輯」的表格
         st.data_editor(
