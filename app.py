@@ -3189,7 +3189,26 @@ elif menu == "財務報表":
                     # 按照訂單日期從舊排到新
                     unsettled_df = unsettled_df.sort_values(by='訂單日期_dt', ascending=True)
                     
-                    st.warning(f"📌 歷史以來，共有 {len(unsettled_df)} 筆簽收單尚未收到款項：")
+                    # 👇 1. 計算未結清的總計數據
+                    unsettled_count = len(unsettled_df)
+                    unsettled_twd = unsettled_df['系統應收台幣'].sum()
+                    unsettled_fee = unsettled_df['系統手續費'].sum()
+                    unsettled_rmb = unsettled_df['系統結款_RMB'].sum()
+                    
+                    st.warning(f"📌 歷史以來，共有 {unsettled_count} 筆簽收單尚未收到款項：")
+                    
+                    # 👇 2. 顯示精美的未結清看板
+                    with st.container(border=True):
+                        st.markdown("##### 🚨 尚未結清總結算")
+                        c_u1, c_u2, c_u3, c_u4 = st.columns(4)
+                        c_u1.metric("未結清單數", f"{unsettled_count} 單")
+                        c_u2.metric("未結應收台幣", f"${unsettled_twd:,.0f}")
+                        c_u3.metric("未結手續費", f"-$ {unsettled_fee:,.0f}")
+                        c_u4.metric("預估未結人民幣", f"¥ {unsettled_rmb:,.2f}")
+                        
+                    st.write("") # 增加一點間距
+                    
+                    # 3. 顯示明細表格
                     show_unsettled = unsettled_df[['訂單編號', '物流編號', '訂單日期', '系統應收台幣', '系統手續費', '系統結款_RMB']]
                     st.dataframe(show_unsettled, use_container_width=True, hide_index=True)
         
