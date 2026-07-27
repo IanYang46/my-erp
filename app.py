@@ -664,7 +664,9 @@ if menu == "首頁":
     
     actual_total_cost_m = actual_cost_m + ad_m
     actual_roi_m = (actual_profit_m / actual_total_cost_m) if actual_total_cost_m > 0 else 0
-    actual_roas_m = (actual_rev_m / ad_m) if ad_m > 0 else 0
+    
+    # 👇 修正這裡：改用「總營業額 (rev_m)」來計算 ROAS
+    total_roas_m = (rev_m / ad_m) if ad_m > 0 else 0
     
     ad_pct_m = (ad_m / rev_m * 100) if rev_m > 0 else 0
     prod_pct_m = (prod_cost_m / rev_m * 100) if rev_m > 0 else 0
@@ -693,7 +695,8 @@ if menu == "首頁":
         m9, m10, m11, _ = st.columns(4) 
         m9.metric("預估 ROI", f"{est_roi_m:.2f}")
         m10.metric("實際 ROI", f"{actual_roi_m:.2f}")
-        m11.metric("實際 ROAS", f"{actual_roas_m:.2f}")
+        # 👇 這裡的名稱也同步改成「總 ROAS」
+        m11.metric("總 ROAS", f"{total_roas_m:.2f}")
 
     st.divider()
 
@@ -716,12 +719,12 @@ if menu == "首頁":
 
             # 2. 廣告效益解析 (ROAS)
             if ad_m > 0:
-                if actual_roas_m >= 4.0:
-                    st.success(f"🔥 **廣告成效卓越 (ROAS {actual_roas_m:.2f})**：您每花 1 元廣告費，就能帶回 {actual_roas_m:.2f} 元的「實際簽收營收」。目前受眾精準，強烈建議可考慮擴大廣告預算以拉高總獲利。")
-                elif actual_roas_m >= 2.0:
-                    st.info(f"⚖️ **廣告成效平穩 (ROAS {actual_roas_m:.2f})**：廣告有正常轉換。但請注意，廣告費用佔了整體營收的 {ad_pct_m:.1f}%，需隨時盯緊利潤空間。")
+                if total_roas_m >= 4.0:
+                    st.success(f"🔥 **廣告成效卓越 (總 ROAS {total_roas_m:.2f})**：您每花 1 元廣告費，就能帶回 {total_roas_m:.2f} 元的「總營業額」。目前受眾精準，強烈建議可考慮擴大廣告預算。")
+                elif total_roas_m >= 2.0:
+                    st.info(f"⚖️ **廣告成效平穩 (總 ROAS {total_roas_m:.2f})**：廣告有正常轉換。但請注意，廣告費用佔了整體營收的 {ad_pct_m:.1f}%，需隨時盯緊實際簽收後的利潤空間。")
                 else:
-                    st.error(f"💸 **廣告成效亮紅燈 (ROAS {actual_roas_m:.2f})**：您的廣告佔比高達 {ad_pct_m:.1f}%！等於每賺 100 元就要付 {ad_pct_m:.0f} 元給廣告商。建議立即暫停表現不佳的廣告，重新調整素材或受眾。")
+                    st.error(f"💸 **廣告成效亮紅燈 (總 ROAS {total_roas_m:.2f})**：您的廣告佔比高達 {ad_pct_m:.1f}%！建議立即暫停表現不佳的廣告，重新調整素材或受眾。")
             else:
                 st.info("💡 **無廣告支出**：本月您未花費任何廣告費，目前的營收皆為自然流量或舊客回購，這是利潤率最高的完美狀態。")
 
