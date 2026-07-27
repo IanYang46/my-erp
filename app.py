@@ -816,11 +816,13 @@ if menu == "首頁":
     today_orders_cnt = len(df_today)
     today_rev = df_today['包裹應收'].sum()
     today_ad = today_ad_row['spend_twd'].sum() if not today_ad_row.empty else 0
+    # 今日 ROAS (總營業額 / 總廣告費)
     today_roas = (today_rev / today_ad) if today_ad > 0 else 0
 
     yesterday_orders_cnt = len(df_yest)
     yesterday_rev = df_yest['包裹應收'].sum()
     yesterday_ad = yest_ad_row['spend_twd'].sum() if not yest_ad_row.empty else 0
+    # 昨日 ROAS (總營業額 / 總廣告費)
     yesterday_roas = (yesterday_rev / yesterday_ad) if yesterday_ad > 0 else 0
 
     # --- 3. 畫面渲染：今日/昨日看板 ---
@@ -830,7 +832,8 @@ if menu == "首頁":
         c1.metric("今日訂單數", f"{today_orders_cnt} 筆")
         c2.metric("今日營業額", f"${today_rev:,.0f}")
         c3.metric("今日廣告費", f"${today_ad:,.0f}" if today_ad > 0 else "未輸入")
-        c4.metric("今日預估 ROAS", f"{today_roas:.2f} x" if today_ad > 0 else "N/A")
+        # 👇 統一命名為「實際 ROAS」，並移除多餘的 x
+        c4.metric("今日實際 ROAS", f"{today_roas:.2f}" if today_ad > 0 else "N/A")
 
     with st.container(border=True):
         st.markdown("#### 🔵 昨日總結數據")
@@ -838,7 +841,8 @@ if menu == "首頁":
         c5.metric("昨日訂單數", f"{yesterday_orders_cnt} 筆")
         c6.metric("昨日營業額", f"${yesterday_rev:,.0f}")
         c7.metric("昨日廣告費", f"${yesterday_ad:,.0f}" if yesterday_ad > 0 else "未輸入")
-        c8.metric("昨日預估 ROAS", f"{yesterday_roas:.2f} x" if yesterday_ad > 0 else "N/A")
+        # 👇 統一命名為「實際 ROAS」，並移除多餘的 x
+        c8.metric("昨日實際 ROAS", f"{yesterday_roas:.2f}" if yesterday_ad > 0 else "N/A")
 
     st.divider()
 
@@ -847,7 +851,6 @@ if menu == "首頁":
     # ==========================================
     st.markdown("### 📅 單週營運詳細數據 (週一至週日)")
     
-    # 👇 變更：先算出上週的日期，並設為日曆的預設值（系統依然會自動抓該週的週一）
     last_week_default = today - pd.Timedelta(days=7)
     selected_date = st.date_input("🗓️ 請點擊選擇想查看的週次 (點選該週的任一天即可)", value=last_week_default)
     selected_dt = pd.Timestamp(selected_date)
@@ -891,9 +894,10 @@ if menu == "首頁":
         est_profit = rev - prod_cost - ship_fee - ad_d
         actual_profit = actual_rev - actual_cost - ad_d
         
-        # 👇 變更：取件率直接乘以 100，轉換成 0~100 的真實百分比數值
         pickup_rate = (picked_cnt / orders_cnt * 100) if orders_cnt > 0 else 0
-        actual_roas = (actual_rev / ad_d) if ad_d > 0 else 0
+        
+        # 👇 關鍵修正：單日 ROAS 改為 (總營業額 rev / 廣告費)，不再用 actual_rev
+        actual_roas = (rev / ad_d) if ad_d > 0 else 0
         
         est_total_cost = prod_cost + ship_fee + ad_d
         est_roi = (est_profit / est_total_cost) if est_total_cost > 0 else 0
@@ -927,9 +931,11 @@ if menu == "首頁":
     sum_est_profit = sum_rev - sum_prod_cost - sum_ship_fee - sum_ad
     sum_actual_profit = sum_actual_rev - sum_actual_cost - sum_ad
     
-    # 👇 變更：取件率合計也乘以 100
     sum_pickup_rate = (sum_picked / sum_orders * 100) if sum_orders > 0 else 0
-    sum_actual_roas = (sum_actual_rev / sum_ad) if sum_ad > 0 else 0
+    
+    # 👇 關鍵修正：單週合計 ROAS 改為 (單週總營業額 / 單週總廣告費)
+    sum_actual_roas = (sum_rev / sum_ad) if sum_ad > 0 else 0
+    
     sum_est_total_cost = sum_prod_cost + sum_ship_fee + sum_ad
     sum_est_roi = (sum_est_profit / sum_est_total_cost) if sum_est_total_cost > 0 else 0
     sum_actual_total_cost = sum_actual_cost + sum_ad
@@ -947,18 +953,17 @@ if menu == "首頁":
     # 轉為 DataFrame 並在前端顯示
     df_weekly = pd.DataFrame(weekly_data)
     
-    # 👇 變更：依照您的需求修改小數點與顯示格式
     st.dataframe(
         df_weekly,
         use_container_width=True,
         hide_index=True,
         column_config={
             "取件率": st.column_config.NumberColumn(format="%.1f%%", help="已簽收數 / 訂單總數"),
-            "物流運費": st.column_config.NumberColumn(format="$ %.0f"),  # 移除小數點
-            "預估ROI": st.column_config.NumberColumn(format="%.2f"),     # 變成 0.00 格式，拿掉 %
-            "實際成本": st.column_config.NumberColumn(format="$ %.0f"),  # 移除小數點
-            "實際ROI": st.column_config.NumberColumn(format="%.2f"),     # 變成 0.00 格式
-            "實際ROAS": st.column_config.NumberColumn(format="%.2f"),    # 變成 0.00 格式
+            "物流運費": st.column_config.NumberColumn(format="$ %.0f"), 
+            "預估ROI": st.column_config.NumberColumn(format="%.2f"), 
+            "實際成本": st.column_config.NumberColumn(format="$ %.0f"), 
+            "實際ROI": st.column_config.NumberColumn(format="%.2f"), 
+            "實際ROAS": st.column_config.NumberColumn(format="%.2f"), 
             "預估利潤": st.column_config.NumberColumn(format="$ %.0f"),
             "實際利潤": st.column_config.NumberColumn(format="$ %.0f"),
             "營業額": st.column_config.NumberColumn(format="$ %.0f"),
@@ -967,7 +972,7 @@ if menu == "首頁":
             "商品成本": st.column_config.NumberColumn(format="$ %.0f")
         }
     )
-
+    
     # ==========================================
     # --- 5. 歷史物流代收結款核對 (每週自動總結) ---
     # ==========================================
