@@ -671,32 +671,33 @@ if menu == "首頁":
     ad_pct_m = (ad_m / rev_m * 100) if rev_m > 0 else 0
     prod_pct_m = (prod_cost_m / rev_m * 100) if rev_m > 0 else 0
 
-    # 渲染月度看板 (改為三排配置，避免數字被擠壓到看不見)
+    # 渲染月度看板 (重新排列為三排配置，完美容納 12 個指標，維持寬敞不擠壓)
     with st.container(border=True):
-        # 第一排：營收與利潤指標 (4個)
+        # 第一排：營收與利潤指標 (4個) - 將預估與實際左右對比
         m1, m2, m3, m4 = st.columns(4)
         m1.metric("營業額", f"${rev_m:,.0f}")
         m2.metric("預估利潤", f"${est_profit_m:,.0f}")
-        m3.metric("實際利潤", f"${actual_profit_m:,.0f}")
-        m4.metric("取件率", f"{pickup_rate_m:.1f}%")
+        # 👇 新增：實取金額 (直接讀取上面算好的 actual_rev_m)
+        m3.metric("實取金額", f"${actual_rev_m:,.0f}", help="僅計算狀態為「簽收」的包裹應收總和")
+        m4.metric("實際利潤", f"${actual_profit_m:,.0f}")
         
         st.divider()
         
-        # 第二排：成本與花費指標 (4個)
+        # 第二排：物流與廣告開銷 (4個)
         m5, m6, m7, m8 = st.columns(4)
-        m5.metric("總廣告費", f"${ad_m:,.0f}")
+        m5.metric("取件率", f"{pickup_rate_m:.1f}%")    # 👈 從第一排移下來
         m6.metric("總運費", f"${ship_fee_m:,.0f}")
-        m7.metric("廣告佔比", f"{ad_pct_m:.1f}%")
-        m8.metric("商品佔比", f"{prod_pct_m:.1f}%")
+        m7.metric("總廣告費", f"${ad_m:,.0f}")
+        m8.metric("廣告佔比", f"{ad_pct_m:.1f}%")
 
         st.divider()
         
-        # 第三排：投資報酬率指標 (切成4格但只放3個，維持寬度比例)
-        m9, m10, m11, _ = st.columns(4) 
-        m9.metric("預估 ROI", f"{est_roi_m:.2f}")
-        m10.metric("實際 ROI", f"{actual_roi_m:.2f}")
-        # 👇 介面顯示改為「實際 ROAS」
-        m11.metric("實際 ROAS", f"{total_roas_m:.2f}")
+        # 第三排：商品成本與投資報酬率 (4個)
+        m9, m10, m11, m12 = st.columns(4) 
+        m9.metric("商品佔比", f"{prod_pct_m:.1f}%")     # 👈 從第二排移下來
+        m10.metric("預估 ROI", f"{est_roi_m:.2f}")
+        m11.metric("實際 ROI", f"{actual_roi_m:.2f}")
+        m12.metric("實際 ROAS", f"{total_roas_m:.2f}")
 
     st.divider()
 
