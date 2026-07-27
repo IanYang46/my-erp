@@ -303,44 +303,38 @@ def log_system_action(module, operator, action_type, details):
 def log_login_event(username):
     try:
         headers = st.context.headers
-        ip_raw = headers.get("X-Forwarded-For", "")
+        # 🌟 強化：一次抓取多種常見的代理 IP 標頭 (優先度：CF > Forwarded > Real)
+        ip_raw = headers.get("CF-Connecting-IP") or headers.get("X-Forwarded-For") or headers.get("X-Real-IP") or ""
+        
         if ip_raw:
             ip = ip_raw.split(",")[0].strip()
         else:
-            ip = "127.0.0.1"
+            ip = "未知 IP"
+            
+        # 抓取瀏覽器裝置資訊
         device = headers.get("User-Agent", "未知裝置/瀏覽器")
     except Exception:
-        ip, device = "127.0.0.1", "本地運行環境/無法辨識裝置"
+        ip, device = "未知 IP", "無法辨識裝置"
 
     location = "未知地點"
     
-    # 判斷是否為本地端或私人網段 (包含 IPv6 的 ::1)
-    is_local = not ip or ip == "127.0.0.1" or ip == "::1" or ip.startswith("192.168.") or ip.startswith("10.")
+    # 判斷是否為內網 IP
+    is_local = not ip or ip == "未知 IP" or ip == "127.0.0.1" or ip == "::1" or ip.startswith("192.168.") or ip.startswith("10.")
 
     try:
-        if is_local:
-            # 🌟 如果是本機端測試，不帶特定 IP，讓 API 自動偵測你目前上網的真實 Public IP
-            api_url = "http://ip-api.com/json/?lang=zh-TW"
-        else:
-            # 🌟 如果是實際上線部署，帶入抓取到的訪客真實 IP
+        if not is_local:
+            # 🌟 只在有真實外網 IP 時去查詢 (絕對不查伺服器本身的 IP)
             api_url = f"http://ip-api.com/json/{ip}?lang=zh-TW"
+            response = requests.get(api_url, timeout=5).json()
             
-        response = requests.get(api_url, timeout=5).json()
-        
-        if response.get("status") == "success":
-            if is_local:
-                # 把本機的 127.0.0.1 替換成 API 查到的真實對外 IP
-                ip = response.get('query', ip) 
-                
-            country = response.get('country', '')
-            city = response.get('city', response.get('regionName', ''))
-            location = f"{country}－{city}" if city else country
-            
-            # 如果是本機測試，可以在地點後方加個小標記方便辨識
-            if is_local:
-                location += " (本機測試)"
+            if response.get("status") == "success":
+                country = response.get('country', '')
+                city = response.get('city', response.get('regionName', ''))
+                location = f"{country}－{city}" if city else country
+            else:
+                location = "無法解析該 IP 地理位置"
         else:
-            location = "內部/私人網路區間"
+            location = "內部區域網路 (無真實對外 IP)"
     except Exception:
         location = "地理定位查詢超時"
 
@@ -383,14 +377,17 @@ if 'logged_in' in st.session_state and st.session_state['logged_in']:
     if current_time - last_active > TIMEOUT_SECONDS:
         username_to_clear = st.session_state.get('user')
         st.session_state.clear()
+        
+        # 🌟 關鍵新增：設定一個標記，讓重整後的登入畫面知道是因為「超時」才被踢出來的
+        st.session_state['timeout_logged_out'] = True 
+        
         if cookie_manager.get('erp_auto_login'):
             cookie_manager.delete('erp_auto_login', key="del_cookie_timeout")
         with get_db() as conn:
-            # 🌟 這裡的 username_to_clear 也務必確認有加上 str()
             conn.execute("UPDATE users SET last_active = 0 WHERE username = ?", (str(username_to_clear),))
             conn.commit()
-        st.warning("⚠️ 由於長時間未操作，為保護系統安全，已為您自動登出。")
-        time.sleep(2)
+            
+        # 🌟 移除原本會被刷掉的 st.warning 與 sleep，直接重整
         st.rerun()
     else:
         # 有任何點擊或切換模組的短時間操作，刷新 Session 暫存，並立刻回寫資料庫存檔
@@ -440,6 +437,12 @@ if 'logged_in' not in st.session_state:
             
 # 3. 狀況 C：完全未登入或已超時，顯示傳統登入介面
 if 'logged_in' not in st.session_state:
+    
+    # 🌟 關鍵新增：在這裡攔截剛剛留下的標記，成功顯示給使用者看！
+    if st.session_state.get('timeout_logged_out'):
+        st.warning("⚠️ 由於長時間未操作，為保護系統安全，已為您自動登出。")
+        st.session_state['timeout_logged_out'] = False # 顯示完畢後清除標記
+        
     st.title("📦 強盛集團 | ERP 系統")
     
     mode = st.radio("請選擇模式", ["登入", "註冊"], horizontal=True)
