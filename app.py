@@ -729,6 +729,8 @@ if menu == "首頁":
                 st.info("💡 **無廣告支出**：本月您未花費任何廣告費，目前的營收皆為自然流量或舊客回購，這是利潤率最高的完美狀態。")
 
             # 3. 獲利結構與 ROI 深度解析 (新增 ROI 分析)
+            profit_gap = est_profit_m - actual_profit_m  # 👈 就是剛剛漏掉了這行！
+            
             if actual_profit_m > 0:
                 if actual_roi_m >= 0.5:
                     st.success(f"💰 **整體獲利能力極強 (實際 ROI {actual_roi_m:.2f})**：您投入的每一塊錢總成本 (商品+運費+廣告)，能為您淨賺 {actual_roi_m:.2f} 元。商業模式非常健康，請繼續保持！")
