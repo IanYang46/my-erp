@@ -686,18 +686,18 @@ if menu == "首頁":
         # 第二排：物流與廣告開銷 (4個)
         m5, m6, m7, m8 = st.columns(4)
         m5.metric("取件率", f"{pickup_rate_m:.1f}%")    # 👈 從第一排移下來
-        m6.metric("總運費", f"${ship_fee_m:,.0f}")
-        m7.metric("總廣告費", f"${ad_m:,.0f}")
-        m8.metric("廣告佔比", f"{ad_pct_m:.1f}%")
+        m6.metric("預估 ROI", f"{est_roi_m:.2f}")
+        m7.metric("實際 ROI", f"{actual_roi_m:.2f}")
+        m8.metric("實際 ROAS", f"{total_roas_m:.2f}")
 
         st.divider()
         
         # 第三排：商品成本與投資報酬率 (4個)
         m9, m10, m11, m12 = st.columns(4) 
         m9.metric("商品佔比", f"{prod_pct_m:.1f}%")     # 👈 從第二排移下來
-        m10.metric("預估 ROI", f"{est_roi_m:.2f}")
-        m11.metric("實際 ROI", f"{actual_roi_m:.2f}")
-        m12.metric("實際 ROAS", f"{total_roas_m:.2f}")
+        m10.metric("總運費", f"${ship_fee_m:,.0f}")
+        m11.metric("廣告佔比", f"{ad_pct_m:.1f}%")
+        m12.metric("總廣告費", f"${ad_m:,.0f}")
 
     st.divider()
 
