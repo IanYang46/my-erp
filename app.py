@@ -1782,26 +1782,43 @@ elif menu == "訂單明細":
             cursor.execute("UPDATE customer_orders SET 物流運費_RMB = 物流運費 / ? WHERE 物流運費 > 0", (rate_val,))
             conn.commit()
 
-        # 🌟 系統熱更新：自動將歷史「商品成本為 0」的訂單，按「品項數量(以•計算) * 50 RMB」補上成本
+        # 🌟 系統熱更新：精準解析歷史「商品成本為 0」的訂單品項數量 (支援頓號、換行與 *數量)
         try:
             rate_val = cursor.execute("SELECT value FROM settings WHERE key='exchange_rate'").fetchone()[0]
-            cursor.execute("""
-                UPDATE customer_orders 
-                SET 商品成本 = CASE 
-                        WHEN LENGTH(COALESCE(品項內容, '')) - LENGTH(REPLACE(COALESCE(品項內容, ''), '•', '')) > 0 
-                        THEN (LENGTH(COALESCE(品項內容, '')) - LENGTH(REPLACE(COALESCE(品項內容, ''), '•', ''))) * 50.0 * ?
-                        ELSE 50.0 * ? 
-                    END
-                WHERE COALESCE(商品成本, 0) = 0
-            """, (rate_val, rate_val))
+            cursor.execute("SELECT 訂單編號, 品項內容 FROM customer_orders WHERE COALESCE(商品成本, 0) = 0")
+            zero_cost_orders = cursor.fetchall()
             
-            # 成本變動後，連帶重算出貨成本與損益
-            cursor.execute("""
-                UPDATE customer_orders 
-                SET 出貨成本 = 商品成本 + 物流運費,
-                    訂單損益 = 包裹應收 - (商品成本 + 物流運費)
-            """)
-            conn.commit()
+            if zero_cost_orders:
+                import re
+                for row_data in zero_cost_orders:
+                    oid = row_data[0]
+                    items_str = str(row_data[1]) if row_data[1] else ""
+                    
+                    # 拆分換行、頓號、逗號
+                    parts = re.split(r'[\n、,]', items_str.replace('•', ''))
+                    total_q = 0
+                    for part in parts:
+                        part = part.strip()
+                        if not part: continue
+                        # 找尋 *1, *2, x2, X3 等數量標記
+                        match = re.search(r'[\*xX]\s*(\d+)', part)
+                        if match:
+                            total_q += int(match.group(1))
+                        else:
+                            total_q += 1
+                            
+                    total_q = total_q if total_q > 0 else 1
+                    new_cost_rmb = total_q * 50.0
+                    new_cost_twd = new_cost_rmb * rate_val
+                    
+                    cursor.execute("""
+                        UPDATE customer_orders 
+                        SET 商品成本 = ?, 
+                            出貨成本 = ? + 物流運費,
+                            訂單損益 = 包裹應收 - (? + 物流運費)
+                        WHERE 訂單編號 = ?
+                    """, (new_cost_twd, new_cost_twd, new_cost_twd, oid))
+                conn.commit()
         except Exception as e:
             conn.rollback()
             
@@ -2671,9 +2688,21 @@ elif menu == "訂單明細":
                                     else:
                                         raw_logi = ''
 
-                                    # 👇 依據「品項內容」中的 '•' 數量來判斷商品件數，每件算 50 RMB
+                                    # 👇 精準解析品項數量 (支援換行、頓號分隔，且會抓取 *1, *2 等數量)
+                                    import re
                                     items_str = str(row.get('品項內容', ''))
-                                    item_count = items_str.count('•') if items_str.count('•') > 0 else 1
+                                    parts = re.split(r'[\n、,]', items_str.replace('•', ''))
+                                    item_count = 0
+                                    for part in parts:
+                                        part = part.strip()
+                                        if not part: continue
+                                        match = re.search(r'[\*xX]\s*(\d+)', part)
+                                        if match:
+                                            item_count += int(match.group(1))
+                                        else:
+                                            item_count += 1
+                                    item_count = item_count if item_count > 0 else 1
+                                    
                                     default_cost_twd = (item_count * 50.0) * rate
                                     init_profit = rev - default_cost_twd
                                     
