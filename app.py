@@ -1782,42 +1782,55 @@ elif menu == "訂單明細":
             cursor.execute("UPDATE customer_orders SET 物流運費_RMB = 物流運費 / ? WHERE 物流運費 > 0", (rate_val,))
             conn.commit()
 
-        # 🌟 系統熱更新：精準解析歷史「商品成本為 0」的訂單品項數量 (支援頓號、換行與 *數量)
+        # 🌟 系統熱更新：精準解析「所有」歷史訂單品項數量 (突破原本只抓 0 元的限制)
         try:
             rate_val = cursor.execute("SELECT value FROM settings WHERE key='exchange_rate'").fetchone()[0]
-            cursor.execute("SELECT 訂單編號, 品項內容 FROM customer_orders WHERE COALESCE(商品成本, 0) = 0")
-            zero_cost_orders = cursor.fetchall()
             
-            if zero_cost_orders:
+            # 💡 修正 1：不再只抓 WHERE 商品成本 = 0，因為舊系統已經把它們算成 50 (1件) 存起來了！
+            cursor.execute("SELECT 訂單編號, 品項內容, 商品成本 FROM customer_orders")
+            all_orders = cursor.fetchall()
+            
+            if all_orders:
                 import re
-                for row_data in zero_cost_orders:
+                for row_data in all_orders:
                     oid = row_data[0]
                     items_str = str(row_data[1]) if row_data[1] else ""
+                    current_cost_twd = float(row_data[2] or 0.0)
                     
-                    # 拆分換行、頓號、逗號
-                    parts = re.split(r'[\n、,]', items_str.replace('•', ''))
-                    total_q = 0
-                    for part in parts:
-                        part = part.strip()
-                        if not part: continue
-                        # 找尋 *1, *2, x2, X3 等數量標記
-                        match = re.search(r'[\*xX]\s*(\d+)', part)
-                        if match:
-                            total_q += int(match.group(1))
-                        else:
-                            total_q += 1
-                            
-                    total_q = total_q if total_q > 0 else 1
-                    new_cost_rmb = total_q * 50.0
-                    new_cost_twd = new_cost_rmb * rate_val
+                    # 推算舊版錯誤邏輯算出來的台幣成本 (當初1個黑點算50)
+                    old_item_count = items_str.count('•') if items_str.count('•') > 0 else 1
+                    old_calc_cost_twd = (old_item_count * 50.0) * rate_val
                     
-                    cursor.execute("""
-                        UPDATE customer_orders 
-                        SET 商品成本 = ?, 
-                            出貨成本 = ? + 物流運費,
-                            訂單損益 = 包裹應收 - (? + 物流運費)
-                        WHERE 訂單編號 = ?
-                    """, (new_cost_twd, new_cost_twd, new_cost_twd, oid))
+                    # 💡 修正 2：如果成本是 0，或者「被舊邏輯錯算成 50 塊(或舊黑點倍數)」，才允許覆蓋重算
+                    # (這樣可以完美保護您在編輯後台「手動更改過」的特殊成本，不被系統洗掉)
+                    if current_cost_twd == 0 or abs(current_cost_twd - old_calc_cost_twd) < 1 or abs(current_cost_twd - (50.0 * rate_val)) < 1:
+                        
+                        # 拆分換行、頓號、逗號 (偷偷加了全形逗號 '，' 防呆)
+                        parts = re.split(r'[\n、,，]', items_str.replace('•', ''))
+                        total_q = 0
+                        for part in parts:
+                            part = part.strip()
+                            if not part: continue
+                            # 找尋 *1, *2, x2, X3, ×2 等數量標記 (新增乘號 × 支援)
+                            match = re.search(r'[\*xX×]\s*(\d+)', part)
+                            if match:
+                                total_q += int(match.group(1))
+                            else:
+                                total_q += 1
+                                
+                        total_q = total_q if total_q > 0 else 1
+                        new_cost_rmb = total_q * 50.0
+                        new_cost_twd = new_cost_rmb * rate_val
+                        
+                        # 若新算出來的成本跟現在資料庫裡的不同，代表抓到兇手，立刻執行 UPDATE 修正！
+                        if abs(current_cost_twd - new_cost_twd) > 0.1:
+                            cursor.execute("""
+                                UPDATE customer_orders 
+                                SET 商品成本 = ?, 
+                                    出貨成本 = ? + 物流運費,
+                                    訂單損益 = 包裹應收 - (? + 物流運費)
+                                WHERE 訂單編號 = ?
+                            """, (new_cost_twd, new_cost_twd, new_cost_twd, oid))
                 conn.commit()
         except Exception as e:
             conn.rollback()
@@ -2691,12 +2704,14 @@ elif menu == "訂單明細":
                                     # 👇 精準解析品項數量 (支援換行、頓號分隔，且會抓取 *1, *2 等數量)
                                     import re
                                     items_str = str(row.get('品項內容', ''))
-                                    parts = re.split(r'[\n、,]', items_str.replace('•', ''))
+                                    # 加了全形 ，
+                                    parts = re.split(r'[\n、,，]', items_str.replace('•', ''))
                                     item_count = 0
                                     for part in parts:
                                         part = part.strip()
                                         if not part: continue
-                                        match = re.search(r'[\*xX]\s*(\d+)', part)
+                                        # 加了乘號 ×
+                                        match = re.search(r'[\*xX×]\s*(\d+)', part)
                                         if match:
                                             item_count += int(match.group(1))
                                         else:
