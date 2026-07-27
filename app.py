@@ -665,7 +665,7 @@ if menu == "首頁":
     actual_total_cost_m = actual_cost_m + ad_m
     actual_roi_m = (actual_profit_m / actual_total_cost_m) if actual_total_cost_m > 0 else 0
     
-    # 👇 修正這裡：改用「總營業額 (rev_m)」來計算 ROAS
+    # 👇 改名為 實際 ROAS (維持使用總營業額 rev_m 計算)
     total_roas_m = (rev_m / ad_m) if ad_m > 0 else 0
     
     ad_pct_m = (ad_m / rev_m * 100) if rev_m > 0 else 0
@@ -695,8 +695,8 @@ if menu == "首頁":
         m9, m10, m11, _ = st.columns(4) 
         m9.metric("預估 ROI", f"{est_roi_m:.2f}")
         m10.metric("實際 ROI", f"{actual_roi_m:.2f}")
-        # 👇 這裡的名稱也同步改成「總 ROAS」
-        m11.metric("總 ROAS", f"{total_roas_m:.2f}")
+        # 👇 介面顯示改為「實際 ROAS」
+        m11.metric("實際 ROAS", f"{total_roas_m:.2f}")
 
     st.divider()
 
@@ -720,24 +720,24 @@ if menu == "首頁":
             # 2. 廣告效益解析 (ROAS)
             if ad_m > 0:
                 if total_roas_m >= 4.0:
-                    st.success(f"🔥 **廣告成效卓越 (總 ROAS {total_roas_m:.2f})**：您每花 1 元廣告費，就能帶回 {total_roas_m:.2f} 元的「總營業額」。目前受眾精準，強烈建議可考慮擴大廣告預算。")
+                    st.success(f"🔥 **廣告成效卓越 (實際 ROAS {total_roas_m:.2f})**：您每花 1 元廣告費，就能帶回 {total_roas_m:.2f} 元的營業額。目前受眾精準，強烈建議可考慮擴大廣告預算。")
                 elif total_roas_m >= 2.0:
-                    st.info(f"⚖️ **廣告成效平穩 (總 ROAS {total_roas_m:.2f})**：廣告有正常轉換。但請注意，廣告費用佔了整體營收的 {ad_pct_m:.1f}%，需隨時盯緊實際簽收後的利潤空間。")
+                    st.info(f"⚖️ **廣告成效平穩 (實際 ROAS {total_roas_m:.2f})**：廣告有正常轉換。但請注意，廣告費用佔了整體營收的 {ad_pct_m:.1f}%，需隨時盯緊實際簽收後的利潤空間。")
                 else:
-                    st.error(f"💸 **廣告成效亮紅燈 (總 ROAS {total_roas_m:.2f})**：您的廣告佔比高達 {ad_pct_m:.1f}%！建議立即暫停表現不佳的廣告，重新調整素材或受眾。")
+                    st.error(f"💸 **廣告成效亮紅燈 (實際 ROAS {total_roas_m:.2f})**：您的廣告佔比高達 {ad_pct_m:.1f}%！建議立即暫停表現不佳的廣告，重新調整素材或受眾。")
             else:
                 st.info("💡 **無廣告支出**：本月您未花費任何廣告費，目前的營收皆為自然流量或舊客回購，這是利潤率最高的完美狀態。")
 
-            # 3. 獲利結構與隱藏損失解析
-            profit_gap = est_profit_m - actual_profit_m
-            
+            # 3. 獲利結構與 ROI 深度解析 (新增 ROI 分析)
             if actual_profit_m > 0:
-                if actual_roi_m >= 0.3:
-                    st.success(f"💰 **整體獲利能力強 (實際 ROI {actual_roi_m:.2f})**：商業模式健康，商品成本({prod_pct_m:.1f}%)與各項開銷掌控得宜，本月為淨利狀態。")
+                if actual_roi_m >= 0.5:
+                    st.success(f"💰 **整體獲利能力極強 (實際 ROI {actual_roi_m:.2f})**：您投入的每一塊錢總成本 (商品+運費+廣告)，能為您淨賺 {actual_roi_m:.2f} 元。商業模式非常健康，請繼續保持！")
+                elif actual_roi_m >= 0.2:
+                    st.info(f"⚖️ **整體獲利能力平穩 (實際 ROI {actual_roi_m:.2f})**：利潤結構正常。商品成本佔營收 {prod_pct_m:.1f}%，廣告佔 {ad_pct_m:.1f}%，各項開銷掌控得宜，本月為穩定的淨利狀態。")
                 else:
-                    st.warning(f"📉 **整體獲利微薄 (實際 ROI {actual_roi_m:.2f})**：雖然有賺錢，但毛利過低。您的「商品成本」佔了營收的 {prod_pct_m:.1f}%，扣除運費與退回折損後所剩無幾，建議檢視是否能「提高客單價/組合包裝」或「降低進貨成本」。")
+                    st.warning(f"📉 **整體獲利微薄 (實際 ROI {actual_roi_m:.2f})**：雖然有賺錢，但資金利用效率偏低。您的「商品成本」佔了營收的 {prod_pct_m:.1f}%，建議檢視是否能「提高客單價/組合包裝」或「降低進貨與物流成本」，以拉高毛利空間。")
             else:
-                st.error(f"🩸 **本月目前呈現虧損狀態 (實際利潤 ${actual_profit_m:,.0f})**：請立即止血！優先檢視是否廣告費超支，或退貨運費佔比過高。")
+                st.error(f"🩸 **本月目前呈現虧損狀態 (實際利潤 ${actual_profit_m:,.0f}，實際 ROI {actual_roi_m:.2f})**：請立即止血！優先檢視是否廣告費超支，或退貨運費佔比過高導致成本大於營收。")
 
             # 4. 預估與實際的落差揭露
             if profit_gap > 0 and pickup_rate_m < 100:
