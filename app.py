@@ -1782,6 +1782,29 @@ elif menu == "訂單明細":
             cursor.execute("UPDATE customer_orders SET 物流運費_RMB = 物流運費 / ? WHERE 物流運費 > 0", (rate_val,))
             conn.commit()
 
+        # 🌟 系統熱更新：自動將歷史「商品成本為 0」的訂單，按「品項數量(以•計算) * 50 RMB」補上成本
+        try:
+            rate_val = cursor.execute("SELECT value FROM settings WHERE key='exchange_rate'").fetchone()[0]
+            cursor.execute("""
+                UPDATE customer_orders 
+                SET 商品成本 = CASE 
+                        WHEN LENGTH(COALESCE(品項內容, '')) - LENGTH(REPLACE(COALESCE(品項內容, ''), '•', '')) > 0 
+                        THEN (LENGTH(COALESCE(品項內容, '')) - LENGTH(REPLACE(COALESCE(品項內容, ''), '•', ''))) * 50.0 * ?
+                        ELSE 50.0 * ? 
+                    END
+                WHERE COALESCE(商品成本, 0) = 0
+            """, (rate_val, rate_val))
+            
+            # 成本變動後，連帶重算出貨成本與損益
+            cursor.execute("""
+                UPDATE customer_orders 
+                SET 出貨成本 = 商品成本 + 物流運費,
+                    訂單損益 = 包裹應收 - (商品成本 + 物流運費)
+            """)
+            conn.commit()
+        except Exception as e:
+            conn.rollback()
+            
         # 👇👇👇 請把這段插入在這裡：升級資料庫的日期欄位型態 👇👇👇
         try:
             cursor.execute("SELECT data_type FROM information_schema.columns WHERE table_name = 'customer_orders' AND column_name = '訂單日期'")
@@ -2648,8 +2671,10 @@ elif menu == "訂單明細":
                                     else:
                                         raw_logi = ''
 
-                                    # 👇 暫定每筆訂單預設商品成本為 50 RMB，並換算台幣
-                                    default_cost_twd = 50.0 * rate
+                                    # 👇 依據「品項內容」中的 '•' 數量來判斷商品件數，每件算 50 RMB
+                                    items_str = str(row.get('品項內容', ''))
+                                    item_count = items_str.count('•') if items_str.count('•') > 0 else 1
+                                    default_cost_twd = (item_count * 50.0) * rate
                                     init_profit = rev - default_cost_twd
                                     
                                     cursor.execute("""
@@ -2665,7 +2690,9 @@ elif menu == "訂單明細":
                                             店號 = excluded.店號,
                                             品項內容 = excluded.品項內容,
                                             包裹應收 = excluded.包裹應收,
-                                            訂單損益 = excluded.包裹應收 - customer_orders.出貨成本,
+                                            商品成本 = CASE WHEN COALESCE(customer_orders.商品成本, 0) = 0 THEN excluded.商品成本 ELSE customer_orders.商品成本 END,
+                                            出貨成本 = CASE WHEN COALESCE(customer_orders.商品成本, 0) = 0 THEN excluded.出貨成本 ELSE customer_orders.出貨成本 END,
+                                            訂單損益 = excluded.包裹應收 - (CASE WHEN COALESCE(customer_orders.商品成本, 0) = 0 THEN excluded.出貨成本 ELSE customer_orders.出貨成本 END),
                                             物流編號 = CASE WHEN excluded.物流編號 != '' THEN excluded.物流編號 ELSE customer_orders.物流編號 END,
                                             取貨狀態 = CASE WHEN excluded.取貨狀態 = '已取消' THEN '已取消' ELSE customer_orders.取貨狀態 END,
                                             顧客備註 = excluded.顧客備註,
