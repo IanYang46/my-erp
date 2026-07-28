@@ -166,7 +166,7 @@ def get_connection_pool():
     # 🌟 建立執行緒安全的連線池，並加入 Keepalives 心跳機制，防止雲端連線超時中斷！
     return pool.ThreadedConnectionPool(
         1, 20, 
-        st.secrets["DB_URL"],
+        os.getenv("DB_URL")  # 👈 改成抓取環境變數
         keepalives=1,
         keepalives_idle=30,     # 閒置 30 秒後開始發送心跳確認
         keepalives_interval=10, # 每 10 秒發送一次
