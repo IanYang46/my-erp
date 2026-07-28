@@ -216,7 +216,8 @@ def get_db():
         db_pool.putconn(conn) # 🌟 執行完畢後把專線「還」給池子，保持暢通
         
 # 給 Pandas 專用的引擎
-db_engine = create_engine(st.secrets["DB_URL"].replace("postgres://", "postgresql://"))
+db_url = os.getenv("DB_URL")
+db_engine = create_engine(db_url.replace("postgres://", "postgresql://"))
     
 # --- 3. 初始化資料庫與預設權限 ---
 @st.cache_resource
