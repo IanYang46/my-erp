@@ -2690,21 +2690,21 @@ elif menu == "訂單明細":
             else:
                 with st.spinner("正在向 1shop 請求資料中，請稍候..."):
                     try:
-                        # 👇 修正 1：1shop 的網址結尾是 order，不是 orders
-                        base_url = "https://api.1shop.tw/v1/order" 
+                        # 👇 修正 1：改回複數的 orders (代表抓取訂單列表)
+                        base_url = "https://api.1shop.tw/v1/orders" 
                         
-                        # 👇 修正 2：1shop 要求把金鑰直接做成網址參數 (Query Parameters)
+                        # 👇 修正 2：補上 1shop 必填的 status (狀態) 參數
                         params = {
                             "appid": ONESHOP_APP_ID,
-                            "secret": ONESHOP_SECRET
+                            "secret": ONESHOP_SECRET,
+                            "status": ""   # 👈 關鍵新增！留空字串通常代表抓取「全部狀態」的訂單
                         }
                         
-                        # 發送請求給 1shop (這次透過 params 讓 Python 自動把參數帶在網址後面)
+                        # 發送請求給 1shop
                         response = requests.get(base_url, params=params, timeout=10)
                         
                         if response.status_code == 200:
                             data = response.json()
-                            # 💡 修正 3：1shop 的官方設定是 success: 0 才代表執行完成，其餘都是失敗
                             if data.get("success") == 0: 
                                 st.success("✅ 成功連線到 1shop 並抓到資料了！")
                                 st.json(data)
