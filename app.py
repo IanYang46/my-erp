@@ -28,7 +28,7 @@ def decode_pw(pw_encoded):
         return pw_encoded  # 萬一解碼失敗，就顯示原字串
 
 # --- 1. 基礎設定與整地 ---
-if not os.path.exists("product_images"): os.makedirs("product_images")
+os.makedirs("product_images", exist_ok=True)
 st.set_page_config(page_title="強盛集團 ERP", layout="wide", initial_sidebar_state="expanded")
 
 # 👇 覆蓋開始：升級為企業級專業 ERP 視覺視覺語法 (修復側邊欄按鈕字體隱形問題) 👇
