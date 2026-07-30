@@ -11,6 +11,10 @@ import datetime
 import extra_streamlit_components as stx
 from psycopg2 import pool  # 👈 🌟 請加入這一行，引入高速連線池套件
 
+# 👇 🌟 新增這段：讀取 Zeabur 上的 1shop 金鑰
+ONESHOP_APP_ID = os.getenv("ONESHOP_APP_ID")
+ONESHOP_SECRET = os.getenv("ONESHOP_SECRET")
+
 # --- 密碼編解碼工具 ---
 def encode_pw(pw):
     """將密碼編碼隱藏 (存入資料庫時使用)"""
@@ -2676,6 +2680,39 @@ elif menu == "訂單明細":
 
     with t3:
         st.subheader("📥 批量導入與更新工具")
+        
+        # 👇 🌟 新增的 1shop 自動串接測試區塊 👇
+        st.markdown("---")
+        st.subheader("🛒 1shop API 自動同步 (測試中)")
+        if st.button("🔄 點我從 1shop 抓取最新訂單", type="primary"):
+            if not ONESHOP_APP_ID or not ONESHOP_SECRET:
+                st.error("❌ 找不到 1shop 金鑰！請確認 Zeabur 的 Variables 是否設定正確。")
+            else:
+                with st.spinner("正在向 1shop 請求資料中，請稍候..."):
+                    try:
+                        # 1shop API 測試網址 (抓取訂單)
+                        api_url = "https://api.1shop.tw/v1/orders" 
+                        headers = {
+                            "Content-Type": "application/json",
+                            "X-App-Id": ONESHOP_APP_ID,
+                            "X-Secret": ONESHOP_SECRET
+                        }
+                        
+                        response = requests.get(api_url, headers=headers, timeout=10)
+                        
+                        if response.status_code == 200:
+                            data = response.json()
+                            st.success("✅ 成功連線到 1shop！")
+                            st.json(data) # 把抓到的原始 JSON 印出來給我們看結構
+                        else:
+                            st.error(f"❌ 連線失敗，狀態碼：{response.status_code}")
+                            st.write(response.text)
+                            
+                    except Exception as e:
+                        st.error(f"❌ 發生例外錯誤：{str(e)}")
+        st.markdown("---")
+        # 👆 1shop 區塊結束 👆
+
         if not check_perm(role, "訂單明細", "can_upload"):
             st.warning("🔒 您沒有上傳外部訂單的權限。")
         else:
