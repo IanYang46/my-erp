@@ -2690,25 +2690,21 @@ elif menu == "訂單明細":
             else:
                 with st.spinner("正在向 1shop 請求資料中，請稍候..."):
                     try:
-                        # 👇 修正 1：網址改回單數的 order
+                        # === 第一階段：抓取訂單列表 ===
                         base_url = "https://api.1shop.tw/v1/order" 
-                        
-                        # 👇 修正 2：嚴格套用 1shop 官方規定的 3 個必填狀態參數
                         params = {
                             "appid": ONESHOP_APP_ID,
                             "secret": ONESHOP_SECRET,
-                            "progress_status": "all",  # 訂單狀態 (all 代表全部)
-                            "payment_status": "all",   # 付款狀態 (all 代表全部)
-                            "logistic_status": "all"   # 物流狀態 (all 代表全部)
+                            "progress_status": "all",
+                            "payment_status": "all",
+                            "logistic_status": "all"
                         }
                         
-                        # 發送請求給 1shop
                         response = requests.get(base_url, params=params, timeout=10)
                         
                         if response.status_code == 200:
                             data = response.json()
                             if data.get("success") == 0: 
-                                # 從 JSON 中抽取出訂單列表
                                 orders_list = data.get("data", {}).get("order", [])
                                 
                                 if not orders_list:
@@ -2716,83 +2712,103 @@ elif menu == "訂單明細":
                                 else:
                                     success_count = 0
                                     with get_db() as conn:
-                                        for order in orders_list:
-                                            # 1. 抓取基本資料並做好防呆
-                                            oid = str(order.get("order_number", "")).strip()
-                                            odate = str(order.get("create_date", ""))
-                                            name = str(order.get("name", ""))
-                                            phone = str(order.get("phone", ""))
-                                            email = str(order.get("email", ""))
-                                            store = str(order.get("cvs_store_name", ""))
-                                            store_id = str(order.get("cvs_store_id", ""))
-                                            rev = float(order.get("total_price", 0.0))
-                                            c_note = str(order.get("note", ""))
-                                            m_note = str(order.get("shop_note", ""))
+                                        for basic_order in orders_list:
+                                            # 1. 取得基本資料
+                                            oid = str(basic_order.get("order_number", "")).strip()
+                                            if not oid: continue
                                             
-                                            # 2. 處理商品品項 (1shop 智能偵測版)
+                                            odate = str(basic_order.get("create_date", ""))
+                                            name = str(basic_order.get("name", ""))
+                                            phone = str(basic_order.get("phone", ""))
+                                            email = str(basic_order.get("email", ""))
+                                            store = str(basic_order.get("cvs_store_name", ""))
+                                            store_id = str(basic_order.get("cvs_store_id", ""))
+                                            rev = float(basic_order.get("total_price", 0.0))
+                                            c_note = str(basic_order.get("note", ""))
+                                            m_note = str(basic_order.get("shop_note", ""))
+                                            
+                                            # === 第二階段：拿著訂單號碼，去抓「詳細訂單」API ===
+                                            detail_url = f"https://api.1shop.tw/v1/order/{oid}"
+                                            detail_response = requests.get(detail_url, params={"appid": ONESHOP_APP_ID, "secret": ONESHOP_SECRET}, timeout=10)
+                                            
                                             items_str = "未抓取到品項"
                                             item_count = 0
                                             
-                                            # 嘗試抓取 1shop 可能的品項陣列名稱 (通常是 detail)
-                                            item_array = order.get("detail") or order.get("details") or order.get("item") or order.get("products")
-                                            
-                                            if item_array and isinstance(item_array, list):
-                                                item_lines = []
-                                                for it in item_array:
-                                                    # 兼容不同命名習慣：quantity/qty, product_name/name
-                                                    qty = int(it.get("quantity", it.get("qty", 1)))
-                                                    p_name = str(it.get("product_name", it.get("name", "未知商品")))
-                                                    s_name = str(it.get("spec_name", ""))
+                                            if detail_response.status_code == 200:
+                                                detail_data = detail_response.json()
+                                                if detail_data.get("success") == 0:
+                                                    # 解析購物車內的商品 (根據你找出的官方文件)
+                                                    products = detail_data.get("data", {}).get("cart", {}).get("products", [])
+                                                    item_lines = []
                                                     
-                                                    # 組合名稱與規格 (例如：香水 (50ml))
-                                                    full_name = p_name
-                                                    if s_name and s_name.lower() not in ["", "null", "none"]:
-                                                        full_name += f" - {s_name}"
+                                                    for p in products:
+                                                        p_type = p.get("product_type", "single")
                                                         
-                                                    item_lines.append(f"• {full_name} *{qty}")
-                                                    item_count += qty
-                                                    
-                                                if item_lines:
-                                                    items_str = "\n".join(item_lines)
-                                                    
-                                            # 防呆：如果完全沒抓到品項，數量預設為 1，避免進貨成本被算成 0
-                                            if item_count == 0:
-                                                item_count = 1
-                                                    
-                                            # 3. 初始成本計算 (沿用你的 1個商品 50 RMB 乘以匯率的邏輯)
+                                                        # 略過運費、手續費等非實體商品
+                                                        if p_type == "charge": 
+                                                            continue
+                                                            
+                                                        # 單一商品
+                                                        if p_type == "single":
+                                                            p_name = p.get("name", "未知商品")
+                                                            qty = int(p.get("quantity", 1))
+                                                            item_lines.append(f"• {p_name} *{qty}")
+                                                            item_count += qty
+                                                            
+                                                        # 組合商品 (Bundle)
+                                                        elif p_type == "bundle":
+                                                            bundle_items = p.get("bundle", [])
+                                                            # 組合包本身的購買數量 (例如買了 2 組)
+                                                            bundle_qty = int(p.get("quantity", 1)) 
+                                                            for b_item in bundle_items:
+                                                                b_name = b_item.get("name", "組合內容物")
+                                                                # 實際數量 = 組合包內的數量 * 買了幾組
+                                                                b_item_qty = int(b_item.get("quantity", 1)) * bundle_qty 
+                                                                item_lines.append(f"• [組合] {b_name} *{b_item_qty}")
+                                                                item_count += b_item_qty
+
+                                                    if item_lines:
+                                                        items_str = "\n".join(item_lines)
+                                            
+                                            # 防呆預設
+                                            if item_count == 0: item_count = 1
+                                            
+                                            # 3. 計算成本與寫入資料庫
                                             default_cost_twd = (item_count * 50.0) * rate
                                             init_profit = rev - default_cost_twd
                                             init_status = '待出貨'
 
-                                            # 4. 寫入 PostgreSQL 資料庫 (使用 UPSERT 防止重複抓取導致報錯)
                                             conn.execute("""
                                                 INSERT INTO customer_orders 
                                                 (訂單編號, 訂單日期, 姓名, 電話, 信箱, 門市, 店號, 品項內容, 下單總數, 包裹應收, 商品成本, 物流運費, 出貨成本, 訂單損益, 物流編號, 取貨狀態, 顧客備註, 商家備註)
-                                                VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, 0.0, ?, ?, '', ?, ?, ?)
+                                                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0.0, ?, ?, '', ?, ?, ?)
                                                 ON CONFLICT(訂單編號) DO UPDATE SET
                                                     姓名 = excluded.姓名,
                                                     電話 = excluded.電話,
                                                     門市 = excluded.門市,
-                                                    店號 = excluded.店號,
+                                                    品項內容 = excluded.品項內容,
+                                                    下單總數 = excluded.下單總數,
                                                     包裹應收 = excluded.包裹應收,
+                                                    商品成本 = excluded.商品成本,
+                                                    出貨成本 = excluded.出貨成本,
+                                                    訂單損益 = excluded.訂單損益,
                                                     顧客備註 = excluded.顧客備註,
                                                     商家備註 = excluded.商家備註;
                                             """, (
-                                                oid, odate, name, phone, email, store, store_id, items_str, rev,
+                                                oid, odate, name, phone, email, store, store_id, items_str, item_count, rev,
                                                 default_cost_twd, default_cost_twd, init_profit, init_status, c_note, m_note
                                             ))
                                             success_count += 1
                                         conn.commit()
                                         
                                     log_system_action("訂單明細", current_operator, "1shop API 同步", f"透過 API 自動同步了 {success_count} 筆訂單")
-                                    st.success(f"✅ 太棒了！成功從 1shop 抓取並寫入 {success_count} 筆訂單至系統中！")
+                                    st.success(f"✅ 大功告成！成功寫入 {success_count} 筆訂單，並且完美解析了商品明細！")
                                     time.sleep(1.5)
-                                    st.rerun() # 自動重整網頁，你就會在下方的總表看到新訂單了！
+                                    st.rerun() 
                             else:
                                 st.error(f"❌ 1shop 回傳錯誤：{data.get('msg')}")
                         else:
                             st.error(f"❌ 連線失敗，狀態碼：{response.status_code}")
-                            st.write(response.text)
                             
                     except Exception as e:
                         st.error(f"❌ 發生例外錯誤：{str(e)}")
