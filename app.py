@@ -1421,6 +1421,35 @@ elif menu == "商品庫存":
             if not check_perm(role, "商品庫存", "can_edit"):
                 st.warning("🔒 您的權限僅能查看明細，無法執行修正或刪除作業。")
             else:
+                # 👇 🌟 新增：手動新增庫存與設定成本的區塊 👇
+                with st.expander("➕ 手動新增庫存與成本 (不經由採購單)", expanded=False):
+                    with st.form("manual_add_inventory_form", clear_on_submit=True):
+                        st.info("💡 採購模組尚未就緒前，您可以在此處直接為商品建立庫存，並設定「單支成本(RMB)」。此成本將會自動連動到後續的訂單中！")
+                        c_m1, c_m2 = st.columns(2)
+                        new_inv_code = c_m1.selectbox("選擇商品", all_products)
+                        new_inv_wh = c_m2.selectbox("存放倉庫", wh_list)
+                        
+                        c_m3, c_m4, c_m5 = st.columns(3)
+                        new_inv_qty = c_m3.number_input("入庫數量", min_value=1, step=1, value=10)
+                        new_inv_cost = c_m4.number_input("單支成本 (RMB)", min_value=0.0, step=0.1, value=50.0)
+                        new_inv_vendor = c_m5.text_input("廠商/備註 (選填)", value="期初手動建檔")
+                        
+                        if st.form_submit_button("🚀 確認手動入庫", type="primary"):
+                            calc_rmb = new_inv_qty * new_inv_cost
+                            today_str = str(pd.Timestamp.today().date())
+                            try:
+                                with get_db() as conn:
+                                    conn.execute("INSERT INTO inventory (編碼, 倉庫位置, 數量, 單支成本_RMB, 採購廠商, 採購金額_RMB, 進貨日期) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                                                 (new_inv_code, new_inv_wh, new_inv_qty, new_inv_cost, new_inv_vendor, calc_rmb, today_str))
+                                    conn.commit()
+                                log_inventory_change(current_operator, "手動入庫", f"手動建檔：{new_inv_code} 數量 {new_inv_qty}，成本 ¥{new_inv_cost}")
+                                st.success(f"✅ 成功手動入庫！{new_inv_code} 數量 {new_inv_qty} 已加入 {new_inv_wh}。")
+                                time.sleep(1.5)
+                                st.rerun()
+                            except Exception as e:
+                                st.error(f"❌ 寫入失敗：{e}")
+                # 👆 手動新增區塊結束 👆
+                
                 st.write("不論是手動匯入或是由採購單點收進來的個別紀錄，皆會在下方展開。您可以選取對應的序號進行精準修正或刪除。")
                 with get_db() as conn:
                     df_raw_inv = pd.read_sql('SELECT i.id as 流水號, i.編碼, p.名稱 as 商品名稱, i.倉庫位置, i.數量, i.單支成本_RMB as "單支成本(RMB)", i.採購廠商, i.進貨日期 FROM inventory i LEFT JOIN products p ON i.編碼 = p.編碼 ORDER BY i.id DESC', conn)
@@ -1831,6 +1860,58 @@ elif menu == "訂單明細":
         st.error("🚫 您無權限訪問此模組")
         st.stop()
 
+    # === 🌟 智能成本連動引擎 (負責解析品項並去庫存表抓真實成本) ===
+    with get_db() as conn:
+        df_costs = pd.read_sql("SELECT 編碼, AVG(單支成本_RMB) as avg_cost FROM inventory GROUP BY 編碼", conn)
+        code_cost_map = dict(zip(df_costs['編碼'], df_costs['avg_cost']))
+        df_products = pd.read_sql("SELECT 編碼, 名稱 FROM products", conn)
+        name_to_code = {str(r['名稱']).strip(): r['編碼'] for _, r in df_products.iterrows() if pd.notna(r['名稱']) and str(r['名稱']).strip()}
+        
+        all_codes = sorted([str(c) for c in code_cost_map.keys() if str(c)], key=len, reverse=True)
+        all_names = sorted(name_to_code.keys(), key=len, reverse=True)
+
+    def calculate_dynamic_rmb_cost(items_string):
+        """根據品項字串，智能比對庫存表中的真實成本。若無紀錄則預設 50"""
+        if not items_string: return 50.0
+        import re
+        parts = re.split(r'[\n、,，]', str(items_string).replace('•', ''))
+        total_rmb = 0.0
+        has_match = False
+        
+        for part in parts:
+            part = part.strip()
+            if not part: continue
+            
+            match = re.search(r'[\*xX×]\s*(\d+)', part)
+            qty = int(match.group(1)) if match else 1
+            
+            item_rmb = 50.0
+            matched = False
+            
+            # 1. 優先以編碼比對
+            for code in all_codes:
+                if code in part:
+                    item_rmb = code_cost_map[code]
+                    matched = True; break
+            # 2. 若無編碼，以商品名稱比對
+            if not matched:
+                for name in all_names:
+                    if name in part:
+                        c = name_to_code[name]
+                        item_rmb = code_cost_map.get(c, 50.0)
+                        matched = True; break
+                        
+            if matched: has_match = True
+            total_rmb += (item_rmb * qty)
+            
+        # 都沒配對到任何商品時，用總數量 * 50 盲算
+        if not has_match and total_rmb == 0:
+            qty_sum = sum([int(re.search(r'[\*xX×]\s*(\d+)', p).group(1)) if re.search(r'[\*xX×]\s*(\d+)', p) else 1 for p in parts if p.strip()])
+            total_rmb = (qty_sum if qty_sum > 0 else 1) * 50.0
+            
+        return total_rmb
+    # === 引擎設定結束 ===
+
     # 🌟 系統熱更新：確保 customer_orders 表格擁有獨立的「物流運費_RMB」欄位，讓人民幣原價永久保存
     with get_db() as conn:
         cursor = conn.cursor()
@@ -1883,8 +1964,7 @@ elif menu == "訂單明細":
                             else:
                                 total_q += 1
                                 
-                        total_q = total_q if total_q > 0 else 1
-                        new_cost_rmb = total_q * 50.0
+                        new_cost_rmb = calculate_dynamic_rmb_cost(items_str)
                         new_cost_twd = new_cost_rmb * rate_val
                         
                         # 若新算出來的成本跟現在資料庫裡的不同，代表抓到兇手，立刻執行 UPDATE 修正！
@@ -2638,10 +2718,8 @@ elif menu == "訂單明細":
                 c_ma10, c_ma11, c_ma12 = st.columns(3)
                 ma_revenue = c_ma10.number_input("包裹應收 (TWD)", value=0.0, step=10.0)
                 
-                # 👇 改為輸入 RMB，預設值帶入 50，並自動換算台幣存檔
-                ma_cost_rmb = c_ma11.number_input("商品成本 (RMB)", value=50.0, step=5.0)
-                ma_cost = ma_cost_rmb * rate
-                c_ma11.caption(f"🔄 預估台幣成本：**{ma_cost:,.0f}** TWD")
+                # 👇 升級：設為 0 時自動抓取庫存成本
+                ma_cost_rmb = c_ma11.number_input("商品成本 (RMB) [填0將自動連動庫存]", value=0.0, step=5.0)
                 
                 # 🌟 新增時運費改為輸入 RMB 並自動換算台幣存檔
                 ma_shipping_rmb = c_ma12.number_input("物流運費 (RMB)", value=0.0, step=1.0)
@@ -2659,6 +2737,9 @@ elif menu == "訂單明細":
                         st.error("❌ 『訂單編號』不可為空！")
                     else:
                         try:
+                            if ma_cost_rmb == 0:
+                                ma_cost_rmb = calculate_dynamic_rmb_cost(ma_items)
+                            ma_cost = ma_cost_rmb * rate
                             ma_ship_cost = ma_cost + ma_shipping
                             ma_profit = ma_revenue - ma_ship_cost
                             with get_db() as conn:
@@ -2777,7 +2858,8 @@ elif menu == "訂單明細":
                                             if item_count == 0: item_count = 1
                                             
                                             # 3. 計算成本與寫入資料庫
-                                            default_cost_twd = (item_count * 50.0) * rate
+                                            dynamic_cost_rmb = calculate_dynamic_rmb_cost(items_str)
+                                            default_cost_twd = dynamic_cost_rmb * rate
                                             init_profit = rev - default_cost_twd
                                             init_status = '待出貨'
 
