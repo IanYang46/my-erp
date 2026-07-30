@@ -2729,20 +2729,35 @@ elif menu == "訂單明細":
                                             c_note = str(order.get("note", ""))
                                             m_note = str(order.get("shop_note", ""))
                                             
-                                            # 2. 處理商品品項 (1shop 通常將購買明細放在 item 陣列中)
+                                            # 2. 處理商品品項 (1shop 智能偵測版)
                                             items_str = "未抓取到品項"
-                                            item_count = 1 # 預設數量
-                                            if "item" in order:
+                                            item_count = 0
+                                            
+                                            # 嘗試抓取 1shop 可能的品項陣列名稱 (通常是 detail)
+                                            item_array = order.get("detail") or order.get("details") or order.get("item") or order.get("products")
+                                            
+                                            if item_array and isinstance(item_array, list):
                                                 item_lines = []
-                                                item_count = 0
-                                                for it in order["item"]:
-                                                    qty = int(it.get("quantity", 1))
-                                                    item_name = str(it.get("name", ""))
-                                                    # 組合出類似 "• 香水 *2" 的格式，符合你系統原本的習慣
-                                                    item_lines.append(f"• {item_name} *{qty}")
+                                                for it in item_array:
+                                                    # 兼容不同命名習慣：quantity/qty, product_name/name
+                                                    qty = int(it.get("quantity", it.get("qty", 1)))
+                                                    p_name = str(it.get("product_name", it.get("name", "未知商品")))
+                                                    s_name = str(it.get("spec_name", ""))
+                                                    
+                                                    # 組合名稱與規格 (例如：香水 (50ml))
+                                                    full_name = p_name
+                                                    if s_name and s_name.lower() not in ["", "null", "none"]:
+                                                        full_name += f" - {s_name}"
+                                                        
+                                                    item_lines.append(f"• {full_name} *{qty}")
                                                     item_count += qty
+                                                    
                                                 if item_lines:
                                                     items_str = "\n".join(item_lines)
+                                                    
+                                            # 防呆：如果完全沒抓到品項，數量預設為 1，避免進貨成本被算成 0
+                                            if item_count == 0:
+                                                item_count = 1
                                                     
                                             # 3. 初始成本計算 (沿用你的 1個商品 50 RMB 乘以匯率的邏輯)
                                             default_cost_twd = (item_count * 50.0) * rate
