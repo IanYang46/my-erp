@@ -219,9 +219,12 @@ def get_db():
     finally:
         db_pool.putconn(conn) # 🌟 執行完畢後把專線「還」給池子，保持暢通
         
-# 給 Pandas 專用的引擎
-db_url = os.getenv("DB_URL")
-db_engine = create_engine(db_url.replace("postgres://", "postgresql://"))
+# 給 Pandas 專用的引擎 (🌟 加入防呆機制)
+db_url = os.getenv("DB_URL", "")
+if db_url:
+    db_engine = create_engine(db_url.replace("postgres://", "postgresql://"))
+else:
+    db_engine = None
     
 # --- 3. 初始化資料庫與預設權限 ---
 @st.cache_resource
@@ -1254,7 +1257,7 @@ elif menu == "商品訊息":
                                 st.success(f"🎉 成功新增商品：【{code}】 {name}！")
                                 time.sleep(1.5)
                                 st.rerun()
-                            except sqlite3.IntegrityError:
+                            except psycopg2.IntegrityError: # 🌟 修正：升級為 PostgreSQL 對應的錯誤捕捉
                                 st.error(f"❌ 錯誤：編碼 【{code}】 已經存在！如需修改請至『列表瀏覽』點擊編輯。")
             else:
                 st.error("🚫 您沒有編輯商品的權限")
