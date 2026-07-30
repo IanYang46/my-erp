@@ -2690,14 +2690,16 @@ elif menu == "訂單明細":
             else:
                 with st.spinner("正在向 1shop 請求資料中，請稍候..."):
                     try:
-                        # 👇 修正 1：改回複數的 orders (代表抓取訂單列表)
-                        base_url = "https://api.1shop.tw/v1/orders" 
+                        # 👇 修正 1：網址改回單數的 order
+                        base_url = "https://api.1shop.tw/v1/order" 
                         
-                        # 👇 修正 2：補上 1shop 必填的 status (狀態) 參數
+                        # 👇 修正 2：嚴格套用 1shop 官方規定的 3 個必填狀態參數
                         params = {
                             "appid": ONESHOP_APP_ID,
                             "secret": ONESHOP_SECRET,
-                            "status": ""   # 👈 關鍵新增！留空字串通常代表抓取「全部狀態」的訂單
+                            "progress_status": "all",  # 訂單狀態 (all 代表全部)
+                            "payment_status": "all",   # 付款狀態 (all 代表全部)
+                            "logistic_status": "all"   # 物流狀態 (all 代表全部)
                         }
                         
                         # 發送請求給 1shop
