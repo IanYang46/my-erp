@@ -2767,7 +2767,7 @@ elif menu == "訂單明細":
         
         # 👇 🌟 新增的 1shop 自動串接測試區塊 👇
         st.markdown("---")
-        st.subheader("🛒 1shop API 自動同步 (測試中)")
+        st.subheader("🛒 1shop API 自動同步")
         if st.button("🔄 點我從 1shop 抓取最新訂單", type="primary"):
             if not ONESHOP_APP_ID or not ONESHOP_SECRET:
                 st.error("❌ 找不到 1shop 金鑰！請確認 Zeabur 的 Variables 是否設定正確。")
