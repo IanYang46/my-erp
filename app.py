@@ -628,6 +628,30 @@ if menu == "首頁":
         df_ad = pd.DataFrame(columns=['date_dt', 'spend_twd'])
 
     # ==========================================
+    # --- 4. 計算今日與昨日看板數據 ---
+    # ==========================================
+    df_today = df_orders[df_orders['訂單日期_dt'] == today]
+    df_yest = df_orders[df_orders['訂單日期_dt'] == yesterday]
+    
+    today_orders_cnt = len(df_today)
+    today_rev = df_today['包裹應收'].sum()
+
+    yesterday_orders_cnt = len(df_yest)
+    yesterday_rev = df_yest['包裹應收'].sum()
+
+    # --- 3. 畫面渲染：今日/昨日看板 ---
+    with st.container(border=True):
+        st.markdown("#### 📊 今日與昨日營收概況")
+        c1, c2, c3, c4 = st.columns(4)
+        
+        c1.metric("🟢 今日訂單數", f"{today_orders_cnt} 筆")
+        c2.metric("🟢 今日營業額", f"${today_rev:,.0f}")
+        c3.metric("🔵 昨日訂單數", f"{yesterday_orders_cnt} 筆")
+        c4.metric("🔵 昨日營業額", f"${yesterday_rev:,.0f}")
+
+    st.divider()
+    
+    # ==========================================
     # --- 2. 🏆 每月營運總覽 (顯示在最上方的 10 項關鍵指標) ---
     # ==========================================
     st.markdown("### 🏆 每月營運總覽")
@@ -814,70 +838,31 @@ if menu == "首頁":
     st.divider()
 
     # ==========================================
-    # --- 4. 計算今日與昨日看板數據 ---
+    # --- 4. 單月數據詳細分析 (可自選月份) ---
     # ==========================================
-    df_today = df_orders[df_orders['訂單日期_dt'] == today]
-    df_yest = df_orders[df_orders['訂單日期_dt'] == yesterday]
+    st.markdown("### 📅 單月營運詳細數據 (每日明細)")
     
-    today_ad_row = df_ad[df_ad['date_dt'] == today]
-    yest_ad_row = df_ad[df_ad['date_dt'] == yesterday]
-
-    today_orders_cnt = len(df_today)
-    today_rev = df_today['包裹應收'].sum()
-    today_ad = today_ad_row['spend_twd'].sum() if not today_ad_row.empty else 0
-    # 今日 ROAS (總營業額 / 總廣告費)
-    today_roas = (today_rev / today_ad) if today_ad > 0 else 0
-
-    yesterday_orders_cnt = len(df_yest)
-    yesterday_rev = df_yest['包裹應收'].sum()
-    yesterday_ad = yest_ad_row['spend_twd'].sum() if not yest_ad_row.empty else 0
-    # 昨日 ROAS (總營業額 / 總廣告費)
-    yesterday_roas = (yesterday_rev / yesterday_ad) if yesterday_ad > 0 else 0
-
-    # --- 3. 畫面渲染：今日/昨日看板 ---
-    with st.container(border=True):
-        st.markdown("#### 🟢 今日即時數據")
-        c1, c2, c3, c4 = st.columns(4)
-        c1.metric("今日訂單數", f"{today_orders_cnt} 筆")
-        c2.metric("今日營業額", f"${today_rev:,.0f}")
-        c3.metric("今日廣告費", f"${today_ad:,.0f}" if today_ad > 0 else "未輸入")
-        # 👇 統一命名為「實際 ROAS」，並移除多餘的 x
-        c4.metric("今日實際 ROAS", f"{today_roas:.2f}" if today_ad > 0 else "N/A")
-
-    with st.container(border=True):
-        st.markdown("#### 🔵 昨日總結數據")
-        c5, c6, c7, c8 = st.columns(4)
-        c5.metric("昨日訂單數", f"{yesterday_orders_cnt} 筆")
-        c6.metric("昨日營業額", f"${yesterday_rev:,.0f}")
-        c7.metric("昨日廣告費", f"${yesterday_ad:,.0f}" if yesterday_ad > 0 else "未輸入")
-        # 👇 統一命名為「實際 ROAS」，並移除多餘的 x
-        c8.metric("昨日實際 ROAS", f"{yesterday_roas:.2f}" if yesterday_ad > 0 else "N/A")
-
-    st.divider()
-
-    # ==========================================
-    # --- 4. 單週數據詳細分析 (可自選週次) ---
-    # ==========================================
-    st.markdown("### 📅 單週營運詳細數據 (週一至週日)")
-    
-    last_week_default = today - pd.Timedelta(days=7)
-    selected_date = st.date_input("🗓️ 請點擊選擇想查看的週次 (點選該週的任一天即可)", value=last_week_default)
+    # 預設為今天，點選該月任一天即可切換月份
+    selected_date = st.date_input("🗓️ 請點擊選擇想查看的月份 (點選該月的任一天即可)", value=today)
     selected_dt = pd.Timestamp(selected_date)
     
-    # 算出選擇日期的「該週週一」
-    days_since_monday = selected_dt.weekday() # 0是週一, 6是週日
-    target_monday = (selected_dt - pd.Timedelta(days=days_since_monday)).date()
+    # 取得目標年份、月份，以及該月總天數
+    target_year = selected_dt.year
+    target_month = selected_dt.month
+    days_in_month = selected_dt.days_in_month
     
-    weekly_data = []
+    monthly_data = []
     
     # 建立統計變數 (為了最後算合計)
     sum_orders = sum_rev = sum_prod_cost = sum_ship_fee = sum_ad = 0
     sum_picked = sum_actual_rev = sum_actual_cost = 0
 
-    for i in range(7):
-        current_d = target_monday + pd.Timedelta(days=i)
+    # 迴圈執行該月的每一天 (1 到 days_in_month)
+    for d in range(1, days_in_month + 1):
+        current_d = pd.Timestamp(year=target_year, month=target_month, day=d).date()
         day_str = current_d.strftime('%m/%d')
-        weekday_str = ["一", "二", "三", "四", "五", "六", "日"][i]
+        # 根據日期取得對應星期 (0是週一, 6是週日)
+        weekday_str = ["一", "二", "三", "四", "五", "六", "日"][current_d.weekday()]
         
         # 篩選當天訂單與廣告費
         df_d = df_orders[df_orders['訂單日期_dt'] == current_d]
@@ -905,7 +890,6 @@ if menu == "首頁":
         
         pickup_rate = (picked_cnt / orders_cnt * 100) if orders_cnt > 0 else 0
         
-        # 👇 關鍵修正：單日 ROAS 改為 (總營業額 rev / 廣告費)，不再用 actual_rev
         actual_roas = (rev / ad_d) if ad_d > 0 else 0
         
         est_total_cost = prod_cost + ship_fee + ad_d
@@ -922,7 +906,7 @@ if menu == "首頁":
         else:
             status_label = "⏳ 進行"
             
-        weekly_data.append({
+        monthly_data.append({
             "日期": f"{day_str} ({weekday_str})", "狀態": status_label,
             "訂單總數": orders_cnt, "已簽收數": picked_cnt, "取件率": pickup_rate,
             "廣告費": ad_d, "物流運費": ship_fee, "商品成本": prod_cost,
@@ -942,7 +926,6 @@ if menu == "首頁":
     
     sum_pickup_rate = (sum_picked / sum_orders * 100) if sum_orders > 0 else 0
     
-    # 👇 關鍵修正：單週合計 ROAS 改為 (單週總營業額 / 單週總廣告費)
     sum_actual_roas = (sum_rev / sum_ad) if sum_ad > 0 else 0
     
     sum_est_total_cost = sum_prod_cost + sum_ship_fee + sum_ad
@@ -950,8 +933,8 @@ if menu == "首頁":
     sum_actual_total_cost = sum_actual_cost + sum_ad
     sum_actual_roi = (sum_actual_profit / sum_actual_total_cost) if sum_actual_total_cost > 0 else 0
 
-    weekly_data.append({
-        "日期": "🌟 該週合計", "狀態": "-", 
+    monthly_data.append({
+        "日期": "🌟 該月合計", "狀態": "-", 
         "訂單總數": sum_orders, "已簽收數": sum_picked, "取件率": sum_pickup_rate,
         "廣告費": sum_ad, "物流運費": sum_ship_fee, "商品成本": sum_prod_cost,
         "營業額": sum_rev, "預估利潤": sum_est_profit, "預估ROI": sum_est_roi,
@@ -960,10 +943,10 @@ if menu == "首頁":
     })
 
     # 轉為 DataFrame 並在前端顯示
-    df_weekly = pd.DataFrame(weekly_data)
+    df_monthly = pd.DataFrame(monthly_data)
     
     st.dataframe(
-        df_weekly,
+        df_monthly,
         use_container_width=True,
         hide_index=True,
         column_config={
