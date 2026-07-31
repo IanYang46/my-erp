@@ -2912,12 +2912,32 @@ elif menu == "訂單明細":
                     try:
                         df_imp = pd.read_csv(uploaded_order) if uploaded_order.name.endswith('.csv') else pd.read_excel(uploaded_order, engine='openpyxl')
                         
+                        # 👇 🌟 新增：針對 1shop 匯出格式，自動合併「商品名稱」與「數量」
+                        if '商品名稱' in df_imp.columns and '數量' in df_imp.columns:
+                            df_imp['品項內容'] = df_imp['商品名稱'].astype(str) + " *" + df_imp['數量'].astype(str)
+                        elif '商品名稱' in df_imp.columns:
+                            df_imp['品項內容'] = df_imp['商品名稱'].astype(str)
+                            
+                        # 👇 擴充表頭對應字典，加入 1shop 常見的欄位名稱
                         col_mapping = {
+                            # 舊版兼容格式
                             '訂單編號': '訂單編號', '建立日期': '訂單日期', '收件人': '姓名', '貨號': '品項內容',
                             '總計金額': '包裹應收', '聯絡電話': '電話', '連絡電話': '電話', 'Email': '信箱', '信箱': '信箱', 
                             '運送超商': '門市', '超商代號': '店號',
                             '顧客備註': '顧客備註', '商家備註': '商家備註',
-                            '超商寄貨編號(拋單後取得)': '物流編號', '物流編號': '物流編號'
+                            '超商寄貨編號(拋單後取得)': '物流編號', '物流編號': '物流編號',
+                            
+                            # 🌟 新增：1shop 預設匯出報表的對應欄位
+                            '訂單號碼': '訂單編號', 
+                            '下單時間': '訂單日期', 
+                            '收件人姓名': '姓名', 
+                            '訂單總額': '包裹應收',
+                            '總金額': '包裹應收',
+                            '手機': '電話', 
+                            '超商名稱': '門市', 
+                            '超商代碼': '店號',
+                            '買家備註': '顧客備註',
+                            '物流單號': '物流編號'
                         }
                         df_imp = df_imp.rename(columns=col_mapping)
 
