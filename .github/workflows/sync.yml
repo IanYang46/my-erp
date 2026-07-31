@@ -1,0 +1,31 @@
+name: 1shop Auto Sync
+
+on:
+  schedule:
+    - cron: '*/30 * * * *' # 設定為每 30 分鐘自動執行一次
+  workflow_dispatch: # 保留一個可以直接從 GitHub 點擊執行的按鈕
+
+jobs:
+  sync_orders:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: 取得最新程式碼
+        uses: actions/checkout@v3
+
+      - name: 安裝 Python 環境
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+
+      - name: 安裝執行所需套件
+        run: |
+          pip install requests psycopg2-binary pandas
+
+      - name: 執行背景同步腳本
+        env:
+          # 將 GitHub Secrets 裡的金鑰對應進來給 Python 讀取
+          DB_URL: ${{ secrets.DB_URL }}
+          ONESHOP_APP_ID: ${{ secrets.ONESHOP_APP_ID }}
+          ONESHOP_SECRET: ${{ secrets.ONESHOP_SECRET }}
+        run: python sync_1shop.py
