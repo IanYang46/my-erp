@@ -220,4 +220,19 @@ def sync_1shop_orders():
         release_db_connection(conn)
 
 if __name__ == "__main__":
-    sync_1shop_orders()
+    print("🤖 啟動 1shop 背景自動同步服務...")
+    
+    while True:
+        try:
+            print(f"\n[{time.strftime('%Y-%m-%d %H:%M:%S')}] 開始執行同步作業...")
+            
+            # 呼叫你上面寫好的同步函式
+            sync_1shop_orders()
+            
+            print("✅ 該次回合執行完畢！")
+        except Exception as e:
+            # 如果發生預期外的嚴重錯誤，印出錯誤但「不要」讓程式崩潰停止
+            print(f"❌ 嚴重錯誤: {e}")
+        
+        print("⏳ 進入休眠，等待 30 分鐘後再次抓取...\n")
+        time.sleep(1800)  # 1800 秒 = 30 分鐘
