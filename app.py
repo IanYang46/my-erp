@@ -2797,7 +2797,7 @@ elif menu == "訂單明細":
                                     success_count = 0
                                     with get_db() as conn:
                                         for basic_order in orders_list:
-                                            # 1. 取得基本資料
+                                            # 1. 取得基本資料 (依照你提供的對應表)
                                             oid = str(basic_order.get("order_number", "")).strip()
                                             if not oid: continue
                                             
@@ -2811,84 +2811,126 @@ elif menu == "訂單明細":
                                             c_note = str(basic_order.get("note", ""))
                                             m_note = str(basic_order.get("shop_note", ""))
                                             
+                                            # 👇 狀態精準對應 (把 1shop 的 logistic_status 翻譯成我們系統的狀態)
+                                            raw_logistic_status = str(basic_order.get("logistic_status", "pending"))
+                                            raw_progress_status = str(basic_order.get("progress_status", ""))
+                                            
+                                            status_mapping = {
+                                                "pending": "待出貨",
+                                                "prepare": "備貨中",
+                                                "send": "配送中",
+                                                "shipped": "配送中",
+                                                "delivered": "已送達待取",
+                                                "received": "簽收",
+                                                "abnormal": "客訴",
+                                                "returning": "退回",
+                                                "delay": "待出貨",
+                                                "returned": "退回"
+                                            }
+                                            
+                                            if raw_progress_status == "cancelled":
+                                                init_status = "已取消"
+                                            else:
+                                                init_status = status_mapping.get(raw_logistic_status, "待出貨")
+                                            
                                             # === 第二階段：拿著訂單號碼，去抓「詳細訂單」API ===
                                             detail_url = f"https://api.1shop.tw/v1/order/{oid}"
+                                            
+                                            # 🌟 對抗 1shop 「10秒10次」限制的減速防呆
+                                            time.sleep(1.2)
+                                            
                                             detail_response = requests.get(detail_url, params={"appid": ONESHOP_APP_ID, "secret": ONESHOP_SECRET}, timeout=10)
                                             
                                             items_str = "未抓取到品項"
                                             item_count = 0
+                                            o_url = ""  # 預設訂單連結為空
                                             
                                             if detail_response.status_code == 200:
                                                 detail_data = detail_response.json()
                                                 if detail_data.get("success") == 0:
-                                                    # 🌟 防呆：如果 products 鍵值存在但內容是 None，強迫轉為空陣列 []
+                                                    
+                                                    # 👇 抓取訂單連結 (order_url 存在於詳細訂單的 order 中)
+                                                    detail_order_info = detail_data.get("data", {}).get("order", {})
+                                                    o_url = str(detail_order_info.get("order_url", ""))
+                                                    
                                                     products = detail_data.get("data", {}).get("cart", {}).get("products") or []
                                                     item_lines = []
                                                     
                                                     for p in products:
                                                         p_type = p.get("product_type", "single")
                                                         
-                                                        # 略過運費、手續費等非實體商品
                                                         if p_type == "charge": 
                                                             continue
                                                             
-                                                        # 組合商品 (Bundle) - 拆解內容物 (🌟 徹底移除 [組合] 字眼)
+                                                        # 🌟 嚴格依照要求：抓取 SKU + Quantity
                                                         if p_type == "bundle":
                                                             bundle_contents = p.get("bundle", [])
                                                             bundle_qty = int(p.get("quantity", 1)) 
                                                             
                                                             if isinstance(bundle_contents, list) and len(bundle_contents) > 0:
                                                                 for b_item in bundle_contents:
-                                                                    b_name = str(b_item.get("name", "未知內容物")).strip()
+                                                                    b_sku = str(b_item.get("sku", "")).strip()
+                                                                    b_name = str(b_item.get("name", "")).strip() # 保留名稱方便人眼閱讀
                                                                     b_item_qty = int(b_item.get("quantity", 1)) * bundle_qty 
-                                                                    item_lines.append(f"• {b_name} *{b_item_qty}")
+                                                                    
+                                                                    display_text = f"{b_sku} {b_name}".strip()
+                                                                    item_lines.append(f"• {display_text} *{b_item_qty}")
                                                                     item_count += b_item_qty
                                                             else:
-                                                                # 防呆：空組合包時直接抓名稱
-                                                                p_name = str(p.get("name", "未知組合商品")).strip()
-                                                                item_lines.append(f"• {p_name} *{bundle_qty}")
+                                                                p_sku = str(p.get("sku", "")).strip()
+                                                                p_name = str(p.get("name", "")).strip()
+                                                                display_text = f"{p_sku} {p_name}".strip()
+                                                                item_lines.append(f"• {display_text} *{bundle_qty}")
                                                                 item_count += bundle_qty
                                                                 
-                                                        # 其他所有商品 (單一、加價購、贈品...等，🌟 徹底移除所有前綴標籤)
                                                         else:
-                                                            p_name = str(p.get("name", "未知商品")).strip()
+                                                            p_sku = str(p.get("sku", "")).strip()
+                                                            p_name = str(p.get("name", "")).strip()
                                                             qty = int(p.get("quantity", 1))
-                                                            item_lines.append(f"• {p_name} *{qty}")
+                                                            
+                                                            display_text = f"{p_sku} {p_name}".strip()
+                                                            item_lines.append(f"• {display_text} *{qty}")
                                                             item_count += qty
 
                                                     if item_lines:
                                                         items_str = "\n".join(item_lines)
                                                     else:
-                                                        # 🚨 終極防呆與除錯網：如果迴圈跑完還是空的，直接把 1shop 的原始資料印出來！
-                                                        items_str = f"系統解析異常，1shop原始資料: {str(products)}"
+                                                        items_str = f"系統解析異常，原始資料: {str(products)}"
+                                                        
+                                            elif detail_response.status_code == 429:
+                                                items_str = "⚠️ 抓取失敗：請求過快被 1shop 阻擋 (429)"
+                                            else:
+                                                items_str = f"⚠️ 抓取異常 (狀態碼: {detail_response.status_code})"
                                             
-                                            # 防呆預設
                                             if item_count == 0: item_count = 1
                                             
                                             # 3. 計算成本與寫入資料庫
                                             dynamic_cost_rmb = calculate_dynamic_rmb_cost(items_str)
                                             default_cost_twd = dynamic_cost_rmb * rate
                                             init_profit = rev - default_cost_twd
-                                            init_status = '待出貨'
 
                                             conn.execute("""
                                                 INSERT INTO customer_orders 
-                                                (訂單編號, 訂單日期, 姓名, 電話, 信箱, 門市, 店號, 品項內容, 下單總數, 包裹應收, 商品成本, 物流運費, 出貨成本, 訂單損益, 物流編號, 取貨狀態, 顧客備註, 商家備註)
-                                                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0.0, ?, ?, '', ?, ?, ?)
+                                                (訂單編號, 訂單日期, 姓名, 電話, 信箱, 訂單連結, 門市, 店號, 品項內容, 下單總數, 包裹應收, 商品成本, 物流運費, 出貨成本, 訂單損益, 物流編號, 取貨狀態, 顧客備註, 商家備註)
+                                                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0.0, ?, ?, '', ?, ?, ?)
                                                 ON CONFLICT(訂單編號) DO UPDATE SET
                                                     姓名 = excluded.姓名,
                                                     電話 = excluded.電話,
+                                                    信箱 = excluded.信箱,
+                                                    訂單連結 = excluded.訂單連結,
                                                     門市 = excluded.門市,
+                                                    店號 = excluded.店號,
                                                     品項內容 = excluded.品項內容,
                                                     下單總數 = excluded.下單總數,
                                                     包裹應收 = excluded.包裹應收,
                                                     商品成本 = excluded.商品成本,
                                                     出貨成本 = excluded.出貨成本,
                                                     訂單損益 = excluded.訂單損益,
+                                                    取貨狀態 = CASE WHEN excluded.取貨狀態 = '已取消' THEN '已取消' ELSE excluded.取貨狀態 END,
                                                     顧客備註 = excluded.顧客備註,
                                                     商家備註 = excluded.商家備註;
                                             """, (
-                                                oid, odate, name, phone, email, store, store_id, items_str, item_count, rev,
+                                                oid, odate, name, phone, email, o_url, store, store_id, items_str, item_count, rev,
                                                 default_cost_twd, default_cost_twd, init_profit, init_status, c_note, m_note
                                             ))
                                             success_count += 1
