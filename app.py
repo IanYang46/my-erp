@@ -2821,8 +2821,8 @@ elif menu == "訂單明細":
                                             if detail_response.status_code == 200:
                                                 detail_data = detail_response.json()
                                                 if detail_data.get("success") == 0:
-                                                    # 解析購物車內的商品 (根據你找出的官方文件)
-                                                    products = detail_data.get("data", {}).get("cart", {}).get("products", [])
+                                                    # 🌟 防呆：如果 products 鍵值存在但內容是 None，強迫轉為空陣列 []
+                                                    products = detail_data.get("data", {}).get("cart", {}).get("products") or []
                                                     item_lines = []
                                                     
                                                     for p in products:
@@ -2832,42 +2832,35 @@ elif menu == "訂單明細":
                                                         if p_type == "charge": 
                                                             continue
                                                             
-                                                        # 組合商品 (Bundle) - 要拆解內容物
+                                                        # 組合商品 (Bundle) - 拆解內容物 (🌟 徹底移除 [組合] 字眼)
                                                         if p_type == "bundle":
-                                                            bundle_items = p.get("bundle", [])
+                                                            bundle_contents = p.get("bundle", [])
                                                             bundle_qty = int(p.get("quantity", 1)) 
                                                             
-                                                            if bundle_items:
-                                                                for b_item in bundle_items:
-                                                                    b_name = b_item.get("name", "組合內容物")
+                                                            if isinstance(bundle_contents, list) and len(bundle_contents) > 0:
+                                                                for b_item in bundle_contents:
+                                                                    b_name = str(b_item.get("name", "未知內容物")).strip()
                                                                     b_item_qty = int(b_item.get("quantity", 1)) * bundle_qty 
-                                                                    item_lines.append(f"• [組合] {b_name} *{b_item_qty}")
+                                                                    item_lines.append(f"• {b_name} *{b_item_qty}")
                                                                     item_count += b_item_qty
                                                             else:
-                                                                # 防呆：如果 1shop 的組合包裡面沒有設定內容物，就直接抓取這個組合包本身的名稱！
-                                                                p_name = p.get("name", "未知組合商品")
-                                                                item_lines.append(f"• [組合] {p_name} *{bundle_qty}")
+                                                                # 防呆：空組合包時直接抓名稱
+                                                                p_name = str(p.get("name", "未知組合商品")).strip()
+                                                                item_lines.append(f"• {p_name} *{bundle_qty}")
                                                                 item_count += bundle_qty
                                                                 
-                                                        # 其他所有商品 (單一、加價購 addon、贈品 gift、以及任何 1shop 未來新增的奇怪類型)
+                                                        # 其他所有商品 (單一、加價購、贈品...等，🌟 徹底移除所有前綴標籤)
                                                         else:
-                                                            p_name = p.get("name", "未知商品")
+                                                            p_name = str(p.get("name", "未知商品")).strip()
                                                             qty = int(p.get("quantity", 1))
-                                                            
-                                                            # 根據不同類型給予智能標籤，讓你在後台一眼看懂！
-                                                            prefix = ""
-                                                            if p_type == "gift": 
-                                                                prefix = "[贈品] "
-                                                            elif p_type == "addon": 
-                                                                prefix = "[加購] "
-                                                            elif p_type != "single": 
-                                                                prefix = f"[{p_type}] " # 未知類型直接印出來看是什麼
-                                                                
-                                                            item_lines.append(f"• {prefix}{p_name} *{qty}")
+                                                            item_lines.append(f"• {p_name} *{qty}")
                                                             item_count += qty
 
                                                     if item_lines:
                                                         items_str = "\n".join(item_lines)
+                                                    else:
+                                                        # 🚨 終極防呆與除錯網：如果迴圈跑完還是空的，直接把 1shop 的原始資料印出來！
+                                                        items_str = f"系統解析異常，1shop原始資料: {str(products)}"
                                             
                                             # 防呆預設
                                             if item_count == 0: item_count = 1
