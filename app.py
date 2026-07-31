@@ -2832,24 +2832,39 @@ elif menu == "訂單明細":
                                                         if p_type == "charge": 
                                                             continue
                                                             
-                                                        # 單一商品
-                                                        if p_type == "single":
+                                                        # 組合商品 (Bundle) - 要拆解內容物
+                                                        if p_type == "bundle":
+                                                            bundle_items = p.get("bundle", [])
+                                                            bundle_qty = int(p.get("quantity", 1)) 
+                                                            
+                                                            if bundle_items:
+                                                                for b_item in bundle_items:
+                                                                    b_name = b_item.get("name", "組合內容物")
+                                                                    b_item_qty = int(b_item.get("quantity", 1)) * bundle_qty 
+                                                                    item_lines.append(f"• [組合] {b_name} *{b_item_qty}")
+                                                                    item_count += b_item_qty
+                                                            else:
+                                                                # 防呆：如果 1shop 的組合包裡面沒有設定內容物，就直接抓取這個組合包本身的名稱！
+                                                                p_name = p.get("name", "未知組合商品")
+                                                                item_lines.append(f"• [組合] {p_name} *{bundle_qty}")
+                                                                item_count += bundle_qty
+                                                                
+                                                        # 其他所有商品 (單一、加價購 addon、贈品 gift、以及任何 1shop 未來新增的奇怪類型)
+                                                        else:
                                                             p_name = p.get("name", "未知商品")
                                                             qty = int(p.get("quantity", 1))
-                                                            item_lines.append(f"• {p_name} *{qty}")
-                                                            item_count += qty
                                                             
-                                                        # 組合商品 (Bundle)
-                                                        elif p_type == "bundle":
-                                                            bundle_items = p.get("bundle", [])
-                                                            # 組合包本身的購買數量 (例如買了 2 組)
-                                                            bundle_qty = int(p.get("quantity", 1)) 
-                                                            for b_item in bundle_items:
-                                                                b_name = b_item.get("name", "組合內容物")
-                                                                # 實際數量 = 組合包內的數量 * 買了幾組
-                                                                b_item_qty = int(b_item.get("quantity", 1)) * bundle_qty 
-                                                                item_lines.append(f"• [組合] {b_name} *{b_item_qty}")
-                                                                item_count += b_item_qty
+                                                            # 根據不同類型給予智能標籤，讓你在後台一眼看懂！
+                                                            prefix = ""
+                                                            if p_type == "gift": 
+                                                                prefix = "[贈品] "
+                                                            elif p_type == "addon": 
+                                                                prefix = "[加購] "
+                                                            elif p_type != "single": 
+                                                                prefix = f"[{p_type}] " # 未知類型直接印出來看是什麼
+                                                                
+                                                            item_lines.append(f"• {prefix}{p_name} *{qty}")
+                                                            item_count += qty
 
                                                     if item_lines:
                                                         items_str = "\n".join(item_lines)
