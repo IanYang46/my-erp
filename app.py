@@ -2797,7 +2797,7 @@ elif menu == "訂單明細":
                                     success_count = 0
                                     with get_db() as conn:
                                         for basic_order in orders_list:
-                                            # 1. 取得基本資料 (依照你提供的對應表)
+                                            # 1. 取得基本資料
                                             oid = str(basic_order.get("order_number", "")).strip()
                                             if not oid: continue
                                             
@@ -2811,27 +2811,12 @@ elif menu == "訂單明細":
                                             c_note = str(basic_order.get("note", ""))
                                             m_note = str(basic_order.get("shop_note", ""))
                                             
-                                            # 👇 狀態精準對應 (把 1shop 的 logistic_status 翻譯成我們系統的狀態)
-                                            raw_logistic_status = str(basic_order.get("logistic_status", "pending"))
-                                            raw_progress_status = str(basic_order.get("progress_status", ""))
-                                            
-                                            status_mapping = {
-                                                "pending": "待出貨",
-                                                "prepare": "備貨中",
-                                                "send": "配送中",
-                                                "shipped": "配送中",
-                                                "delivered": "已送達待取",
-                                                "received": "簽收",
-                                                "abnormal": "客訴",
-                                                "returning": "退回",
-                                                "delay": "待出貨",
-                                                "returned": "退回"
-                                            }
-                                            
-                                            if raw_progress_status == "cancelled":
+                                            # 👇 狀態邏輯：預設「待出貨」，若進度為已取消(cancelled)或其他(other)則設為「已取消」
+                                            raw_progress_status = str(basic_order.get("progress_status", "")).strip()
+                                            if raw_progress_status in ["cancelled", "other"]:
                                                 init_status = "已取消"
                                             else:
-                                                init_status = status_mapping.get(raw_logistic_status, "待出貨")
+                                                init_status = "待出貨"
                                             
                                             # === 第二階段：拿著訂單號碼，去抓「詳細訂單」API ===
                                             detail_url = f"https://api.1shop.tw/v1/order/{oid}"
@@ -2862,7 +2847,7 @@ elif menu == "訂單明細":
                                                         if p_type == "charge": 
                                                             continue
                                                             
-                                                        # 🌟 嚴格依照要求：抓取 SKU + Quantity
+                                                        # 🌟 嚴格依照要求：只抓取 SKU (系統會自動翻譯名稱) + 數量
                                                         if p_type == "bundle":
                                                             bundle_contents = p.get("bundle", [])
                                                             bundle_qty = int(p.get("quantity", 1)) 
@@ -2870,26 +2855,19 @@ elif menu == "訂單明細":
                                                             if isinstance(bundle_contents, list) and len(bundle_contents) > 0:
                                                                 for b_item in bundle_contents:
                                                                     b_sku = str(b_item.get("sku", "")).strip()
-                                                                    b_name = str(b_item.get("name", "")).strip() # 保留名稱方便人眼閱讀
                                                                     b_item_qty = int(b_item.get("quantity", 1)) * bundle_qty 
-                                                                    
-                                                                    display_text = f"{b_sku} {b_name}".strip()
-                                                                    item_lines.append(f"• {display_text} *{b_item_qty}")
+                                                                    item_lines.append(f"• {b_sku} *{b_item_qty}")
                                                                     item_count += b_item_qty
                                                             else:
+                                                                # 防呆：如果組合包沒寫內容物，抓這個組合包的 SKU
                                                                 p_sku = str(p.get("sku", "")).strip()
-                                                                p_name = str(p.get("name", "")).strip()
-                                                                display_text = f"{p_sku} {p_name}".strip()
-                                                                item_lines.append(f"• {display_text} *{bundle_qty}")
+                                                                item_lines.append(f"• {p_sku} *{bundle_qty}")
                                                                 item_count += bundle_qty
                                                                 
                                                         else:
                                                             p_sku = str(p.get("sku", "")).strip()
-                                                            p_name = str(p.get("name", "")).strip()
                                                             qty = int(p.get("quantity", 1))
-                                                            
-                                                            display_text = f"{p_sku} {p_name}".strip()
-                                                            item_lines.append(f"• {display_text} *{qty}")
+                                                            item_lines.append(f"• {p_sku} *{qty}")
                                                             item_count += qty
 
                                                     if item_lines:
