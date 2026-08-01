@@ -1263,22 +1263,42 @@ elif menu == "商品訊息":
                 uploaded_file = st.file_uploader("選擇上傳檔案 (支援 CSV 或 Excel)", type=["csv", "xlsx"])
                 if uploaded_file and st.button("🚀 執行批量匯入", type="primary"):
                     try:
+                        # 讀取檔案
                         df_new = pd.read_csv(uploaded_file) if uploaded_file.name.endswith('.csv') else pd.read_excel(uploaded_file, engine='openpyxl')
+                        # 確保檔案裡有這五個欄位，空值補上 "---"
                         df_insert = df_new[["編碼", "類別", "品牌", "名稱", "備註"]].fillna("---")
-                        with get_db() as conn:
-                            cursor = conn.cursor()
-                            for _, row in df_insert.iterrows():
-                                cursor.execute("SELECT 圖片路徑 FROM products WHERE 編碼=?", (str(row["編碼"]),))
-                                img_res = cursor.fetchone()
-                                existing_img = img_res[0] if img_res else ""
-                                cursor.execute("INSERT OR REPLACE INTO products (編碼, 類別, 品牌, 名稱, 備註, 圖片路徑) VALUES (?,?,?,?,?,?)", (str(row["編碼"]), str(row["類別"]), str(row["品牌"]), str(row["名稱"]), str(row["備註"]), existing_img))
-                            conn.commit()
+                        
+                        # 取得 PostgreSQL 連線 (請確保這裡的 get_db() 或 get_db_connection() 是你原本設定好的)
+                        conn = get_db_connection() 
+                        cursor = conn.cursor()
+                        
+                        # 迴圈處理每一筆資料
+                        for _, row in df_insert.iterrows():
+                            # 使用 PostgreSQL 安全的覆蓋語法
+                            cursor.execute("""
+                                INSERT INTO products (編碼, 類別, 品牌, 名稱, 備註) 
+                                VALUES (%s, %s, %s, %s, %s)
+                                ON CONFLICT (編碼) DO UPDATE SET 
+                                    類別 = EXCLUDED.類別,
+                                    品牌 = EXCLUDED.品牌,
+                                    名稱 = EXCLUDED.名稱,
+                                    備註 = EXCLUDED.備註;
+                            """, (str(row["編碼"]), str(row["類別"]), str(row["品牌"]), str(row["名稱"]), str(row["備註"])))
+                        
+                        conn.commit()
+                        
                         log_product_change(current_operator, "批量匯入", f"透過 Excel/CSV 檔案批次更新/新增了 {len(df_insert)} 筆商品資料")
                         st.success("✅ 批量商品資料匯入完成！")
                         time.sleep(1.5)
                         st.rerun()
+                        
                     except Exception as e:
+                        if conn:
+                            conn.rollback()  # 發生錯誤時退回，避免資料庫卡住
                         st.error(f"❌ 匯入錯誤：{str(e)}")
+                    finally:
+                        if conn:
+                            release_db_connection(conn) # 釋放連線
             else:
                 st.error("🚫 您沒有上傳商品的權限")
 
