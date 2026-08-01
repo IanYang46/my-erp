@@ -2899,7 +2899,7 @@ elif menu == "訂單明細":
                                                     商品成本 = excluded.商品成本,
                                                     出貨成本 = excluded.出貨成本,
                                                     訂單損益 = excluded.訂單損益,
-                                                    取貨狀態 = CASE WHEN excluded.取貨狀態 = '已取消' THEN '已取消' ELSE excluded.取貨狀態 END,
+                                                    取貨狀態 = CASE WHEN excluded.取貨狀態 = '已取消' THEN '已取消' ELSE customer_orders.取貨狀態 END,
                                                     顧客備註 = excluded.顧客備註,
                                                     商家備註 = excluded.商家備註;
                                             """, (
