@@ -3351,87 +3351,60 @@ elif menu == "訂單明細":
             # =========== exp3 結束 ===========
     with t4:
         st.subheader("📊 產品銷售總數統計")
-        st.info("💡 系統會自動解析訂單內的商品內容與數量，並為您統計出指定區間內的熱銷排行。")
+        st.info("💡 統計範圍：上方選擇的「日期區間」內所有訂單。")
         
-        if df_orders.empty:
-            st.warning("目前尚無任何訂單資料可供統計。")
+        # 直接使用已經被上方「營運數據看板」篩選好時間區間的 df_dash
+        if df_dash.empty:
+            st.warning("此區間內尚無任何訂單資料可供統計。")
         else:
-            # 1. 條件篩選區 (日期與狀態)
-            c_s1, c_s2, c_s3 = st.columns([1, 1, 2])
-            default_start = pd.Timestamp.today().date() - pd.Timedelta(days=30)
-            default_end = pd.Timestamp.today().date()
+            # 智能解析品項與數量引擎
+            import re
+            from collections import defaultdict
+            sales_counter = defaultdict(int)
             
-            start_date = c_s1.date_input("🗓️ 開始日期", value=default_start, key="sales_start")
-            end_date = c_s2.date_input("🗓️ 結束日期", value=default_end, key="sales_end")
-            
-            # 預設排除「已取消」與「退回」，讓銷售數字更貼近真實營業額
-            default_status = [s for s in STATUS_LIST if s not in ["已取消", "退回", "客訴"]]
-            selected_status = c_s3.multiselect("📌 包含的訂單狀態 (預設已排除取消與退回)", options=STATUS_LIST, default=default_status)
-            
-            if start_date > end_date:
-                st.error("❌ 開始日期不能晚於結束日期！")
-            elif not selected_status:
-                st.warning("⚠️ 請至少選擇一種訂單狀態進行統計。")
-            else:
-                # 2. 資料過濾
-                df_sales = df_orders.copy()
-                df_sales['訂單日期_dt'] = pd.to_datetime(df_sales['訂單日期'], errors='coerce').dt.date
-                
-                # 套用日期與狀態篩選
-                mask = (df_sales['訂單日期_dt'] >= start_date) & (df_sales['訂單日期_dt'] <= end_date) & (df_sales['取貨狀態'].isin(selected_status))
-                df_filtered = df_sales[mask]
-                
-                if df_filtered.empty:
-                    st.warning(f"在 {start_date} ~ {end_date} 區間內，沒有符合所選狀態的訂單。")
-                else:
-                    # 3. 智能解析品項與數量引擎
-                    import re
-                    from collections import defaultdict
-                    sales_counter = defaultdict(int)
+            for items_str in df_dash['品項翻譯'].dropna():
+                # 切割每一個品項 (支援換行、頓號、逗號)
+                parts = re.split(r'[\n、,，]', str(items_str).replace('•', ''))
+                for part in parts:
+                    part = part.strip()
+                    if not part: continue
                     
-                    for items_str in df_filtered['品項翻譯'].dropna():
-                        # 切割每一個品項 (支援換行、頓號、逗號)
-                        parts = re.split(r'[\n、,，]', str(items_str).replace('•', ''))
-                        for part in parts:
-                            part = part.strip()
-                            if not part: continue
-                            
-                            # 尋找結尾處的數量標記 (例如：香水 *2, 手機 x3)
-                            match = re.search(r'(.*?)[\*xX×]\s*(\d+)$', part)
-                            if match:
-                                item_name = match.group(1).strip()
-                                qty = int(match.group(2))
-                            else:
-                                item_name = part
-                                qty = 1
-                            
-                            if item_name:
-                                sales_counter[item_name] += qty
-                                
-                    # 4. 產出排行榜與視覺化呈現
-                    if sales_counter:
-                        df_sales_result = pd.DataFrame([
-                            {"商品名稱 (已翻譯)": k, "銷售總數量": v} for k, v in sales_counter.items()
-                        ]).sort_values(by="銷售總數量", ascending=False)
-                        
-                        st.markdown(f"#### 🏆 區間結算結果：共售出 **{df_sales_result['銷售總數量'].sum()}** 件商品")
-                        
-                        st.dataframe(
-                            df_sales_result,
-                            use_container_width=True,
-                            hide_index=True,
-                            column_config={
-                                "商品名稱 (已翻譯)": st.column_config.TextColumn("📦 系統判定商品名稱", width="large"),
-                                "銷售總數量": st.column_config.ProgressColumn(
-                                    "📈 銷售總數量",
-                                    format="%d 件",
-                                    min_value=0,
-                                    max_value=int(df_sales_result["銷售總數量"].max())
-                                )
-                            }
-                        )
+                    # 尋找結尾處的數量標記 (例如：香水 *2, 手機 x3)
+                    match = re.search(r'(.*?)[\*xX×]\s*(\d+)$', part)
+                    if match:
+                        item_name = match.group(1).strip()
+                        qty = int(match.group(2))
                     else:
-                        st.info("無法從這些訂單中解析出有效的商品名稱與數量。")
+                        item_name = part
+                        qty = 1
+                    
+                    if item_name:
+                        sales_counter[item_name] += qty
+                        
+            # 產出排行榜與視覺化呈現
+            if sales_counter:
+                df_sales_result = pd.DataFrame([
+                    {"商品名稱 (已翻譯)": k, "銷售總數量": v} for k, v in sales_counter.items()
+                ]).sort_values(by="銷售總數量", ascending=False)
+                
+                st.markdown(f"#### 🏆 區間結算結果：共售出 **{df_sales_result['銷售總數量'].sum()}** 件商品")
+                
+                st.dataframe(
+                    df_sales_result,
+                    use_container_width=True,
+                    hide_index=True,
+                    column_config={
+                        "商品名稱 (已翻譯)": st.column_config.TextColumn("📦 系統判定商品名稱", width="large"),
+                        "銷售總數量": st.column_config.ProgressColumn(
+                            "📈 銷售總數量",
+                            format="%d 件",
+                            min_value=0,
+                            max_value=int(df_sales_result["銷售總數量"].max())
+                        )
+                    }
+                )
+            else:
+                st.info("無法從這些訂單中解析出有效的商品名稱與數量。")
 
 elif menu == "財務報表":
     st.title("📈 財務與利潤分析")
