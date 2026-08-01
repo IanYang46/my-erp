@@ -779,77 +779,77 @@ if menu == "首頁":
                 st.markdown(f"> 👻 **隱藏損失提醒**：您的「預估利潤」與「實際利潤」相差了 **${profit_gap:,.0f}** 元。這主要是因為「未簽收/退回」的包裹不僅沒讓您賺到錢，您還**白白倒賠了寄出的運費與包裝耗材**。這就是為什麼提升取件率比提高營收更重要的原因！")
     
     # ==========================================
-    # --- 3. 廣告費區間輸入與漏填檢查 ---
+    # --- 3. 廣告費區間輸入與漏填檢查 (僅限管理員) ---
     # ==========================================
-    with st.expander("✍️ 手動輸入區間廣告費 (USD) 與 漏填檢查", expanded=False): 
-        
-        # 👇 升級 1：自動比對並列出漏填廣告費的日期
-        if not df_orders.empty:
-            # 找出有訂單的日期集合，與有廣告費的日期集合
-            order_dates = set(df_orders['訂單日期_dt'].dropna())
-            ad_dates = set(df_ad['date_dt'].dropna()) if not df_ad.empty else set()
-            # 兩者相減，得出漏填的日期，並由舊到新排序
-            missing_dates = sorted(list(order_dates - ad_dates))
-        else:
-            missing_dates = []
+    if role == "Admin" or st.session_state.get('user') == 'admin':
+        with st.expander("✍️ 手動輸入區間廣告費 (USD) 與 漏填檢查 (僅管理員可見)", expanded=False): 
             
-        if missing_dates:
-            missing_str = ", ".join([d.strftime('%Y-%m-%d') for d in missing_dates[:7]])
-            if len(missing_dates) > 7:
-                missing_str += f" ...等共 {len(missing_dates)} 天"
-            st.warning(f"⚠️ 發現有訂單但【未填廣告費】的日期：\n{missing_str}")
-        else:
-            st.success("✅ 太棒了！目前所有有訂單的日期皆已填寫廣告費。")
+            # 👇 升級 1：自動比對並列出漏填廣告費的日期
+            if not df_orders.empty:
+                # 找出有訂單的日期集合，與有廣告費的日期集合
+                order_dates = set(df_orders['訂單日期_dt'].dropna())
+                ad_dates = set(df_ad['date_dt'].dropna()) if not df_ad.empty else set()
+                # 兩者相減，得出漏填的日期，並由舊到新排序
+                missing_dates = sorted(list(order_dates - ad_dates))
+            else:
+                missing_dates = []
+                
+            if missing_dates:
+                missing_str = ", ".join([d.strftime('%Y-%m-%d') for d in missing_dates[:7]])
+                if len(missing_dates) > 7:
+                    missing_str += f" ...等共 {len(missing_dates)} 天"
+                st.warning(f"⚠️ 發現有訂單但【未填廣告費】的日期：\n{missing_str}")
+            else:
+                st.success("✅ 太棒了！目前所有有訂單的日期皆已填寫廣告費。")
 
-        # 👇 升級 2：區間廣告費表單
-        with st.form("ad_spend_form"):
-            st.caption("💡 提示：輸入這段期間的『總花費』，系統會自動幫您平均分攤到每一天。")
-            c_start, c_end, c_usd, c_rate = st.columns(4)
-            start_date = c_start.date_input("開始日期", value=today)
-            end_date = c_end.date_input("結束日期", value=today)
-            total_usd = c_usd.number_input("區間【總】花費(USD)", min_value=0.0, step=1.0)
-            input_rate = c_rate.number_input("美金轉台幣匯率", value=32.0, step=0.1)
-            
-            if st.form_submit_button("💾 儲存並均分廣告費", type="primary", use_container_width=True):
-                if start_date > end_date:
-                    st.error("❌ 開始日期不能晚於結束日期！")
-                else:
-                    # 計算總天數與每日平均花費
-                    days_diff = (end_date - start_date).days + 1
-                    daily_usd = total_usd / days_diff
-                    daily_twd = daily_usd * input_rate
-                    
-                    with get_db() as conn:
-                        # 迴圈將每一天的平均花費寫入資料庫
-                        for i in range(days_diff):
-                            curr_d = start_date + pd.Timedelta(days=i)
-                            conn.execute("""
-                                INSERT INTO daily_ad_spend (date, spend_usd, exchange_rate, spend_twd) 
-                                VALUES (?, ?, ?, ?) 
-                                ON CONFLICT (date) DO UPDATE SET 
-                                spend_usd=EXCLUDED.spend_usd, exchange_rate=EXCLUDED.exchange_rate, spend_twd=EXCLUDED.spend_twd
-                            """, (str(curr_d), daily_usd, input_rate, daily_twd))
-                        conn.commit()
+            # 👇 升級 2：區間廣告費表單
+            with st.form("ad_spend_form"):
+                st.caption("💡 提示：輸入這段期間的『總花費』，系統會自動幫您平均分攤到每一天。")
+                c_start, c_end, c_usd, c_rate = st.columns(4)
+                start_date = c_start.date_input("開始日期", value=today)
+                end_date = c_end.date_input("結束日期", value=today)
+                total_usd = c_usd.number_input("區間【總】花費(USD)", min_value=0.0, step=1.0)
+                input_rate = c_rate.number_input("美金轉台幣匯率", value=32.0, step=0.1)
+                
+                if st.form_submit_button("💾 儲存並均分廣告費", type="primary", use_container_width=True):
+                    if start_date > end_date:
+                        st.error("❌ 開始日期不能晚於結束日期！")
+                    else:
+                        # 計算總天數與每日平均花費
+                        days_diff = (end_date - start_date).days + 1
+                        daily_usd = total_usd / days_diff
+                        daily_twd = daily_usd * input_rate
                         
-                    st.success(f"✅ 成功分攤！區間 {start_date} ~ {end_date} (共 {days_diff} 天)。每日均分台幣約為 ${daily_twd:,.0f}")
-                    time.sleep(1.5)
-                    st.rerun()
+                        with get_db() as conn:
+                            # 迴圈將每一天的平均花費寫入資料庫
+                            for i in range(days_diff):
+                                curr_d = start_date + pd.Timedelta(days=i)
+                                conn.execute("""
+                                    INSERT INTO daily_ad_spend (date, spend_usd, exchange_rate, spend_twd) 
+                                    VALUES (?, ?, ?, ?) 
+                                    ON CONFLICT (date) DO UPDATE SET 
+                                    spend_usd=EXCLUDED.spend_usd, exchange_rate=EXCLUDED.exchange_rate, spend_twd=EXCLUDED.spend_twd
+                                """, (str(curr_d), daily_usd, input_rate, daily_twd))
+                            conn.commit()
+                            
+                        st.success(f"✅ 成功分攤！區間 {start_date} ~ {end_date} (共 {days_diff} 天)。每日均分台幣約為 ${daily_twd:,.0f}")
+                        time.sleep(1.5)
+                        st.rerun()
 
     st.divider()
 
     # ==========================================
-    # --- 4. 單月數據詳細分析 (可自選月份) ---
+    # --- 4. 單月數據詳細分析 (自動連動總覽月份) ---
     # ==========================================
-    st.markdown("### 📅 單月營運詳細數據 (每日明細)")
+    st.markdown(f"### 📅 {sel_y} 年 {sel_m} 月營運詳細數據 (每日明細)")
+    st.caption("💡 此區塊數據已自動與上方『每月營運總覽』的年月選擇連動。")
     
-    # 預設為今天，點選該月任一天即可切換月份
-    selected_date = st.date_input("🗓️ 請點擊選擇想查看的月份 (點選該月的任一天即可)", value=today)
-    selected_dt = pd.Timestamp(selected_date)
+    # 直接讀取上方營運總覽的 sel_y 與 sel_m
+    target_year = sel_y
+    target_month = sel_m
     
-    # 取得目標年份、月份，以及該月總天數
-    target_year = selected_dt.year
-    target_month = selected_dt.month
-    days_in_month = selected_dt.days_in_month
+    # 利用 Pandas 自動計算該月份有幾天
+    days_in_month = pd.Timestamp(year=target_year, month=target_month, day=1).days_in_month
     
     monthly_data = []
     
