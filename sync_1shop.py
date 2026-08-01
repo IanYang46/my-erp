@@ -195,7 +195,7 @@ def sync_1shop_orders():
                     商品成本 = EXCLUDED.商品成本,
                     出貨成本 = EXCLUDED.出貨成本,
                     訂單損益 = EXCLUDED.訂單損益,
-                    取貨狀態 = CASE WHEN EXCLUDED.取貨狀態 = '已取消' THEN '已取消' ELSE EXCLUDED.取貨狀態 END,
+                    取貨狀態 = CASE WHEN EXCLUDED.取貨狀態 = '已取消' THEN '已取消' ELSE customer_orders.取貨狀態 END,
                     顧客備註 = EXCLUDED.顧客備註,
                     商家備註 = EXCLUDED.商家備註;
             """, (
