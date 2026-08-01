@@ -3822,22 +3822,23 @@ elif menu == "權限管理":
             def parse_user_agent(ua):
                 ua_str = str(ua).lower()
                 
-                # 判斷設備 OS
-                if 'windows' in ua_str: os_name = 'Windows 電腦'
-                elif 'mac os' in ua_str: os_name = 'Mac 電腦'
-                elif 'android' in ua_str: os_name = 'Android 手機/平板'
-                elif 'iphone' in ua_str: os_name = 'iPhone'
-                elif 'ipad' in ua_str: os_name = 'iPad'
-                elif 'linux' in ua_str: os_name = 'Linux'
-                else: os_name = '未知設備'
+                # 判斷設備 OS (⚠️ 注意：順序極度重要，手機必須先判斷，否則 iPhone 會被誤判為 Mac！)
+                if 'iphone' in ua_str: os_name = '📱 iPhone'
+                elif 'ipad' in ua_str: os_name = '📱 iPad'
+                elif 'android' in ua_str: os_name = '📱 Android 手機/平板'
+                elif 'windows' in ua_str: os_name = '💻 Windows 電腦'
+                elif 'mac os' in ua_str: os_name = '💻 Mac 電腦'
+                elif 'linux' in ua_str: os_name = '💻 Linux'
+                else: os_name = '❓ 未知設備'
                 
                 # 判斷瀏覽器
                 if 'edg' in ua_str: browser = 'Edge'
                 elif 'line' in ua_str: browser = 'LINE 內建'
                 elif 'micromessenger' in ua_str: browser = '微信內建'
-                elif 'chrome' in ua_str: browser = 'Chrome'
-                elif 'safari' in ua_str and 'chrome' not in ua_str: browser = 'Safari'
-                elif 'firefox' in ua_str: browser = 'Firefox'
+                # 手機版 Chrome 叫 crios，手機版 Firefox 叫 fxios
+                elif 'chrome' in ua_str or 'crios' in ua_str: browser = 'Chrome'
+                elif 'safari' in ua_str and 'chrome' not in ua_str and 'crios' not in ua_str: browser = 'Safari'
+                elif 'firefox' in ua_str or 'fxios' in ua_str: browser = 'Firefox'
                 else: browser = '其他/未知'
                 
                 return pd.Series([os_name, browser])
