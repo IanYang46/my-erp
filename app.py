@@ -1143,7 +1143,7 @@ elif menu == "商品訊息":
                         for _, row in filtered_df.iterrows():
                             with st.container(border=True):
                                 img_col, info_col, remark_col, action_col = st.columns([2, 3, 5, 2])
-                                if row['圖片路徑'] and os.path.exists(row['圖片路徑']):
+                                if isinstance(row['圖片路徑'], str) and row['圖片路徑'].strip() and os.path.exists(row['圖片路徑']):
                                     img_col.image(row['圖片路徑'], use_container_width=True)
                                 else:
                                     img_col.markdown("<div style='text-align:center; color:gray; padding-top:20px;'>📷 暫無圖片</div>", unsafe_allow_html=True)
