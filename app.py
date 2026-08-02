@@ -2474,7 +2474,7 @@ elif menu == "訂單明細":
                 else:
                     st.button("📦 請先勾選", disabled=True, use_container_width=True, key="btn_no_reship")
 
-            # 🌟 全新功能：金蝶數據導入表格導出 (客製化專屬格式 - 合併大單版)
+            # 🌟 全新功能：金蝶數據導入表格導出 (客製化專屬格式 - 合併大單版 + 姓名備註)
             with c_export_kingdee:
                 if len(selected_orders) > 0:
                     import io
@@ -2492,6 +2492,7 @@ elif menu == "訂單明細":
                     
                     for _, row in df_selected_kingdee.iterrows():
                         oid = row.get('訂單編號', '')
+                        customer_name = row.get('姓名', '')  # 👈 抓取顧客姓名
                         
                         odate_obj = row['訂單日期_dt']
                         if pd.notna(odate_obj):
@@ -2502,7 +2503,7 @@ elif menu == "訂單明細":
                             date_str = now.strftime('%Y%m%d')
                             billdate_str = f"{now.year}/{now.month}/{now.day}"
                             
-                        # 🌟 單號組裝邏輯：XSDD-訂單日期-導出月日時 (這樣同一天訂單就會共用同一個單號！)
+                        # 🌟 單號組裝邏輯：XSDD-訂單日期-導出月日時 
                         billno = f"XSDD-{date_str}-{export_suffix}"
                         
                         total_amount = float(row.get('包裹應收', 0.0))
@@ -2531,15 +2532,17 @@ elif menu == "訂單明細":
                                     item_code = k
                                     break
                                     
-                            # 🌟 如果客人有多個品項，只有「第一行」負責扛這筆訂單的全部金額，其他行皆為 0 並標記為贈品
+                            # 🌟 如果客人有多個品項，只有「第一行」扛金額並填寫姓名備註，其他行皆為 0、無備註並標記為贈品
                             if idx == 0:
                                 line_allamount = total_amount
                                 line_taxprice = total_amount / item['qty'] if item['qty'] > 0 else 0
                                 is_free = ''
+                                row_comment = customer_name  # 👈 第一行填入姓名
                             else:
                                 line_allamount = 0
                                 line_taxprice = 0
                                 is_free = '是'
+                                row_comment = ''  # 👈 贈品行保持空白
                                 
                             kingdee_data.append({
                                 '*单据编号 # billno': billno,
@@ -2561,7 +2564,7 @@ elif menu == "訂單明細":
                                 '税额 # taxamount': '',
                                 '价税合计 # allamount': round(line_allamount, 2),
                                 '预计交货日期 # deliverydate': '',
-                                '商品行备注 # comment': '',
+                                '商品行备注 # comment': row_comment,  # 👈 這裡套用設定好的備註變數
                                 '是否赠品 # is_free': is_free
                             })
                             
