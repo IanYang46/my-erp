@@ -2474,7 +2474,7 @@ elif menu == "訂單明細":
                 else:
                     st.button("📦 請先勾選", disabled=True, use_container_width=True, key="btn_no_reship")
 
-            # 🌟 全新功能：金蝶數據導入表格導出 (客製化專屬格式)
+            # 🌟 全新功能：金蝶數據導入表格導出 (客製化專屬格式 - 合併大單版)
             with c_export_kingdee:
                 if len(selected_orders) > 0:
                     import io
@@ -2487,9 +2487,8 @@ elif menu == "訂單明細":
                     
                     kingdee_data = []
                     
-                    # 用來追蹤已經使用過的單號防呆
-                    used_billnos = set()
-                    billno_map = {}
+                    # 獲取導出當下的 月、日、時 (格式: MMDDHH，例如 080322)
+                    export_suffix = pd.Timestamp.today().strftime('%m%d%H')
                     
                     for _, row in df_selected_kingdee.iterrows():
                         oid = row.get('訂單編號', '')
@@ -2497,27 +2496,15 @@ elif menu == "訂單明細":
                         odate_obj = row['訂單日期_dt']
                         if pd.notna(odate_obj):
                             date_str = odate_obj.strftime('%Y%m%d')
-                            time_str = odate_obj.strftime('%H%M%S') # 擷取時分秒 (取代原有的 00001 流水號)
                             billdate_str = f"{odate_obj.year}/{odate_obj.month}/{odate_obj.day}"
                         else:
                             now = pd.Timestamp.today()
                             date_str = now.strftime('%Y%m%d')
-                            time_str = now.strftime('%H%M%S')
                             billdate_str = f"{now.year}/{now.month}/{now.day}"
                             
-                        # 單號組裝邏輯 (例如：XSDD-20260802-080322)
-                        if oid not in billno_map:
-                            base_billno = f"XSDD-{date_str}-{time_str}"
-                            final_billno = base_billno
-                            collision_idx = 1
-                            # 防呆：如果同一秒剛好有兩筆不同訂單，微調秒數避免金蝶合併錯誤
-                            while final_billno in used_billnos:
-                                final_billno = f"XSDD-{date_str}-{time_str[:-2]}{collision_idx:02d}"
-                                collision_idx += 1
-                            used_billnos.add(final_billno)
-                            billno_map[oid] = final_billno
-                            
-                        billno = billno_map[oid]
+                        # 🌟 單號組裝邏輯：XSDD-訂單日期-導出月日時 (這樣同一天訂單就會共用同一個單號！)
+                        billno = f"XSDD-{date_str}-{export_suffix}"
+                        
                         total_amount = float(row.get('包裹應收', 0.0))
                         
                         # 智能品項拆解：將一單多品項拆成多行
@@ -2544,7 +2531,7 @@ elif menu == "訂單明細":
                                     item_code = k
                                     break
                                     
-                            # 🌟 新邏輯：如果客人有多個品項，只有「第一行」負責扛全部金額，其他行皆為 0 並標記為贈品
+                            # 🌟 如果客人有多個品項，只有「第一行」負責扛這筆訂單的全部金額，其他行皆為 0 並標記為贈品
                             if idx == 0:
                                 line_allamount = total_amount
                                 line_taxprice = total_amount / item['qty'] if item['qty'] > 0 else 0
