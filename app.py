@@ -2343,8 +2343,8 @@ elif menu == "訂單明細":
         )
 
         if can_edit:
-            # 🌟 將按鈕區塊改回 4 欄，移除「儲存上方總表狀態變更」按鈕
-            c_export_label, c_export_detail, c_export_reship, c_del = st.columns(4)
+            # 🌟 將按鈕區塊改為 5 欄，新增金蝶導出按鈕
+            c_export_label, c_export_detail, c_export_reship, c_export_kingdee, c_del = st.columns(5)
             
             # 取得被勾選的訂單編號
             selected_orders = edited_orders[edited_orders["🗑️ 勾選"] == True]['訂單編號'].tolist() if not edited_orders.empty and "🗑️ 勾選" in edited_orders.columns else []
@@ -2474,6 +2474,121 @@ elif menu == "訂單明細":
                 else:
                     st.button("📦 請先勾選", disabled=True, use_container_width=True, key="btn_no_reship")
 
+            # 🌟 全新功能：金蝶數據導入表格導出 (客製化專屬格式)
+            with c_export_kingdee:
+                if len(selected_orders) > 0:
+                    import io
+                    import re
+                    df_selected_kingdee = df_orders[df_orders['訂單編號'].isin(selected_orders)].copy()
+                    
+                    # 按照訂單日期排序 (由舊到新)，確保流水號的順序合理
+                    df_selected_kingdee['訂單日期_dt'] = pd.to_datetime(df_selected_kingdee['訂單日期'], errors='coerce')
+                    df_selected_kingdee = df_selected_kingdee.sort_values(by='訂單日期_dt', ascending=True)
+                    
+                    kingdee_data = []
+                    
+                    daily_counters = {}
+                    billno_map = {}
+                    
+                    for _, row in df_selected_kingdee.iterrows():
+                        oid = row.get('訂單編號', '')
+                        
+                        # 處理單據日期與單據編號流水號
+                        odate_obj = row['訂單日期_dt']
+                        if pd.notna(odate_obj):
+                            date_str = odate_obj.strftime('%Y%m%d')
+                            billdate_str = f"{odate_obj.year}/{odate_obj.month}/{odate_obj.day}"
+                        else:
+                            # 萬一沒有日期，預設使用今天
+                            now = pd.Timestamp.today()
+                            date_str = now.strftime('%Y%m%d')
+                            billdate_str = f"{now.year}/{now.month}/{now.day}"
+                            
+                        # 建立每日獨立的流水號 (例如 XSDD-20260731-00001)
+                        if oid not in billno_map:
+                            if date_str not in daily_counters:
+                                daily_counters[date_str] = 1
+                            seq = daily_counters[date_str]
+                            daily_counters[date_str] += 1
+                            billno_map[oid] = f"XSDD-{date_str}-{seq:05d}"
+                            
+                        billno = billno_map[oid]
+                        
+                        total_amount = float(row.get('包裹應收', 0.0))
+                        
+                        # 智能品項拆解：將一單多品項拆成多行
+                        raw_items = str(row.get('品項內容_原始', '')).replace('•', '')
+                        parts = re.split(r'[\n、,，]', raw_items)
+                        parsed_items = []
+                        for part in parts:
+                            part = part.strip()
+                            if not part: continue
+                            match = re.search(r'[\*xX×]\s*(\d+)', part)
+                            if match:
+                                qty = int(match.group(1))
+                                item_raw = part[:match.start()].strip()
+                            else:
+                                qty = 1
+                                item_raw = part.strip()
+                            parsed_items.append({'code': item_raw, 'qty': qty})
+                            
+                        # 計算單價與分攤應收總額
+                        total_qty = sum(item['qty'] for item in parsed_items) if parsed_items else 1
+                        unit_price = total_amount / total_qty if total_qty > 0 else 0
+                        
+                        for item in parsed_items:
+                            line_amount = unit_price * item['qty']
+                            
+                            # 萃取出純編碼
+                            item_code = item['code']
+                            for k in prod_map.keys():
+                                if k in item_code:
+                                    item_code = k
+                                    break
+                            
+                            # 嚴格依照金蝶導入格式建立字典
+                            kingdee_data.append({
+                                '*单据编号 # billno': billno,
+                                '*单据日期 # billdate': billdate_str,
+                                '*客户.名称 # customerid.name': '线上平台',
+                                '业务员.名称 # empid.name': '光廷',
+                                '部门.名称 # deptid.name': '强盛集团本部',
+                                '*币别.名称 # currencyid.name': '台币',
+                                '*汇率 # exchangerate': 0.208,
+                                '单据备注 # remark': '',
+                                '结算日期 # duedate': '',
+                                '*商品.编码 # materialid.number': item_code,
+                                '商品.名称 # materialid.name': '',
+                                '仓库.名称 # stockid.name': '东莞-待结款仓',
+                                '*单位.名称 # unit.name': 'ml',
+                                '*数量 # qty': item['qty'],
+                                '含税单价 # taxprice': round(unit_price, 2),
+                                '增值税税率（%） # cess': '',
+                                '税额 # taxamount': '',
+                                '价税合计 # allamount': round(line_amount, 2),
+                                '预计交货日期 # deliverydate': '',
+                                '商品行备注 # comment': '',
+                                '是否赠品 # is_free': ''
+                            })
+                            
+                    df_kingdee = pd.DataFrame(kingdee_data)
+
+                    output_kingdee = io.BytesIO()
+                    with pd.ExcelWriter(output_kingdee, engine='openpyxl') as writer:
+                        df_kingdee.to_excel(writer, index=False, sheet_name='Sheet1')
+                    
+                    file_name_kingdee = f"金蝶數據導入_{pd.Timestamp.today().strftime('%m%d')}.xlsx"
+
+                    st.download_button(
+                        label=f"🦋 金蝶導出 ({len(selected_orders)} 筆)",
+                        data=output_kingdee.getvalue(),
+                        file_name=file_name_kingdee,
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        use_container_width=True
+                    )
+                else:
+                    st.button("🦋 請先勾選", disabled=True, use_container_width=True, key="btn_no_kingdee")
+            
             # 🌟 原有功能：刪除訂單區塊
             with c_del:
                 if len(selected_orders) > 0:
