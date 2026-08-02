@@ -213,11 +213,25 @@ class PostgresConnWrapper:
 @contextmanager
 def get_db():
     db_pool = get_connection_pool()
-    conn = db_pool.getconn() # 從池子裡「借」一條已經連線好的專線
+    
+    # 🌟 核心修正：連線健康檢查 (Pre-ping 防呆機制)
+    for _ in range(3):
+        conn = db_pool.getconn() # 從池子裡借一條線
+        try:
+            # 借用前，先敲門問一下資料庫「還活著嗎？」
+            cur = conn.cursor()
+            cur.execute("SELECT 1")
+            cur.close()
+            break # 🚪 資料庫有回應！跳出迴圈準備使用這條線
+        except (psycopg2.OperationalError, psycopg2.DatabaseError):
+            # 💔 沒回應 (連線被雲端偷剪斷了)，把這條壞掉的線徹底銷毀，並重拿一條
+            db_pool.putconn(conn, close=True)
+    
     try:
         yield PostgresConnWrapper(conn)
     finally:
-        db_pool.putconn(conn) # 🌟 執行完畢後把專線「還」給池子，保持暢通
+        # 正常執行完畢，把存活的線還給池子，保持暢通
+        db_pool.putconn(conn)
         
 # 給 Pandas 專用的引擎 (🌟 加入防呆機制)
 db_url = os.getenv("DB_URL", "")
