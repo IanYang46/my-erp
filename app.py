@@ -2481,39 +2481,43 @@ elif menu == "訂單明細":
                     import re
                     df_selected_kingdee = df_orders[df_orders['訂單編號'].isin(selected_orders)].copy()
                     
-                    # 按照訂單日期排序 (由舊到新)，確保流水號的順序合理
+                    # 按照訂單日期排序
                     df_selected_kingdee['訂單日期_dt'] = pd.to_datetime(df_selected_kingdee['訂單日期'], errors='coerce')
                     df_selected_kingdee = df_selected_kingdee.sort_values(by='訂單日期_dt', ascending=True)
                     
                     kingdee_data = []
                     
-                    daily_counters = {}
+                    # 用來追蹤已經使用過的單號防呆
+                    used_billnos = set()
                     billno_map = {}
                     
                     for _, row in df_selected_kingdee.iterrows():
                         oid = row.get('訂單編號', '')
                         
-                        # 處理單據日期與單據編號流水號
                         odate_obj = row['訂單日期_dt']
                         if pd.notna(odate_obj):
                             date_str = odate_obj.strftime('%Y%m%d')
+                            time_str = odate_obj.strftime('%H%M%S') # 擷取時分秒 (取代原有的 00001 流水號)
                             billdate_str = f"{odate_obj.year}/{odate_obj.month}/{odate_obj.day}"
                         else:
-                            # 萬一沒有日期，預設使用今天
                             now = pd.Timestamp.today()
                             date_str = now.strftime('%Y%m%d')
+                            time_str = now.strftime('%H%M%S')
                             billdate_str = f"{now.year}/{now.month}/{now.day}"
                             
-                        # 建立每日獨立的流水號 (例如 XSDD-20260731-00001)
+                        # 單號組裝邏輯 (例如：XSDD-20260802-080322)
                         if oid not in billno_map:
-                            if date_str not in daily_counters:
-                                daily_counters[date_str] = 1
-                            seq = daily_counters[date_str]
-                            daily_counters[date_str] += 1
-                            billno_map[oid] = f"XSDD-{date_str}-{seq:05d}"
+                            base_billno = f"XSDD-{date_str}-{time_str}"
+                            final_billno = base_billno
+                            collision_idx = 1
+                            # 防呆：如果同一秒剛好有兩筆不同訂單，微調秒數避免金蝶合併錯誤
+                            while final_billno in used_billnos:
+                                final_billno = f"XSDD-{date_str}-{time_str[:-2]}{collision_idx:02d}"
+                                collision_idx += 1
+                            used_billnos.add(final_billno)
+                            billno_map[oid] = final_billno
                             
                         billno = billno_map[oid]
-                        
                         total_amount = float(row.get('包裹應收', 0.0))
                         
                         # 智能品項拆解：將一單多品項拆成多行
@@ -2532,21 +2536,24 @@ elif menu == "訂單明細":
                                 item_raw = part.strip()
                             parsed_items.append({'code': item_raw, 'qty': qty})
                             
-                        # 計算單價與分攤應收總額
-                        total_qty = sum(item['qty'] for item in parsed_items) if parsed_items else 1
-                        unit_price = total_amount / total_qty if total_qty > 0 else 0
-                        
-                        for item in parsed_items:
-                            line_amount = unit_price * item['qty']
-                            
-                            # 萃取出純編碼
+                        # 處理單品或多品的價格與贈品邏輯
+                        for idx, item in enumerate(parsed_items):
                             item_code = item['code']
                             for k in prod_map.keys():
                                 if k in item_code:
                                     item_code = k
                                     break
-                            
-                            # 嚴格依照金蝶導入格式建立字典
+                                    
+                            # 🌟 新邏輯：如果客人有多個品項，只有「第一行」負責扛全部金額，其他行皆為 0 並標記為贈品
+                            if idx == 0:
+                                line_allamount = total_amount
+                                line_taxprice = total_amount / item['qty'] if item['qty'] > 0 else 0
+                                is_free = ''
+                            else:
+                                line_allamount = 0
+                                line_taxprice = 0
+                                is_free = '是'
+                                
                             kingdee_data.append({
                                 '*单据编号 # billno': billno,
                                 '*单据日期 # billdate': billdate_str,
@@ -2562,13 +2569,13 @@ elif menu == "訂單明細":
                                 '仓库.名称 # stockid.name': '东莞-待结款仓',
                                 '*单位.名称 # unit.name': 'ml',
                                 '*数量 # qty': item['qty'],
-                                '含税单价 # taxprice': round(unit_price, 2),
+                                '含税单价 # taxprice': round(line_taxprice, 2),
                                 '增值税税率（%） # cess': '',
                                 '税额 # taxamount': '',
-                                '价税合计 # allamount': round(line_amount, 2),
+                                '价税合计 # allamount': round(line_allamount, 2),
                                 '预计交货日期 # deliverydate': '',
                                 '商品行备注 # comment': '',
-                                '是否赠品 # is_free': ''
+                                '是否赠品 # is_free': is_free
                             })
                             
                     df_kingdee = pd.DataFrame(kingdee_data)
