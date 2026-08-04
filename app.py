@@ -1280,6 +1280,8 @@ elif menu == "商品訊息":
                     df_all.to_excel(writer, index=False, sheet_name='Sheet1')
                 
                 st.download_button(label="💾 下載商品清單 (Excel格式)", data=output.getvalue(), file_name="products.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+            else:
+                st.warning("🔒 您沒有下載商品資料的權限。")  # 👈 補上這行，體驗更好！
             
             st.divider()
             st.subheader("📤 批量上傳商品資料")
@@ -1930,6 +1932,16 @@ elif menu == "採購管理":
                 st.caption("✨ 目前尚無採購紀錄日誌。")
             else:
                 st.dataframe(df_sys_logs, use_container_width=True, hide_index=True)
+                st.write("")
+                # 👇 補上與其他模組一致的「清空日誌」防呆功能
+                if st.checkbox("⚠️ 啟用清除歷史日誌安全授權 (僅限 Admin)"):
+                    if st.button("🗑️ 清空所有採購變更日誌紀錄", type="primary"):
+                        with get_db() as conn:
+                            conn.execute("DELETE FROM system_logs WHERE module='採購管理'")
+                            conn.commit()
+                        st.success("採購日誌紀錄已清空。")
+                        time.sleep(1)
+                        st.rerun()
                 
 elif menu == "訂單明細":
     st.title("🧾 客戶訂單明細")
@@ -2297,9 +2309,16 @@ elif menu == "訂單明細":
     st.divider()
     
     can_edit = check_perm(role, "訂單明細", "can_edit")
+    can_download = check_perm(role, "訂單明細", "can_download") # 👈 新增下載權限變數
+    is_admin = (st.session_state.get('role') == 'Admin')
     
-    # 🌟 修改為 4 個 Tab 分頁，新增產品銷售統計
-    t1, t2, t3, t4 = st.tabs(["📄 訂單總表與追蹤", "📊 產品銷售統計", "✍️ 手動新增單筆", "📥 批量導入與更新"])
+    # 🌟 動態生成 Tab 分頁，為管理員新增日誌頁籤
+    tabs_list = ["📄 訂單總表與追蹤", "📊 產品銷售統計", "✍️ 手動新增單筆", "📥 批量導入與更新"]
+    if is_admin:
+        tabs_list.append("📜 訂單異動日誌 (僅管理員可見)")
+        
+    tabs = st.tabs(tabs_list)
+    t1, t2, t3, t4 = tabs[0], tabs[1], tabs[2], tabs[3]
     
     # 🌟 共用新的狀態清單
     STATUS_LIST = ["待出貨", "備貨中", "配送中", "已送達待取", "簽收", "退回", "已取消", "客訴", "已上架", "已重出"]
@@ -2413,14 +2432,15 @@ elif menu == "訂單明細":
         )
 
         if can_edit:
-            # 🌟 將按鈕區塊改為 5 欄，新增金蝶導出按鈕
-            c_export_label, c_export_detail, c_export_reship, c_export_kingdee, c_del = st.columns(5)
-            
-            # 取得被勾選的訂單編號
-            selected_orders = edited_orders[edited_orders["🗑️ 勾選"] == True]['訂單編號'].tolist() if not edited_orders.empty and "🗑️ 勾選" in edited_orders.columns else []
+            # 🌟 權限分離：將導出按鈕改由 can_download 控制，刪除按鈕由 can_edit 控制
+        c_export_label, c_export_detail, c_export_reship, c_export_kingdee, c_del = st.columns(5)
+        
+        # 取得被勾選的訂單編號
+        selected_orders = edited_orders[edited_orders["🗑️ 勾選"] == True]['訂單編號'].tolist() if not edited_orders.empty and "🗑️ 勾選" in edited_orders.columns else []
 
-            # 🌟 原有功能：導出列印面單區塊
-            with c_export_label:
+        # 🌟 導出列印面單區塊
+        with c_export_label:
+            if can_download:
                 if len(selected_orders) > 0:
                     df_selected = df_orders[df_orders['訂單編號'].isin(selected_orders)].copy()
                     df_export = pd.DataFrame()
@@ -2473,17 +2493,17 @@ elif menu == "訂單明細":
                     )
                 else:
                     st.button("📥 請先勾選", disabled=True, use_container_width=True, key="btn_no_label")
+            else:
+                st.button("🔒 無下載權限", disabled=True, use_container_width=True, key="btn_lock_label")
 
-            # 🌟 原有功能：導出完整詳細資料區塊
-            with c_export_detail:
+        # 🌟 導出完整詳細資料區塊
+        with c_export_detail:
+            if can_download:
                 if len(selected_orders) > 0:
                     import io
                     df_selected_detail = df_orders[df_orders['訂單編號'].isin(selected_orders)].copy()
                     
-                    # 👇 新增這行：將匯出表單內的編碼替換為翻譯後的中文明細
                     df_selected_detail['品項內容'] = df_selected_detail['品項翻譯']
-                    
-                    # 👇 修改這行：要把 '品項翻譯' 也加入忽略清單，不要匯出多餘的欄位
                     cols_to_drop = ['is_repeat', '品項內容_原始', '品項預覽', '品項翻譯', '下單總數', '物流運費_RMB']
                     df_selected_detail = df_selected_detail.drop(columns=[c for c in cols_to_drop if c in df_selected_detail.columns])
 
@@ -2502,9 +2522,12 @@ elif menu == "訂單明細":
                     )
                 else:
                     st.button("📊 請先勾選", disabled=True, use_container_width=True, key="btn_no_detail")
+            else:
+                st.button("🔒 無下載權限", disabled=True, use_container_width=True, key="btn_lock_detail")
 
-            # 🌟 全新功能：深港台重出表格導出
-            with c_export_reship:
+        # 🌟 深港台重出表格導出區塊
+        with c_export_reship:
+            if can_download:
                 if len(selected_orders) > 0:
                     import io
                     df_selected_reship = df_orders[df_orders['訂單編號'].isin(selected_orders)].copy()
@@ -2531,7 +2554,6 @@ elif menu == "訂單明細":
                     with pd.ExcelWriter(output_reship, engine='openpyxl') as writer:
                         df_reship.to_excel(writer, index=False, sheet_name='Sheet1')
                     
-                    # 檔名自動生成，例如：深港台重出0714.xlsx
                     file_name_reship = f"深港台重出{pd.Timestamp.today().strftime('%m%d')}.xlsx"
 
                     st.download_button(
@@ -2543,26 +2565,26 @@ elif menu == "訂單明細":
                     )
                 else:
                     st.button("📦 請先勾選", disabled=True, use_container_width=True, key="btn_no_reship")
+            else:
+                st.button("🔒 無下載權限", disabled=True, use_container_width=True, key="btn_lock_reship")
 
-            # 🌟 全新功能：金蝶數據導入表格導出 (客製化專屬格式 - 合併大單版 + 姓名備註)
-            with c_export_kingdee:
+        # 🌟 金蝶數據導入表格導出區塊
+        with c_export_kingdee:
+            if can_download:
                 if len(selected_orders) > 0:
                     import io
                     import re
                     df_selected_kingdee = df_orders[df_orders['訂單編號'].isin(selected_orders)].copy()
                     
-                    # 按照訂單日期排序
                     df_selected_kingdee['訂單日期_dt'] = pd.to_datetime(df_selected_kingdee['訂單日期'], errors='coerce')
                     df_selected_kingdee = df_selected_kingdee.sort_values(by='訂單日期_dt', ascending=True)
                     
                     kingdee_data = []
-                    
-                    # 獲取導出當下的 月、日、時 (格式: MMDDHH，例如 080322)
                     export_suffix = pd.Timestamp.today().strftime('%m%d%H')
                     
                     for _, row in df_selected_kingdee.iterrows():
                         oid = row.get('訂單編號', '')
-                        customer_name = row.get('姓名', '')  # 👈 抓取顧客姓名
+                        customer_name = row.get('姓名', '')  
                         
                         odate_obj = row['訂單日期_dt']
                         if pd.notna(odate_obj):
@@ -2573,12 +2595,9 @@ elif menu == "訂單明細":
                             date_str = now.strftime('%Y%m%d')
                             billdate_str = f"{now.year}/{now.month}/{now.day}"
                             
-                        # 🌟 單號組裝邏輯：XSDD-訂單日期-導出月日時 
                         billno = f"XSDD-{date_str}-{export_suffix}"
-                        
                         total_amount = float(row.get('包裹應收', 0.0))
                         
-                        # 智能品項拆解：將一單多品項拆成多行
                         raw_items = str(row.get('品項內容_原始', '')).replace('•', '')
                         parts = re.split(r'[\n、,，]', raw_items)
                         parsed_items = []
@@ -2594,7 +2613,6 @@ elif menu == "訂單明細":
                                 item_raw = part.strip()
                             parsed_items.append({'code': item_raw, 'qty': qty})
                             
-                        # 處理單品或多品的價格與贈品邏輯
                         for idx, item in enumerate(parsed_items):
                             item_code = item['code']
                             for k in prod_map.keys():
@@ -2602,17 +2620,16 @@ elif menu == "訂單明細":
                                     item_code = k
                                     break
                                     
-                            # 🌟 如果客人有多個品項，只有「第一行」扛金額並填寫姓名備註，其他行皆為 0、無備註並標記為贈品
                             if idx == 0:
                                 line_allamount = total_amount
                                 line_taxprice = total_amount / item['qty'] if item['qty'] > 0 else 0
                                 is_free = ''
-                                row_comment = customer_name  # 👈 第一行填入姓名
+                                row_comment = customer_name
                             else:
                                 line_allamount = 0
                                 line_taxprice = 0
                                 is_free = '是'
-                                row_comment = ''  # 👈 贈品行保持空白
+                                row_comment = ''
                                 
                             kingdee_data.append({
                                 '*单据编号 # billno': billno,
@@ -2634,7 +2651,7 @@ elif menu == "訂單明細":
                                 '税额 # taxamount': '',
                                 '价税合计 # allamount': round(line_allamount, 2),
                                 '预计交货日期 # deliverydate': '',
-                                '商品行备注 # comment': row_comment,  # 👈 這裡套用設定好的備註變數
+                                '商品行备注 # comment': row_comment,
                                 '是否赠品 # is_free': is_free
                             })
                             
@@ -2655,24 +2672,29 @@ elif menu == "訂單明細":
                     )
                 else:
                     st.button("🦋 請先勾選", disabled=True, use_container_width=True, key="btn_no_kingdee")
+            else:
+                st.button("🔒 無下載權限", disabled=True, use_container_width=True, key="btn_lock_kingdee")
             
-            # 🌟 原有功能：刪除訂單區塊
+            # 🌟 刪除訂單區塊 (受 can_edit 嚴格控制)
             with c_del:
-                if len(selected_orders) > 0:
-                    if st.button(f"⚠️ 刪除 ({len(selected_orders)} 筆)", type="primary", use_container_width=True):
-                        try:
-                            with get_db() as conn:
-                                cursor = conn.cursor()
-                                placeholders = ','.join(['?'] * len(selected_orders))
-                                cursor.execute(f"DELETE FROM customer_orders WHERE 訂單編號 IN ({placeholders})", tuple(selected_orders))
-                                conn.commit()
-                            log_system_action("訂單明細", current_operator, "刪除訂單資料", f"刪除了 {len(selected_orders)} 筆訂單")
-                            st.success(f"✅ 成功刪除 {len(selected_orders)} 筆訂單！")
-                            time.sleep(1); st.rerun()
-                        except Exception as e:
-                            st.error(f"❌ 刪除失敗：{str(e)}")
+                if can_edit:
+                    if len(selected_orders) > 0:
+                        if st.button(f"⚠️ 刪除 ({len(selected_orders)} 筆)", type="primary", use_container_width=True):
+                            try:
+                                with get_db() as conn:
+                                    cursor = conn.cursor()
+                                    placeholders = ','.join(['?'] * len(selected_orders))
+                                    cursor.execute(f"DELETE FROM customer_orders WHERE 訂單編號 IN ({placeholders})", tuple(selected_orders))
+                                    conn.commit()
+                                log_system_action("訂單明細", current_operator, "刪除訂單資料", f"刪除了 {len(selected_orders)} 筆訂單")
+                                st.success(f"✅ 成功刪除 {len(selected_orders)} 筆訂單！")
+                                time.sleep(1); st.rerun()
+                            except Exception as e:
+                                st.error(f"❌ 刪除失敗：{str(e)}")
+                    else:
+                        st.button("⚠️ 請先勾選", disabled=True, use_container_width=True, key="btn_no_del")
                 else:
-                    st.button("⚠️ 請先勾選", disabled=True, use_container_width=True, key="btn_no_del")
+                    st.button("🔒 無編輯權限", disabled=True, use_container_width=True, key="btn_lock_del")
 
         st.divider()
 
@@ -3603,11 +3625,41 @@ elif menu == "訂單明細":
                         st.error(f"❌ 更新失敗，詳情：{str(e)}")
             # =========== exp3 結束 ===========
 
+    # 🌟 僅 Admin 可見的訂單日誌分頁
+    if is_admin:
+        with tabs[4]:
+            st.subheader("📜 訂單操作變動審查軌跡 (Admin 專屬)")
+            st.write("此處顯示新增訂單、編輯、刪除、匯入及轉單重出等所有操作歷史。")
+            with get_db() as conn:
+                df_sys_logs = pd.read_sql("SELECT timestamp as 操作時間, operator as 操作人員, action_type as 動作類別, details as 變動詳情說明 FROM system_logs WHERE module='訂單明細' ORDER BY id DESC", conn)
+                
+            if df_sys_logs.empty:
+                st.caption("✨ 目前尚無訂單紀錄日誌。")
+            else:
+                st.dataframe(df_sys_logs, use_container_width=True, hide_index=True)
+                st.write("")
+                if st.checkbox("⚠️ 啟用清除歷史日誌安全授權 (僅限 Admin)", key="chk_clear_order_log"):
+                    if st.button("🗑️ 清空所有訂單變更日誌紀錄", type="primary", key="btn_clear_order_log"):
+                        with get_db() as conn:
+                            conn.execute("DELETE FROM system_logs WHERE module='訂單明細'")
+                            conn.commit()
+                        st.success("訂單日誌紀錄已清空。")
+                        time.sleep(1)
+                        st.rerun()
+
 elif menu == "財務報表":
     st.title("📈 財務與利潤分析")
     if check_perm(role, "財務報表", "can_view"):
-        # 👇 這裡把原本的 3 個頁籤增加為 4 個頁籤
-        t1, t2, t3, t4 = st.tabs(["💰 收支總表", "🏆 品牌/單品毛利分析", "🚚 物流結款核對 (詳細版)", "💱 匯率與成本設定"])
+        is_admin = (st.session_state.get('role') == 'Admin')
+        
+        # 🌟 動態生成 Tab 分頁，為管理員新增日誌頁籤
+        tabs_list = ["💰 收支總表", "🏆 品牌/單品毛利分析", "🚚 物流結款核對 (詳細版)", "💱 匯率與成本設定"]
+        if is_admin:
+            tabs_list.append("📜 財務異動日誌 (僅管理員可見)")
+            
+        tabs = st.tabs(tabs_list)
+        t1, t2, t3, t4 = tabs[0], tabs[1], tabs[2], tabs[3]
+        
         with t1: st.info("統整銷售收入與採購支出。")
         with t2: st.info("利用 FIFO (先進先出) 邏輯，精準計算各品牌與單品的實際利潤率。")
         
@@ -3720,7 +3772,13 @@ elif menu == "財務報表":
                 
                 col_d, col_u = st.columns([1, 2])
                 settle_date = col_d.date_input("🗓️ 選擇本次結款日期", value=pd.Timestamp.today())
-                uploaded_receipt = col_u.file_uploader("上傳物流明細 (需包含: 轉單號, 到付款, 手续费, 應退款)", type=["csv", "xlsx"])
+                
+                # 🌟 補上上傳權限控管
+                if check_perm(role, "財務報表", "can_upload"):
+                    uploaded_receipt = col_u.file_uploader("上傳物流明細 (需包含: 轉單號, 到付款, 手续费, 應退款)", type=["csv", "xlsx"])
+                else:
+                    uploaded_receipt = None
+                    col_u.warning("🔒 您沒有上傳物流對帳單的權限。")
                 
                 df_logi_for_exclusion = None # 👇 新增：用來記錄本次上傳的資料，方便稍後丟給未結清清單做排除
                 
@@ -3788,6 +3846,10 @@ elif menu == "財務報表":
                                                 row['物流簽收金額'], row['物流手續費'], row['物流結款人民幣']
                                             ))
                                         conn.commit()
+                                        
+                                    # 🌟 補上這行寫入日誌：
+                                    log_system_action("財務報表", current_operator, "匯入物流對帳", f"上傳並結清了 {len(df_logi)} 筆物流款項，結款日：{settle_date.strftime('%Y-%m-%d')}")
+                                    
                                     st.success("✅ 資料已成功存入系統！頁面將在 2 秒後重新整理...")
                                     import time
                                     time.sleep(2)
@@ -3879,6 +3941,29 @@ elif menu == "財務報表":
                     st.dataframe(show_unsettled, use_container_width=True, hide_index=True)
         
         with t4: st.info("設定當前人民幣/外幣匯率，讓進貨成本自動轉換為台幣。")
+        
+        # 🌟 僅 Admin 可見的財務日誌分頁
+        if is_admin:
+            with tabs[4]:
+                st.subheader("📜 財務操作變動審查軌跡 (Admin 專屬)")
+                st.write("此處顯示上傳物流對帳單、結清款項等所有操作歷史。")
+                with get_db() as conn:
+                    df_sys_logs = pd.read_sql("SELECT timestamp as 操作時間, operator as 操作人員, action_type as 動作類別, details as 變動詳情說明 FROM system_logs WHERE module='財務報表' ORDER BY id DESC", conn)
+                    
+                if df_sys_logs.empty:
+                    st.caption("✨ 目前尚無財務紀錄日誌。")
+                else:
+                    st.dataframe(df_sys_logs, use_container_width=True, hide_index=True)
+                    st.write("")
+                    if st.checkbox("⚠️ 啟用清除歷史日誌安全授權 (僅限 Admin)", key="chk_clear_fin_log"):
+                        if st.button("🗑️ 清空所有財務變更日誌紀錄", type="primary", key="btn_clear_fin_log"):
+                            with get_db() as conn:
+                                conn.execute("DELETE FROM system_logs WHERE module='財務報表'")
+                                conn.commit()
+                            st.success("財務日誌紀錄已清空。")
+                            time.sleep(1)
+                            st.rerun()
+                            
     else:
         st.error("🚫 您無權限訪問此模組")
 
