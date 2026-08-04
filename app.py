@@ -805,8 +805,8 @@ if menu == "首頁":
     # ==========================================
     # --- 3. 廣告費區間輸入與漏填檢查 (僅限管理員) ---
     # ==========================================
-    if role == "Admin" or st.session_state.get('user') == 'admin':
-        with st.expander("✍️ 手動輸入區間廣告費 (USD) 與 漏填檢查 (僅管理員可見)", expanded=False): 
+    if role == "Admin" or st.session_state.get('user') == 'admin' or check_perm(role, "首頁", "can_edit"):
+        with st.expander("✍️ 手動輸入區間廣告費 (USD) 與 漏填檢查", expanded=False):
             
             # 👇 升級 1：自動比對並列出漏填廣告費的日期
             if not df_orders.empty:
