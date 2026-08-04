@@ -1389,6 +1389,8 @@ elif menu == "商品庫存":
                 else:
                     wh_cols = []
             
+            # 確保沒有空值導致報錯
+            df["平均成本_RMB"] = df["平均成本_RMB"].fillna(0.0) 
             df["總庫存金額_RMB"] = df["總採購金額_RMB"]
             df["總庫存金額_TWD"] = df["總庫存金額_RMB"] * new_rate
             df["平均成本_TWD"] = df["平均成本_RMB"] * new_rate
@@ -1405,15 +1407,73 @@ elif menu == "商品庫存":
             if show_type == "僅顯示有庫存": filtered_df = filtered_df[filtered_df["總庫存"] > 0]
             elif show_type == "僅顯示缺貨": filtered_df = filtered_df[filtered_df["總庫存"] <= 0]
             
+            # 👇 修改開始：設定欄位權限，並將 st.dataframe 改為 st.data_editor
+            can_edit_inv = check_perm(role, "商品庫存", "can_edit")
+            
             col_cfg = {
                 "商品圖片": st.column_config.ImageColumn("圖片"),
-                "總庫存": st.column_config.NumberColumn("🔥 總計", format="%d 支"),
-                "平均成本_RMB": st.column_config.NumberColumn("單支成本 (¥)", format="¥ %.2f"),
-                "平均成本_TWD": st.column_config.NumberColumn("單支成本 (NT$)", format="$ %.2f")
+                "編碼": st.column_config.TextColumn(disabled=True),
+                "名稱": st.column_config.TextColumn(disabled=True),
+                "類別": st.column_config.TextColumn(disabled=True),
+                "品牌": st.column_config.TextColumn(disabled=True),
+                "總庫存": st.column_config.NumberColumn("🔥 總計", format="%d 支", disabled=True),
+                # 🌟 核心：只開放「平均成本_RMB」允許編輯
+                "平均成本_RMB": st.column_config.NumberColumn("單支成本 (¥) ✏️", format="¥ %.2f", disabled=not can_edit_inv),
+                "平均成本_TWD": st.column_config.NumberColumn("單支成本 (NT$)", format="$ %.2f", disabled=True),
+                "總庫存金額_RMB": st.column_config.NumberColumn(format="¥ %.2f", disabled=True),
+                "總庫存金額_TWD": st.column_config.NumberColumn(format="$ %.2f", disabled=True)
             }
-            for w in wh_cols: col_cfg[w] = st.column_config.NumberColumn(f"📍 {w}", format="%d")
+            for w in wh_cols: col_cfg[w] = st.column_config.NumberColumn(f"📍 {w}", format="%d", disabled=True)
             
-            st.dataframe(filtered_df, use_container_width=True, hide_index=True, column_config=col_cfg)
+            st.info("💡 提示：您可以直接在下方表格中的 **『單支成本 (¥) ✏️』** 欄位點擊修改金額。修改後系統會自動跳出儲存按鈕！")
+            
+            edited_df = st.data_editor(
+                filtered_df, 
+                use_container_width=True, 
+                hide_index=True, 
+                column_config=col_cfg,
+                key="inv_overview_editor"
+            )
+            
+            # 🌟 新增：偵測成本變更並寫入資料庫
+            if can_edit_inv:
+                # 比對修改前後的成本差異
+                diff_mask = edited_df['平均成本_RMB'] != filtered_df['平均成本_RMB']
+                if diff_mask.any():
+                    changed_rows = edited_df[diff_mask]
+                    if st.button(f"💾 儲存這 {len(changed_rows)} 項商品的成本變更", type="primary"):
+                        try:
+                            with get_db() as conn:
+                                cursor = conn.cursor()
+                                for _, row in changed_rows.iterrows():
+                                    new_cost = float(row['平均成本_RMB'])
+                                    item_code = str(row['編碼'])
+                                    
+                                    # 檢查庫存表中是否已經有該商品的批次
+                                    cursor.execute("SELECT count(*) FROM inventory WHERE 編碼 = ?", (item_code,))
+                                    if cursor.fetchone()[0] > 0:
+                                        # 如果有，全面覆蓋現有批次的單支成本，並重新計算該批次的總採購金額
+                                        cursor.execute(
+                                            "UPDATE inventory SET 單支成本_RMB = ?, 採購金額_RMB = 數量 * ? WHERE 編碼 = ?",
+                                            (new_cost, new_cost, item_code)
+                                        )
+                                    else:
+                                        # 如果是完全沒有進貨紀錄的新商品，建立一筆 0 數量的初始成本紀錄防呆
+                                        default_wh = wh_list[0] if wh_list else "未指定"
+                                        today_str = str(pd.Timestamp.today().date())
+                                        cursor.execute(
+                                            "INSERT INTO inventory (編碼, 倉庫位置, 數量, 單支成本_RMB, 採購廠商, 採購金額_RMB, 進貨日期) VALUES (?, ?, 0, ?, '系統初始成本設定', 0, ?)",
+                                            (item_code, default_wh, new_cost, today_str)
+                                        )
+                                conn.commit()
+                                
+                            log_inventory_change(current_operator, "表格直接修改成本", f"在總覽表批次修改了 {len(changed_rows)} 項商品的單支成本")
+                            st.success(f"✅ 成功更新 {len(changed_rows)} 項商品的庫存成本！系統將重新整理計算總金額。")
+                            time.sleep(1.5)
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"❌ 儲存失敗：{e}")
+            # 👆 修改結束 👆
             
             from io import BytesIO
             output = BytesIO()
