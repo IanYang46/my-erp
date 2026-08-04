@@ -2431,8 +2431,7 @@ elif menu == "訂單明細":
             key="orders_editor"
         )
 
-        if can_edit:
-            # 🌟 權限分離：將導出按鈕改由 can_download 控制，刪除按鈕由 can_edit 控制
+        # 🌟 權限分離：將導出按鈕改由 can_download 控制，刪除按鈕由 can_edit 控制
         c_export_label, c_export_detail, c_export_reship, c_export_kingdee, c_del = st.columns(5)
         
         # 取得被勾選的訂單編號
