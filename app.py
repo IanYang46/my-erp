@@ -1498,26 +1498,63 @@ elif menu == "商品庫存":
                                     new_cost = float(row['平均成本_RMB'])
                                     item_code = str(row['編碼'])
                                     
-                                    # 檢查庫存表中是否已經有該商品的批次
                                     cursor.execute("SELECT count(*) FROM inventory WHERE 編碼 = ?", (item_code,))
                                     if cursor.fetchone()[0] > 0:
-                                        # 如果有，全面覆蓋現有批次的單支成本，並重新計算該批次的總採購金額
-                                        cursor.execute(
-                                            "UPDATE inventory SET 單支成本_RMB = ?, 採購金額_RMB = 數量 * ? WHERE 編碼 = ?",
-                                            (new_cost, new_cost, item_code)
-                                        )
+                                        cursor.execute("UPDATE inventory SET 單支成本_RMB = ?, 採購金額_RMB = 數量 * ? WHERE 編碼 = ?", (new_cost, new_cost, item_code))
                                     else:
-                                        # 如果是完全沒有進貨紀錄的新商品，建立一筆 0 數量的初始成本紀錄防呆
                                         default_wh = wh_list[0] if wh_list else "未指定"
                                         today_str = str(pd.Timestamp.today().date())
-                                        cursor.execute(
-                                            "INSERT INTO inventory (編碼, 倉庫位置, 數量, 單支成本_RMB, 採購廠商, 採購金額_RMB, 進貨日期) VALUES (?, ?, 0, ?, '系統初始成本設定', 0, ?)",
-                                            (item_code, default_wh, new_cost, today_str)
-                                        )
+                                        cursor.execute("INSERT INTO inventory (編碼, 倉庫位置, 數量, 單支成本_RMB, 採購廠商, 採購金額_RMB, 進貨日期) VALUES (?, ?, 0, ?, '系統初始成本設定', 0, ?)", (item_code, default_wh, new_cost, today_str))
+                                conn.commit()
+
+                                # 🌟 新增：一次性完美連動！只有在你按下儲存庫存的這一刻，才去更新歷史訂單成本
+                                rate_val = cursor.execute("SELECT value FROM settings WHERE key='exchange_rate'").fetchone()[0]
+                                df_costs = pd.read_sql("SELECT 編碼, AVG(單支成本_RMB) as avg_cost FROM inventory GROUP BY 編碼", conn)
+                                inv_code_cost = dict(zip(df_costs['編碼'], df_costs['avg_cost']))
+                                df_prods = pd.read_sql("SELECT 編碼, 名稱 FROM products", conn)
+                                inv_name_code = {str(r['名稱']).strip(): r['編碼'] for _, r in df_prods.iterrows() if pd.notna(r['名稱']) and str(r['名稱']).strip()}
+                                
+                                sorted_inv_codes = sorted([str(c) for c in inv_code_cost.keys() if str(c)], key=len, reverse=True)
+                                sorted_inv_names = sorted(inv_name_code.keys(), key=len, reverse=True)
+                                
+                                def temp_calc_rmb(items_string):
+                                    if not items_string: return 50.0
+                                    import re
+                                    parts = re.split(r'[\n、,，]', str(items_string).replace('•', ''))
+                                    total_rmb = 0.0
+                                    has_match = False
+                                    for part in parts:
+                                        part = part.strip()
+                                        if not part: continue
+                                        match = re.search(r'[\*xX×]\s*(\d+)', part)
+                                        qty = int(match.group(1)) if match else 1
+                                        item_rmb = 50.0
+                                        matched = False
+                                        for code in sorted_inv_codes:
+                                            if code in part:
+                                                item_rmb = inv_code_cost[code]; matched = True; break
+                                        if not matched:
+                                            for name in sorted_inv_names:
+                                                if name in part:
+                                                    item_rmb = inv_code_cost.get(inv_name_code[name], 50.0); matched = True; break
+                                        if matched: has_match = True
+                                        total_rmb += (item_rmb * qty)
+                                    if not has_match and total_rmb == 0:
+                                        qty_sum = sum([int(re.search(r'[\*xX×]\s*(\d+)', p).group(1)) if re.search(r'[\*xX×]\s*(\d+)', p) else 1 for p in parts if p.strip()])
+                                        total_rmb = (qty_sum if qty_sum > 0 else 1) * 50.0
+                                    return total_rmb
+
+                                cursor.execute("SELECT 訂單編號, 品項內容, 商品成本 FROM customer_orders")
+                                for r_oid, r_items, r_cost in cursor.fetchall():
+                                    new_rmb = temp_calc_rmb(r_items)
+                                    new_twd = new_rmb * rate_val
+                                    if abs(float(r_cost or 0) - new_twd) > 0.1:
+                                        cursor.execute("UPDATE customer_orders SET 商品成本=?, 出貨成本=?+物流運費, 訂單損益=包裹應收-(?+物流運費) WHERE 訂單編號=?", 
+                                                       (new_twd, new_twd, new_twd, r_oid))
                                 conn.commit()
                                 
                             log_inventory_change(current_operator, "表格直接修改成本", f"在總覽表批次修改了 {len(changed_rows)} 項商品的單支成本")
-                            st.success(f"✅ 成功更新 {len(changed_rows)} 項商品的庫存成本！系統將重新整理計算總金額。")
+                            st.success(f"✅ 成功更新庫存成本，並且已同步刷新所有歷史訂單的利潤！")
                             time.sleep(1.5)
                             st.rerun()
                         except Exception as e:
@@ -2040,75 +2077,6 @@ elif menu == "訂單明細":
         return total_rmb
     # === 引擎設定結束 ===
 
-    @st.cache_resource
-    def run_system_hot_update():
-        """將高耗能的資料庫熱更新打包，確保伺服器開機只會執行一次，解放系統效能"""
-        try:
-            with get_db() as conn:
-                cursor = conn.cursor()
-                
-                # 1. 確保擁有「物流運費_RMB」欄位
-                cursor.execute("SELECT column_name FROM information_schema.columns WHERE table_name = 'customer_orders'")
-                cols = [info[0].lower() for info in cursor.fetchall()]
-                
-                if '物流運費_rmb' not in cols:
-                    cursor.execute("ALTER TABLE customer_orders ADD COLUMN 物流運費_RMB REAL DEFAULT 0.0")
-                    rate_val = cursor.execute("SELECT value FROM settings WHERE key='exchange_rate'").fetchone()[0]
-                    cursor.execute("UPDATE customer_orders SET 物流運費_RMB = 物流運費 / ? WHERE 物流運費 > 0", (rate_val,))
-                    conn.commit()
-
-                # 2. 精準解析「所有」歷史訂單品項數量並重新核算
-                rate_val = cursor.execute("SELECT value FROM settings WHERE key='exchange_rate'").fetchone()[0]
-                cursor.execute("SELECT 訂單編號, 品項內容, 商品成本 FROM customer_orders")
-                all_orders = cursor.fetchall()
-                
-                if all_orders:
-                    import re
-                    for row_data in all_orders:
-                        oid = row_data[0]
-                        items_str = str(row_data[1]) if row_data[1] else ""
-                        current_cost_twd = float(row_data[2] or 0.0)
-                        
-                        old_item_count = items_str.count('•') if items_str.count('•') > 0 else 1
-                        old_calc_cost_twd = (old_item_count * 50.0) * rate_val
-                        
-                        if current_cost_twd == 0 or abs(current_cost_twd - old_calc_cost_twd) < 1 or abs(current_cost_twd - (50.0 * rate_val)) < 1:
-                            parts = re.split(r'[\n、,，]', items_str.replace('•', ''))
-                            total_q = 0
-                            for part in parts:
-                                part = part.strip()
-                                if not part: continue
-                                match = re.search(r'[\*xX×]\s*(\d+)', part)
-                                if match:
-                                    total_q += int(match.group(1))
-                                else:
-                                    total_q += 1
-                                    
-                            new_cost_rmb = calculate_dynamic_rmb_cost(items_str)
-                            new_cost_twd = new_cost_rmb * rate_val
-                            
-                            if abs(current_cost_twd - new_cost_twd) > 0.1:
-                                cursor.execute("""
-                                    UPDATE customer_orders 
-                                    SET 商品成本 = ?, 
-                                        出貨成本 = ? + 物流運費,
-                                        訂單損益 = 包裹應收 - (? + 物流運費)
-                                    WHERE 訂單編號 = ?
-                                """, (new_cost_twd, new_cost_twd, new_cost_twd, oid))
-                    conn.commit()
-
-                # 3. 升級資料庫的日期欄位型態
-                cursor.execute("SELECT data_type FROM information_schema.columns WHERE table_name = 'customer_orders' AND column_name = '訂單日期'")
-                dt_type = cursor.fetchone()
-                if dt_type and dt_type[0].lower() == 'date':
-                    cursor.execute("ALTER TABLE customer_orders ALTER COLUMN 訂單日期 TYPE TIMESTAMP USING 訂單日期::TIMESTAMP")
-                    conn.commit()
-        except Exception:
-            pass # 發生錯誤時靜默跳過，避免阻斷系統
-
-    # 執行一次性更新 (此行會受到 cache 保護)
-    run_system_hot_update()
-
     # 輕量級讀取：單獨獲取當前匯率 (確保每次點擊頁面都能拿到最新匯率)
     with get_db() as conn:
         rate = conn.execute("SELECT value FROM settings WHERE key='exchange_rate'").fetchone()[0]
@@ -2460,12 +2428,13 @@ elif menu == "訂單明細":
         )
 
         # 🌟 權限分離：將導出按鈕改由 can_download 控制，刪除按鈕由 can_edit 控制
-        c_export_label, c_export_detail, c_export_reship, c_export_kingdee, c_del = st.columns(5)
+        # 👇 按照您的要求，完美排序為: 詳細資料(1), 重出單(2), 列印面單(3), 金蝶倒出(4), 刪除(5)
+        c_export_detail, c_export_reship, c_export_label, c_export_kingdee, c_del = st.columns(5)
         
         # 取得被勾選的訂單編號
         selected_orders = edited_orders[edited_orders["🗑️ 勾選"] == True]['訂單編號'].tolist() if not edited_orders.empty and "🗑️ 勾選" in edited_orders.columns else []
 
-        # 🌟 導出完整詳細資料區塊
+        # 1. 導出完整詳細資料區塊
         with c_export_detail:
             if can_download:
                 if len(selected_orders) > 0:
@@ -2493,8 +2462,51 @@ elif menu == "訂單明細":
                     st.button("📊 請先勾選", disabled=True, use_container_width=True, key="btn_no_detail")
             else:
                 st.button("🔒 無下載權限", disabled=True, use_container_width=True, key="btn_lock_detail")
-        
-        # 🌟 導出列印面單區塊
+
+        # 2. 深港台重出表格導出區塊
+        with c_export_reship:
+            if can_download:
+                if len(selected_orders) > 0:
+                    import io
+                    df_selected_reship = df_orders[df_orders['訂單編號'].isin(selected_orders)].copy()
+                    df_reship = pd.DataFrame()
+                    
+                    df_reship['主號'] = ""
+                    df_reship['袋號'] = ""
+                    df_reship['原單號'] = ""
+                    df_reship['運單重量'] = ""
+                    df_reship['收件人電話'] = df_selected_reship['電話']
+                    df_reship['收件人姓名'] = df_selected_reship['姓名']
+                    df_reship['超商代碼'] = df_selected_reship['店號']
+                    df_reship['超商名稱'] = df_selected_reship['門市']
+                    df_reship['超商地址'] = ""
+                    df_reship['代收貨款'] = df_selected_reship['包裹應收']
+                    df_reship['貨物價值'] = ""
+                    df_reship['品名'] = '香水'
+                    df_reship['寄件人公司'] = '深港台'
+                    df_reship['寄件人姓名'] = '深港台'
+                    df_reship['寄件人電話'] = '03-4498990'
+                    df_reship['寄件人地址'] = '桃園市中壢區內定八街790號'
+
+                    output_reship = io.BytesIO()
+                    with pd.ExcelWriter(output_reship, engine='openpyxl') as writer:
+                        df_reship.to_excel(writer, index=False, sheet_name='Sheet1')
+                    
+                    file_name_reship = f"深港台重出{pd.Timestamp.today().strftime('%m%d')}.xlsx"
+
+                    st.download_button(
+                        label=f"📦 重出單 ({len(selected_orders)} 筆)",
+                        data=output_reship.getvalue(),
+                        file_name=file_name_reship,
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        use_container_width=True
+                    )
+                else:
+                    st.button("📦 請先勾選", disabled=True, use_container_width=True, key="btn_no_reship")
+            else:
+                st.button("🔒 無下載權限", disabled=True, use_container_width=True, key="btn_lock_reship")
+
+        # 3. 導出列印面單區塊
         with c_export_label:
             if can_download:
                 if len(selected_orders) > 0:
@@ -2552,50 +2564,7 @@ elif menu == "訂單明細":
             else:
                 st.button("🔒 無下載權限", disabled=True, use_container_width=True, key="btn_lock_label")
 
-        # 🌟 深港台重出表格導出區塊
-        with c_export_reship:
-            if can_download:
-                if len(selected_orders) > 0:
-                    import io
-                    df_selected_reship = df_orders[df_orders['訂單編號'].isin(selected_orders)].copy()
-                    df_reship = pd.DataFrame()
-                    
-                    df_reship['主號'] = ""
-                    df_reship['袋號'] = ""
-                    df_reship['原單號'] = ""
-                    df_reship['運單重量'] = ""
-                    df_reship['收件人電話'] = df_selected_reship['電話']
-                    df_reship['收件人姓名'] = df_selected_reship['姓名']
-                    df_reship['超商代碼'] = df_selected_reship['店號']
-                    df_reship['超商名稱'] = df_selected_reship['門市']
-                    df_reship['超商地址'] = ""
-                    df_reship['代收貨款'] = df_selected_reship['包裹應收']
-                    df_reship['貨物價值'] = ""
-                    df_reship['品名'] = '香水'
-                    df_reship['寄件人公司'] = '深港台'
-                    df_reship['寄件人姓名'] = '深港台'
-                    df_reship['寄件人電話'] = '03-4498990'
-                    df_reship['寄件人地址'] = '桃園市中壢區內定八街790號'
-
-                    output_reship = io.BytesIO()
-                    with pd.ExcelWriter(output_reship, engine='openpyxl') as writer:
-                        df_reship.to_excel(writer, index=False, sheet_name='Sheet1')
-                    
-                    file_name_reship = f"深港台重出{pd.Timestamp.today().strftime('%m%d')}.xlsx"
-
-                    st.download_button(
-                        label=f"📦 重出單 ({len(selected_orders)} 筆)",
-                        data=output_reship.getvalue(),
-                        file_name=file_name_reship,
-                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                        use_container_width=True
-                    )
-                else:
-                    st.button("📦 請先勾選", disabled=True, use_container_width=True, key="btn_no_reship")
-            else:
-                st.button("🔒 無下載權限", disabled=True, use_container_width=True, key="btn_lock_reship")
-
-        # 🌟 金蝶數據導入表格導出區塊
+        # 4. 金蝶數據導入表格導出區塊
         with c_export_kingdee:
             if can_download:
                 if len(selected_orders) > 0:
@@ -2702,26 +2671,26 @@ elif menu == "訂單明細":
             else:
                 st.button("🔒 無下載權限", disabled=True, use_container_width=True, key="btn_lock_kingdee")
             
-            # 🌟 刪除訂單區塊 (受 can_edit 嚴格控制)
-            with c_del:
-                if can_edit:
-                    if len(selected_orders) > 0:
-                        if st.button(f"⚠️ 刪除 ({len(selected_orders)} 筆)", type="primary", use_container_width=True):
-                            try:
-                                with get_db() as conn:
-                                    cursor = conn.cursor()
-                                    placeholders = ','.join(['?'] * len(selected_orders))
-                                    cursor.execute(f"DELETE FROM customer_orders WHERE 訂單編號 IN ({placeholders})", tuple(selected_orders))
-                                    conn.commit()
-                                log_system_action("訂單明細", current_operator, "刪除訂單資料", f"刪除了 {len(selected_orders)} 筆訂單")
-                                st.success(f"✅ 成功刪除 {len(selected_orders)} 筆訂單！")
-                                time.sleep(1); st.rerun()
-                            except Exception as e:
-                                st.error(f"❌ 刪除失敗：{str(e)}")
-                    else:
-                        st.button("⚠️ 請先勾選", disabled=True, use_container_width=True, key="btn_no_del")
+        # 5. 刪除訂單區塊 (受 can_edit 嚴格控制)
+        with c_del:
+            if can_edit:
+                if len(selected_orders) > 0:
+                    if st.button(f"⚠️ 刪除 ({len(selected_orders)} 筆)", type="primary", use_container_width=True):
+                        try:
+                            with get_db() as conn:
+                                cursor = conn.cursor()
+                                placeholders = ','.join(['?'] * len(selected_orders))
+                                cursor.execute(f"DELETE FROM customer_orders WHERE 訂單編號 IN ({placeholders})", tuple(selected_orders))
+                                conn.commit()
+                            log_system_action("訂單明細", current_operator, "刪除訂單資料", f"刪除了 {len(selected_orders)} 筆訂單")
+                            st.success(f"✅ 成功刪除 {len(selected_orders)} 筆訂單！")
+                            time.sleep(1); st.rerun()
+                        except Exception as e:
+                            st.error(f"❌ 刪除失敗：{str(e)}")
                 else:
-                    st.button("🔒 無編輯權限", disabled=True, use_container_width=True, key="btn_lock_del")
+                    st.button("⚠️ 請先勾選", disabled=True, use_container_width=True, key="btn_no_del")
+            else:
+                st.button("🔒 無編輯權限", disabled=True, use_container_width=True, key="btn_lock_del")
 
         st.divider()
 
