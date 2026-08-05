@@ -244,12 +244,22 @@ def get_db():
     finally:
         db_pool.putconn(conn)
         
-# 給 Pandas 專用的引擎 (🌟 加入防呆機制)
-db_url = os.getenv("DB_URL", "")
-if db_url:
-    db_engine = create_engine(db_url.replace("postgres://", "postgresql://"))
-else:
-    db_engine = None
+# 👇 🌟 新增這段：攔截 Pandas 警告並優化記憶體，徹底防止伺服器崩潰無限重啟 👇
+import warnings
+warnings.filterwarnings('ignore', category=UserWarning, module='pandas')
+
+_original_read_sql = pd.read_sql
+def _safe_read_sql(sql, con, index_col=None, coerce_float=True, params=None, parse_dates=None, columns=None, chunksize=None):
+    # 攔截自訂的資料庫包裝器，強制將 Pandas 查詢轉交給高效能的 SQLAlchemy 引擎
+    if isinstance(con, PostgresConnWrapper) and db_engine is not None:
+        con = db_engine
+        # 自動修正語法：將 SQLite 的 ? 參數替換為 PostgreSQL 專用的 %s
+        if isinstance(sql, str) and params is not None:
+            sql = sql.replace("?", "%s")
+    return _original_read_sql(sql, con, index_col=index_col, coerce_float=coerce_float, params=params, parse_dates=parse_dates, columns=columns, chunksize=chunksize)
+
+pd.read_sql = _safe_read_sql
+# 👆 攔截器新增結束 👆
     
 # --- 3. 初始化資料庫與預設權限 ---
 @st.cache_resource
