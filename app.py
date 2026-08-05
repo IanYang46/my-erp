@@ -207,6 +207,8 @@ class PostgresConnWrapper:
         return cur
     def commit(self):
         self.conn.commit()
+    def rollback(self):           # 👈 🌟 補上這個救命的還原指令
+        self.conn.rollback()      # 👈 🌟 補上這個救命的還原指令
     def close(self):
         pass # 🌟 重要魔法：把 close 留空。交給連線池管理，不強制掛斷電話
 
@@ -2019,58 +2021,6 @@ elif menu == "訂單明細":
             rate_val = cursor.execute("SELECT value FROM settings WHERE key='exchange_rate'").fetchone()[0]
             cursor.execute("UPDATE customer_orders SET 物流運費_RMB = 物流運費 / ? WHERE 物流運費 > 0", (rate_val,))
             conn.commit()
-
-        # 🌟 系統熱更新：精準解析「所有」歷史訂單品項數量 (突破原本只抓 0 元的限制)
-        try:
-            rate_val = cursor.execute("SELECT value FROM settings WHERE key='exchange_rate'").fetchone()[0]
-            
-            # 💡 修正 1：不再只抓 WHERE 商品成本 = 0，因為舊系統已經把它們算成 50 (1件) 存起來了！
-            cursor.execute("SELECT 訂單編號, 品項內容, 商品成本 FROM customer_orders")
-            all_orders = cursor.fetchall()
-            
-            if all_orders:
-                import re
-                for row_data in all_orders:
-                    oid = row_data[0]
-                    items_str = str(row_data[1]) if row_data[1] else ""
-                    current_cost_twd = float(row_data[2] or 0.0)
-                    
-                    # 推算舊版錯誤邏輯算出來的台幣成本 (當初1個黑點算50)
-                    old_item_count = items_str.count('•') if items_str.count('•') > 0 else 1
-                    old_calc_cost_twd = (old_item_count * 50.0) * rate_val
-                    
-                    # 💡 修正 2：如果成本是 0，或者「被舊邏輯錯算成 50 塊(或舊黑點倍數)」，才允許覆蓋重算
-                    # (這樣可以完美保護您在編輯後台「手動更改過」的特殊成本，不被系統洗掉)
-                    if current_cost_twd == 0 or abs(current_cost_twd - old_calc_cost_twd) < 1 or abs(current_cost_twd - (50.0 * rate_val)) < 1:
-                        
-                        # 拆分換行、頓號、逗號 (偷偷加了全形逗號 '，' 防呆)
-                        parts = re.split(r'[\n、,，]', items_str.replace('•', ''))
-                        total_q = 0
-                        for part in parts:
-                            part = part.strip()
-                            if not part: continue
-                            # 找尋 *1, *2, x2, X3, ×2 等數量標記 (新增乘號 × 支援)
-                            match = re.search(r'[\*xX×]\s*(\d+)', part)
-                            if match:
-                                total_q += int(match.group(1))
-                            else:
-                                total_q += 1
-                                
-                        new_cost_rmb = calculate_dynamic_rmb_cost(items_str)
-                        new_cost_twd = new_cost_rmb * rate_val
-                        
-                        # 若新算出來的成本跟現在資料庫裡的不同，代表抓到兇手，立刻執行 UPDATE 修正！
-                        if abs(current_cost_twd - new_cost_twd) > 0.1:
-                            cursor.execute("""
-                                UPDATE customer_orders 
-                                SET 商品成本 = ?, 
-                                    出貨成本 = ? + 物流運費,
-                                    訂單損益 = 包裹應收 - (? + 物流運費)
-                                WHERE 訂單編號 = ?
-                            """, (new_cost_twd, new_cost_twd, new_cost_twd, oid))
-                conn.commit()
-        except Exception as e:
-            conn.rollback()
             
         # 👇👇👇 請把這段插入在這裡：升級資料庫的日期欄位型態 👇👇👇
         try:
