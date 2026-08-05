@@ -2014,87 +2014,78 @@ elif menu == "訂單明細":
         return total_rmb
     # === 引擎設定結束 ===
 
-    # 🌟 系統熱更新：確保 customer_orders 表格擁有獨立的「物流運費_RMB」欄位，讓人民幣原價永久保存
+    @st.cache_resource
+    def run_system_hot_update():
+        """將高耗能的資料庫熱更新打包，確保伺服器開機只會執行一次，解放系統效能"""
+        try:
+            with get_db() as conn:
+                cursor = conn.cursor()
+                
+                # 1. 確保擁有「物流運費_RMB」欄位
+                cursor.execute("SELECT column_name FROM information_schema.columns WHERE table_name = 'customer_orders'")
+                cols = [info[0].lower() for info in cursor.fetchall()]
+                
+                if '物流運費_rmb' not in cols:
+                    cursor.execute("ALTER TABLE customer_orders ADD COLUMN 物流運費_RMB REAL DEFAULT 0.0")
+                    rate_val = cursor.execute("SELECT value FROM settings WHERE key='exchange_rate'").fetchone()[0]
+                    cursor.execute("UPDATE customer_orders SET 物流運費_RMB = 物流運費 / ? WHERE 物流運費 > 0", (rate_val,))
+                    conn.commit()
+
+                # 2. 精準解析「所有」歷史訂單品項數量並重新核算
+                rate_val = cursor.execute("SELECT value FROM settings WHERE key='exchange_rate'").fetchone()[0]
+                cursor.execute("SELECT 訂單編號, 品項內容, 商品成本 FROM customer_orders")
+                all_orders = cursor.fetchall()
+                
+                if all_orders:
+                    import re
+                    for row_data in all_orders:
+                        oid = row_data[0]
+                        items_str = str(row_data[1]) if row_data[1] else ""
+                        current_cost_twd = float(row_data[2] or 0.0)
+                        
+                        old_item_count = items_str.count('•') if items_str.count('•') > 0 else 1
+                        old_calc_cost_twd = (old_item_count * 50.0) * rate_val
+                        
+                        if current_cost_twd == 0 or abs(current_cost_twd - old_calc_cost_twd) < 1 or abs(current_cost_twd - (50.0 * rate_val)) < 1:
+                            parts = re.split(r'[\n、,，]', items_str.replace('•', ''))
+                            total_q = 0
+                            for part in parts:
+                                part = part.strip()
+                                if not part: continue
+                                match = re.search(r'[\*xX×]\s*(\d+)', part)
+                                if match:
+                                    total_q += int(match.group(1))
+                                else:
+                                    total_q += 1
+                                    
+                            new_cost_rmb = calculate_dynamic_rmb_cost(items_str)
+                            new_cost_twd = new_cost_rmb * rate_val
+                            
+                            if abs(current_cost_twd - new_cost_twd) > 0.1:
+                                cursor.execute("""
+                                    UPDATE customer_orders 
+                                    SET 商品成本 = ?, 
+                                        出貨成本 = ? + 物流運費,
+                                        訂單損益 = 包裹應收 - (? + 物流運費)
+                                    WHERE 訂單編號 = ?
+                                """, (new_cost_twd, new_cost_twd, new_cost_twd, oid))
+                    conn.commit()
+
+                # 3. 升級資料庫的日期欄位型態
+                cursor.execute("SELECT data_type FROM information_schema.columns WHERE table_name = 'customer_orders' AND column_name = '訂單日期'")
+                dt_type = cursor.fetchone()
+                if dt_type and dt_type[0].lower() == 'date':
+                    cursor.execute("ALTER TABLE customer_orders ALTER COLUMN 訂單日期 TYPE TIMESTAMP USING 訂單日期::TIMESTAMP")
+                    conn.commit()
+        except Exception:
+            pass # 發生錯誤時靜默跳過，避免阻斷系統
+
+    # 執行一次性更新 (此行會受到 cache 保護)
+    run_system_hot_update()
+
+    # 輕量級讀取：單獨獲取當前匯率 (確保每次點擊頁面都能拿到最新匯率)
     with get_db() as conn:
-        cursor = conn.cursor()
-        
-        # ⚠️ PostgreSQL 專屬寫法：查詢系統表來確認欄位是否存在
-        cursor.execute("SELECT column_name FROM information_schema.columns WHERE table_name = 'customer_orders'")
-        # 由於 PostgreSQL 預設會將未加引號的欄位名稱轉為小寫，這裡統一轉小寫來比對防呆
-        cols = [info[0].lower() for info in cursor.fetchall()]
-        
-        if '物流運費_rmb' not in cols:
-            cursor.execute("ALTER TABLE customer_orders ADD COLUMN 物流運費_RMB REAL DEFAULT 0.0")
-            # 根據現有台幣運費反推初始的人民幣並存入 (僅執行一次)
-            rate_val = cursor.execute("SELECT value FROM settings WHERE key='exchange_rate'").fetchone()[0]
-            cursor.execute("UPDATE customer_orders SET 物流運費_RMB = 物流運費 / ? WHERE 物流運費 > 0", (rate_val,))
-            conn.commit()
-
-        # 🌟 系統熱更新：精準解析「所有」歷史訂單品項數量 (突破原本只抓 0 元的限制)
-        try:
-            rate_val = cursor.execute("SELECT value FROM settings WHERE key='exchange_rate'").fetchone()[0]
-            
-            # 💡 修正 1：不再只抓 WHERE 商品成本 = 0，因為舊系統已經把它們算成 50 (1件) 存起來了！
-            cursor.execute("SELECT 訂單編號, 品項內容, 商品成本 FROM customer_orders")
-            all_orders = cursor.fetchall()
-            
-            if all_orders:
-                import re
-                for row_data in all_orders:
-                    oid = row_data[0]
-                    items_str = str(row_data[1]) if row_data[1] else ""
-                    current_cost_twd = float(row_data[2] or 0.0)
-                    
-                    # 推算舊版錯誤邏輯算出來的台幣成本 (當初1個黑點算50)
-                    old_item_count = items_str.count('•') if items_str.count('•') > 0 else 1
-                    old_calc_cost_twd = (old_item_count * 50.0) * rate_val
-                    
-                    # 💡 修正 2：如果成本是 0，或者「被舊邏輯錯算成 50 塊(或舊黑點倍數)」，才允許覆蓋重算
-                    # (這樣可以完美保護您在編輯後台「手動更改過」的特殊成本，不被系統洗掉)
-                    if current_cost_twd == 0 or abs(current_cost_twd - old_calc_cost_twd) < 1 or abs(current_cost_twd - (50.0 * rate_val)) < 1:
-                        
-                        # 拆分換行、頓號、逗號 (偷偷加了全形逗號 '，' 防呆)
-                        parts = re.split(r'[\n、,，]', items_str.replace('•', ''))
-                        total_q = 0
-                        for part in parts:
-                            part = part.strip()
-                            if not part: continue
-                            # 找尋 *1, *2, x2, X3, ×2 等數量標記 (新增乘號 × 支援)
-                            match = re.search(r'[\*xX×]\s*(\d+)', part)
-                            if match:
-                                total_q += int(match.group(1))
-                            else:
-                                total_q += 1
-                                
-                        new_cost_rmb = calculate_dynamic_rmb_cost(items_str)
-                        new_cost_twd = new_cost_rmb * rate_val
-                        
-                        # 若新算出來的成本跟現在資料庫裡的不同，代表抓到兇手，立刻執行 UPDATE 修正！
-                        if abs(current_cost_twd - new_cost_twd) > 0.1:
-                            cursor.execute("""
-                                UPDATE customer_orders 
-                                SET 商品成本 = ?, 
-                                    出貨成本 = ? + 物流運費,
-                                    訂單損益 = 包裹應收 - (? + 物流運費)
-                                WHERE 訂單編號 = ?
-                            """, (new_cost_twd, new_cost_twd, new_cost_twd, oid))
-                conn.commit()
-        except Exception as e:
-            conn.rollback()
-            
-        # 👇👇👇 請把這段插入在這裡：升級資料庫的日期欄位型態 👇👇👇
-        try:
-            cursor.execute("SELECT data_type FROM information_schema.columns WHERE table_name = 'customer_orders' AND column_name = '訂單日期'")
-            dt_type = cursor.fetchone()
-            # 如果發現它還是純 DATE，就強制升級成 TIMESTAMP (包含時間)
-            if dt_type and dt_type[0].lower() == 'date':
-                cursor.execute("ALTER TABLE customer_orders ALTER COLUMN 訂單日期 TYPE TIMESTAMP USING 訂單日期::TIMESTAMP")
-                conn.commit()
-        except:
-            conn.rollback() # 防呆機制
-        # 👆👆👆 插入結束 👆👆👆
-
-        rate = cursor.execute("SELECT value FROM settings WHERE key='exchange_rate'").fetchone()[0]
+        rate = conn.execute("SELECT value FROM settings WHERE key='exchange_rate'").fetchone()[0]
 
     new_rate = st.sidebar.number_input("當前人民幣匯率 (RMB to TWD)", value=rate, step=0.01, key="order_sidebar_rate")
     if st.sidebar.button("更新匯率", key="btn_update_order_rate"):
