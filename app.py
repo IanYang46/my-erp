@@ -3035,166 +3035,170 @@ elif menu == "訂單明細":
     with t4:
         st.subheader("📥 批量導入與更新工具")
         
-        # 👇 🌟 新增的 1shop 自動串接測試區塊 👇
-        st.markdown("---")
-        st.subheader("🛒 1shop API 自動同步")
-        if st.button("🔄 點我從 1shop 抓取最新訂單", type="primary"):
-            if not ONESHOP_APP_ID or not ONESHOP_SECRET:
-                st.error("❌ 找不到 1shop 金鑰！請確認 Zeabur 的 Variables 是否設定正確。")
-            else:
-                with st.spinner("正在向 1shop 請求資料中，請稍候..."):
-                    try:
-                        # === 第一階段：抓取訂單列表 ===
-                        base_url = "https://api.1shop.tw/v1/order" 
-                        params = {
-                            "appid": ONESHOP_APP_ID,
-                            "secret": ONESHOP_SECRET,
-                            "progress_status": "all",
-                            "payment_status": "all",
-                            "logistic_status": "all"
-                        }
-                        
-                        response = requests.get(base_url, params=params, timeout=10)
-                        
-                        if response.status_code == 200:
-                            data = response.json()
-                            if data.get("success") == 0: 
-                                orders_list = data.get("data", {}).get("order", [])
-                                
-                                if not orders_list:
-                                    st.warning("⚠️ 1shop 目前沒有新的訂單可以同步。")
-                                else:
-                                    success_count = 0
-                                    with get_db() as conn:
-                                        for basic_order in orders_list:
-                                            # 1. 取得基本資料
-                                            oid = str(basic_order.get("order_number", "")).strip()
-                                            if not oid: continue
-                                            
-                                            odate = str(basic_order.get("create_date", ""))
-                                            name = str(basic_order.get("name", ""))
-                                            phone = str(basic_order.get("phone", ""))
-                                            email = str(basic_order.get("email", ""))
-                                            store = str(basic_order.get("cvs_store_name", ""))
-                                            store_id = str(basic_order.get("cvs_store_id", ""))
-                                            rev = float(basic_order.get("total_price", 0.0))
-                                            c_note = str(basic_order.get("note", ""))
-                                            m_note = str(basic_order.get("shop_note", ""))
-                                            
-                                            # 👇 狀態邏輯：預設「待出貨」，若進度為已取消(cancelled)或其他(other)則設為「已取消」
-                                            raw_progress_status = str(basic_order.get("progress_status", "")).strip()
-                                            if raw_progress_status in ["cancelled", "other"]:
-                                                init_status = "已取消"
-                                            else:
-                                                init_status = "待出貨"
-                                            
-                                            # === 第二階段：拿著訂單號碼，去抓「詳細訂單」API ===
-                                            detail_url = f"https://api.1shop.tw/v1/order/{oid}"
-                                            
-                                            # 🌟 對抗 1shop 「10秒10次」限制的減速防呆
-                                            time.sleep(1.2)
-                                            
-                                            detail_response = requests.get(detail_url, params={"appid": ONESHOP_APP_ID, "secret": ONESHOP_SECRET}, timeout=10)
-                                            
-                                            items_str = "未抓取到品項"
-                                            item_count = 0
-                                            o_url = ""  # 預設訂單連結為空
-                                            
-                                            if detail_response.status_code == 200:
-                                                detail_data = detail_response.json()
-                                                if detail_data.get("success") == 0:
-                                                    
-                                                    # 👇 抓取訂單連結 (order_url 存在於詳細訂單的 order 中)
-                                                    detail_order_info = detail_data.get("data", {}).get("order", {})
-                                                    o_url = str(detail_order_info.get("order_url", ""))
-                                                    
-                                                    products = detail_data.get("data", {}).get("cart", {}).get("products") or []
-                                                    item_lines = []
-                                                    
-                                                    for p in products:
-                                                        p_type = p.get("product_type", "single")
-                                                        
-                                                        if p_type == "charge": 
-                                                            continue
-                                                            
-                                                        # 🌟 嚴格依照要求：只抓取 SKU (系統會自動翻譯名稱) + 數量
-                                                        if p_type == "bundle":
-                                                            bundle_contents = p.get("bundle", [])
-                                                            bundle_qty = int(p.get("quantity", 1)) 
-                                                            
-                                                            if isinstance(bundle_contents, list) and len(bundle_contents) > 0:
-                                                                for b_item in bundle_contents:
-                                                                    b_sku = str(b_item.get("sku", "")).strip()
-                                                                    b_item_qty = int(b_item.get("quantity", 1)) * bundle_qty 
-                                                                    item_lines.append(f"• {b_sku} *{b_item_qty}")
-                                                                    item_count += b_item_qty
-                                                            else:
-                                                                # 防呆：如果組合包沒寫內容物，抓這個組合包的 SKU
-                                                                p_sku = str(p.get("sku", "")).strip()
-                                                                item_lines.append(f"• {p_sku} *{bundle_qty}")
-                                                                item_count += bundle_qty
-                                                                
-                                                        else:
-                                                            p_sku = str(p.get("sku", "")).strip()
-                                                            qty = int(p.get("quantity", 1))
-                                                            item_lines.append(f"• {p_sku} *{qty}")
-                                                            item_count += qty
-
-                                                    if item_lines:
-                                                        items_str = "\n".join(item_lines)
-                                                    else:
-                                                        items_str = f"系統解析異常，原始資料: {str(products)}"
-                                                        
-                                            elif detail_response.status_code == 429:
-                                                items_str = "⚠️ 抓取失敗：請求過快被 1shop 阻擋 (429)"
-                                            else:
-                                                items_str = f"⚠️ 抓取異常 (狀態碼: {detail_response.status_code})"
-                                            
-                                            if item_count == 0: item_count = 1
-                                            
-                                            # 3. 計算成本與寫入資料庫
-                                            dynamic_cost_rmb = calculate_dynamic_rmb_cost(items_str)
-                                            default_cost_twd = dynamic_cost_rmb * rate
-                                            init_profit = rev - default_cost_twd
-
-                                            conn.execute("""
-                                                INSERT INTO customer_orders 
-                                                (訂單編號, 訂單日期, 姓名, 電話, 信箱, 訂單連結, 門市, 店號, 品項內容, 下單總數, 包裹應收, 商品成本, 物流運費, 出貨成本, 訂單損益, 物流編號, 取貨狀態, 顧客備註, 商家備註)
-                                                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0.0, ?, ?, '', ?, ?, ?)
-                                                ON CONFLICT(訂單編號) DO UPDATE SET
-                                                    姓名 = excluded.姓名,
-                                                    電話 = excluded.電話,
-                                                    信箱 = excluded.信箱,
-                                                    訂單連結 = excluded.訂單連結,
-                                                    門市 = excluded.門市,
-                                                    店號 = excluded.店號,
-                                                    品項內容 = excluded.品項內容,
-                                                    下單總數 = excluded.下單總數,
-                                                    包裹應收 = excluded.包裹應收,
-                                                    商品成本 = excluded.商品成本,
-                                                    出貨成本 = excluded.出貨成本,
-                                                    訂單損益 = excluded.訂單損益,
-                                                    取貨狀態 = CASE WHEN excluded.取貨狀態 = '已取消' THEN '已取消' ELSE customer_orders.取貨狀態 END,
-                                                    顧客備註 = excluded.顧客備註,
-                                                    商家備註 = excluded.商家備註;
-                                            """, (
-                                                oid, odate, name, phone, email, o_url, store, store_id, items_str, item_count, rev,
-                                                default_cost_twd, default_cost_twd, init_profit, init_status, c_note, m_note
-                                            ))
-                                            success_count += 1
-                                        conn.commit()
-                                        
-                                    log_system_action("訂單明細", current_operator, "1shop API 同步", f"透過 API 自動同步了 {success_count} 筆訂單")
-                                    st.success(f"✅ 大功告成！成功寫入 {success_count} 筆訂單，並且完美解析了商品明細！")
-                                    time.sleep(1.5)
-                                    st.rerun() 
-                            else:
-                                st.error(f"❌ 1shop 回傳錯誤：{data.get('msg')}")
-                        else:
-                            st.error(f"❌ 連線失敗，狀態碼：{response.status_code}")
+        # 🌟 核心修正：將權限檢查移到最外層，保護整個 t4 分頁的所有功能！
+        if not check_perm(role, "訂單明細", "can_upload"):
+            st.warning("🔒 您沒有權限從外部 (1shop 或 Excel) 導入或同步訂單資料。")
+        else:
+            # 👇 🌟 新增的 1shop 自動串接測試區塊 👇
+            st.markdown("---")
+            st.subheader("🛒 1shop API 自動同步")
+            if st.button("🔄 點我從 1shop 抓取最新訂單", type="primary"):
+                if not ONESHOP_APP_ID or not ONESHOP_SECRET:
+                    st.error("❌ 找不到 1shop 金鑰！請確認 Zeabur 的 Variables 是否設定正確。")
+                else:
+                    with st.spinner("正在向 1shop 請求資料中，請稍候..."):
+                        try:
+                            # === 第一階段：抓取訂單列表 ===
+                            base_url = "https://api.1shop.tw/v1/order" 
+                            params = {
+                                "appid": ONESHOP_APP_ID,
+                                "secret": ONESHOP_SECRET,
+                                "progress_status": "all",
+                                "payment_status": "all",
+                                "logistic_status": "all"
+                            }
                             
-                    except Exception as e:
-                        st.error(f"❌ 發生例外錯誤：{str(e)}")
+                            response = requests.get(base_url, params=params, timeout=10)
+                            
+                            if response.status_code == 200:
+                                data = response.json()
+                                if data.get("success") == 0: 
+                                    orders_list = data.get("data", {}).get("order", [])
+                                    
+                                    if not orders_list:
+                                        st.warning("⚠️ 1shop 目前沒有新的訂單可以同步。")
+                                    else:
+                                        success_count = 0
+                                        with get_db() as conn:
+                                            for basic_order in orders_list:
+                                                # 1. 取得基本資料
+                                                oid = str(basic_order.get("order_number", "")).strip()
+                                                if not oid: continue
+                                                
+                                                odate = str(basic_order.get("create_date", ""))
+                                                name = str(basic_order.get("name", ""))
+                                                phone = str(basic_order.get("phone", ""))
+                                                email = str(basic_order.get("email", ""))
+                                                store = str(basic_order.get("cvs_store_name", ""))
+                                                store_id = str(basic_order.get("cvs_store_id", ""))
+                                                rev = float(basic_order.get("total_price", 0.0))
+                                                c_note = str(basic_order.get("note", ""))
+                                                m_note = str(basic_order.get("shop_note", ""))
+                                                
+                                                # 👇 狀態邏輯：預設「待出貨」，若進度為已取消(cancelled)或其他(other)則設為「已取消」
+                                                raw_progress_status = str(basic_order.get("progress_status", "")).strip()
+                                                if raw_progress_status in ["cancelled", "other"]:
+                                                    init_status = "已取消"
+                                                else:
+                                                    init_status = "待出貨"
+                                                
+                                                # === 第二階段：拿著訂單號碼，去抓「詳細訂單」API ===
+                                                detail_url = f"https://api.1shop.tw/v1/order/{oid}"
+                                                
+                                                # 🌟 對抗 1shop 「10秒10次」限制的減速防呆
+                                                time.sleep(1.2)
+                                                
+                                                detail_response = requests.get(detail_url, params={"appid": ONESHOP_APP_ID, "secret": ONESHOP_SECRET}, timeout=10)
+                                                
+                                                items_str = "未抓取到品項"
+                                                item_count = 0
+                                                o_url = ""  # 預設訂單連結為空
+                                                
+                                                if detail_response.status_code == 200:
+                                                    detail_data = detail_response.json()
+                                                    if detail_data.get("success") == 0:
+                                                        
+                                                        # 👇 抓取訂單連結 (order_url 存在於詳細訂單的 order 中)
+                                                        detail_order_info = detail_data.get("data", {}).get("order", {})
+                                                        o_url = str(detail_order_info.get("order_url", ""))
+                                                        
+                                                        products = detail_data.get("data", {}).get("cart", {}).get("products") or []
+                                                        item_lines = []
+                                                        
+                                                        for p in products:
+                                                            p_type = p.get("product_type", "single")
+                                                            
+                                                            if p_type == "charge": 
+                                                                continue
+                                                                
+                                                            # 🌟 嚴格依照要求：只抓取 SKU (系統會自動翻譯名稱) + 數量
+                                                            if p_type == "bundle":
+                                                                bundle_contents = p.get("bundle", [])
+                                                                bundle_qty = int(p.get("quantity", 1)) 
+                                                                
+                                                                if isinstance(bundle_contents, list) and len(bundle_contents) > 0:
+                                                                    for b_item in bundle_contents:
+                                                                        b_sku = str(b_item.get("sku", "")).strip()
+                                                                        b_item_qty = int(b_item.get("quantity", 1)) * bundle_qty 
+                                                                        item_lines.append(f"• {b_sku} *{b_item_qty}")
+                                                                        item_count += b_item_qty
+                                                                else:
+                                                                    # 防呆：如果組合包沒寫內容物，抓這個組合包的 SKU
+                                                                    p_sku = str(p.get("sku", "")).strip()
+                                                                    item_lines.append(f"• {p_sku} *{bundle_qty}")
+                                                                    item_count += bundle_qty
+                                                                    
+                                                            else:
+                                                                p_sku = str(p.get("sku", "")).strip()
+                                                                qty = int(p.get("quantity", 1))
+                                                                item_lines.append(f"• {p_sku} *{qty}")
+                                                                item_count += qty
+
+                                                        if item_lines:
+                                                            items_str = "\n".join(item_lines)
+                                                        else:
+                                                            items_str = f"系統解析異常，原始資料: {str(products)}"
+                                                            
+                                                elif detail_response.status_code == 429:
+                                                    items_str = "⚠️ 抓取失敗：請求過快被 1shop 阻擋 (429)"
+                                                else:
+                                                    items_str = f"⚠️ 抓取異常 (狀態碼: {detail_response.status_code})"
+                                                
+                                                if item_count == 0: item_count = 1
+                                                
+                                                # 3. 計算成本與寫入資料庫
+                                                dynamic_cost_rmb = calculate_dynamic_rmb_cost(items_str)
+                                                default_cost_twd = dynamic_cost_rmb * rate
+                                                init_profit = rev - default_cost_twd
+
+                                                conn.execute("""
+                                                    INSERT INTO customer_orders 
+                                                    (訂單編號, 訂單日期, 姓名, 電話, 信箱, 訂單連結, 門市, 店號, 品項內容, 下單總數, 包裹應收, 商品成本, 物流運費, 出貨成本, 訂單損益, 物流編號, 取貨狀態, 顧客備註, 商家備註)
+                                                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0.0, ?, ?, '', ?, ?, ?)
+                                                    ON CONFLICT(訂單編號) DO UPDATE SET
+                                                        姓名 = excluded.姓名,
+                                                        電話 = excluded.電話,
+                                                        信箱 = excluded.信箱,
+                                                        訂單連結 = excluded.訂單連結,
+                                                        門市 = excluded.門市,
+                                                        店號 = excluded.店號,
+                                                        品項內容 = excluded.品項內容,
+                                                        下單總數 = excluded.下單總數,
+                                                        包裹應收 = excluded.包裹應收,
+                                                        商品成本 = excluded.商品成本,
+                                                        出貨成本 = excluded.出貨成本,
+                                                        訂單損益 = excluded.訂單損益,
+                                                        取貨狀態 = CASE WHEN excluded.取貨狀態 = '已取消' THEN '已取消' ELSE customer_orders.取貨狀態 END,
+                                                        顧客備註 = excluded.顧客備註,
+                                                        商家備註 = excluded.商家備註;
+                                                """, (
+                                                    oid, odate, name, phone, email, o_url, store, store_id, items_str, item_count, rev,
+                                                    default_cost_twd, default_cost_twd, init_profit, init_status, c_note, m_note
+                                                ))
+                                                success_count += 1
+                                            conn.commit()
+                                            
+                                        log_system_action("訂單明細", current_operator, "1shop API 同步", f"透過 API 自動同步了 {success_count} 筆訂單")
+                                        st.success(f"✅ 大功告成！成功寫入 {success_count} 筆訂單，並且完美解析了商品明細！")
+                                        time.sleep(1.5)
+                                        st.rerun() 
+                                else:
+                                    st.error(f"❌ 1shop 回傳錯誤：{data.get('msg')}")
+                            else:
+                                st.error(f"❌ 連線失敗，狀態碼：{response.status_code}")
+                                
+                        except Exception as e:
+                            st.error(f"❌ 發生例外錯誤：{str(e)}")
         st.markdown("---")
         # 👆 1shop 區塊結束 👆
 
