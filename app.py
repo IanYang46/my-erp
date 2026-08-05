@@ -1972,6 +1972,7 @@ elif menu == "訂單明細":
         for part in parts:
             part = part.strip()
             if not part: continue
+            part_lower = part.lower()  # 🌟 新增：將訂單品項轉小寫，防呆客人亂打
             
             match = re.search(r'[\*xX×]\s*(\d+)', part)
             qty = int(match.group(1)) if match else 1
@@ -1979,15 +1980,15 @@ elif menu == "訂單明細":
             item_rmb = 50.0
             matched = False
             
-            # 1. 優先以編碼比對
+            # 1. 優先以編碼比對 (全面不分大小寫)
             for code in all_codes:
-                if code in part:
+                if code.lower() in part_lower:
                     item_rmb = code_cost_map[code]
                     matched = True; break
-            # 2. 若無編碼，以商品名稱比對
+            # 2. 若無編碼，以商品名稱比對 (全面不分大小寫)
             if not matched:
                 for name in all_names:
-                    if name in part:
+                    if name.lower() in part_lower:
                         c = name_to_code[name]
                         item_rmb = code_cost_map.get(c, 50.0)
                         matched = True; break
@@ -2155,10 +2156,12 @@ elif menu == "訂單明細":
         def translate_items(text):
             res = str(text) if pd.notna(text) else ""
             if not res or res.strip() in ['nan', 'None']: return ""
+            import re  # 🌟 引入正則表達式
             for code in sorted_codes:
-                if code in res:
+                # 🌟 判斷與替換全面忽略大小寫 (IGNORECASE)
+                if code.lower() in res.lower():
                     # 執行精準替換
-                    res = res.replace(code, prod_map[code])
+                    res = re.sub(re.escape(code), prod_map[code], res, flags=re.IGNORECASE)
             return res
         # 👆 新增結束
 
@@ -3317,7 +3320,9 @@ elif menu == "訂單明細":
                                             item_count += 1
                                     item_count = item_count if item_count > 0 else 1
                                     
-                                    default_cost_twd = (item_count * 50.0) * rate
+                                    # 🌟 核心修正：直接呼叫上方寫好的智能成本引擎，不再寫死 50 塊！
+                                    dynamic_cost_rmb = calculate_dynamic_rmb_cost(items_str)
+                                    default_cost_twd = dynamic_cost_rmb * rate
                                     init_profit = rev - default_cost_twd
                                     
                                     cursor.execute("""
