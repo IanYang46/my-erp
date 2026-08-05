@@ -167,14 +167,19 @@ st.markdown(enterprise_erp_style, unsafe_allow_html=True)
 # --- 2. 穩定的資料庫連線 (終極智能包裝器 + 高速連線池) ---
 @st.cache_resource
 def get_connection_pool():
-    # 🌟 建立執行緒安全的連線池，並加入 Keepalives 心跳機制，防止雲端連線超時中斷！
+    db_url = os.getenv("DB_URL")
+    if not db_url:
+        # 🌟 防呆：如果找不到網址，溫柔地阻斷執行，防止伺服器發生 500 死機
+        st.error("⚠️ 本機測試錯誤：找不到資料庫網址！請設定 DB_URL 環境變數。")
+        st.stop() 
+        
     return pool.ThreadedConnectionPool(
         1, 20, 
-        os.getenv("DB_URL"),  # 👈 這裡！！最後面補上一個逗號「,」
+        db_url, 
         keepalives=1,
-        keepalives_idle=30,     # 閒置 30 秒後開始發送心跳確認
-        keepalives_interval=10, # 每 10 秒發送一次
-        keepalives_count=5      # 允許失敗 5 次
+        keepalives_idle=30,     
+        keepalives_interval=10, 
+        keepalives_count=5      
     )
 
 class PostgresCursorWrapper:
@@ -207,30 +212,36 @@ class PostgresConnWrapper:
         return cur
     def commit(self):
         self.conn.commit()
+    def rollback(self):              # 👈 🌟 補上這個救命指令
+        self.conn.rollback()         # 👈 🌟 補上這個救命指令
     def close(self):
-        pass # 🌟 重要魔法：把 close 留空。交給連線池管理，不強制掛斷電話
+        pass # 交給連線池管理
 
 @contextmanager
 def get_db():
     db_pool = get_connection_pool()
+    conn = None
     
-    # 🌟 核心修正：連線健康檢查 (Pre-ping 防呆機制)
+    # 🌟 核心修正：把取得連線 (getconn) 放進 try 裡面，防止網路中斷時直接當機
     for _ in range(3):
-        conn = db_pool.getconn() # 從池子裡借一條線
         try:
-            # 借用前，先敲門問一下資料庫「還活著嗎？」
+            conn = db_pool.getconn() 
             cur = conn.cursor()
             cur.execute("SELECT 1")
             cur.close()
-            break # 🚪 資料庫有回應！跳出迴圈準備使用這條線
+            break # 資料庫有回應！跳出迴圈
         except (psycopg2.OperationalError, psycopg2.DatabaseError):
-            # 💔 沒回應 (連線被雲端偷剪斷了)，把這條壞掉的線徹底銷毀，並重拿一條
-            db_pool.putconn(conn, close=True)
-    
+            if conn:
+                db_pool.putconn(conn, close=True)
+                conn = None
+                
+    if not conn:
+        st.error("🚨 無法連線至雲端資料庫，請檢查網路狀態。")
+        st.stop()
+        
     try:
         yield PostgresConnWrapper(conn)
     finally:
-        # 正常執行完畢，把存活的線還給池子，保持暢通
         db_pool.putconn(conn)
         
 # 給 Pandas 專用的引擎 (🌟 加入防呆機制)
