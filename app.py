@@ -512,58 +512,57 @@ if 'logged_in' not in st.session_state:
     mode = st.radio("請選擇模式", ["登入", "註冊"], horizontal=True)
     
     if mode == "登入":
-        # 🌟 移除 st.form 限制，解放「即時驗證」功能
-        user = st.text_input("帳號", autocomplete="username")
-        pw = st.text_input("密碼", type="password", autocomplete="current-password")
-        keep_logged_in = st.checkbox("記住帳號密碼", value=True)
-        
-        # 保留手動登入按鈕，給習慣點擊的使用者
-        manual_btn = st.button("登入", type="primary", use_container_width=True)
-        
-        res = None
-        # 只要帳密有內容，就去資料庫嘗試開門 (背景自動比對)
-        if user and pw:
-            with get_db() as conn:
-                cursor = conn.cursor()
-                cursor.execute("SELECT role, nickname FROM users WHERE username=%s AND password=%s", (user, encode_pw(pw)))
-                res = cursor.fetchone()
-
-        if res:
-            # ✅ 比對成功：觸發自動登入
-            user_role, user_nick = res[0], res[1]
+        # 🌟 加回 st.form 限制，強制抓取瀏覽器自動填入的數值
+        with st.form("login_form"):
+            user = st.text_input("帳號", autocomplete="username")
+            pw = st.text_input("密碼", type="password", autocomplete="current-password")
+            keep_logged_in = st.checkbox("記住帳號密碼", value=True)
             
-            with get_db() as conn:
-                cursor = conn.cursor()
-                cursor.execute("SELECT module, can_view, can_edit, can_upload, can_download FROM user_perms WHERE username=?", (user,))
-                perms_data = cursor.fetchall()
-                perm_dict = {row[0]: {'can_view': bool(row[1]), 'can_edit': bool(row[2]), 'can_upload': bool(row[3]), 'can_download': bool(row[4])} for row in perms_data}
-                
-                current_now = time.time()
-                st.session_state.update({
-                    'logged_in': True, 'role': user_role, 'user': user, 
-                    'nickname': user_nick if user_nick else user, 'perms': perm_dict,
-                    'last_active': current_now
-                })
-                
-                cursor.execute("UPDATE users SET last_active = ? WHERE username = ?", (current_now, user))
-                conn.commit()
-                
-            if keep_logged_in:
-                st.session_state['auto_login_key'] = user
-                cookie_manager.set('erp_auto_login', user, key="set_cookie_login", max_age=604800, same_site="none", secure=True)
-            else:
-                cookie_manager.set('erp_auto_login', user, key="set_cookie_login", same_site="none", secure=True)
+            # 使用 form_submit_button，按下的瞬間會強制同步所有輸入框
+            submitted = st.form_submit_button("登入", type="primary", use_container_width=True)
             
-            time.sleep(0.5) 
-            log_login_event(user)
-            st.rerun()
-            
-        elif manual_btn:
-            # ❌ 密碼錯誤：只有在使用者「手動點擊按鈕」時，才顯示錯誤提示 (防呆且避免打字打一半一直報錯)
+        if submitted:
             if not user or not pw:
                 st.error("請輸入帳號與密碼！")
             else:
-                st.error("帳號或密碼錯誤！")
+                res = None
+                with get_db() as conn:
+                    cursor = conn.cursor()
+                    cursor.execute("SELECT role, nickname FROM users WHERE username=%s AND password=%s", (user, encode_pw(pw)))
+                    res = cursor.fetchone()
+
+                if res:
+                    # ✅ 比對成功：觸發登入
+                    user_role, user_nick = res[0], res[1]
+                    
+                    with get_db() as conn:
+                        cursor = conn.cursor()
+                        cursor.execute("SELECT module, can_view, can_edit, can_upload, can_download FROM user_perms WHERE username=?", (user,))
+                        perms_data = cursor.fetchall()
+                        perm_dict = {row[0]: {'can_view': bool(row[1]), 'can_edit': bool(row[2]), 'can_upload': bool(row[3]), 'can_download': bool(row[4])} for row in perms_data}
+                        
+                        current_now = time.time()
+                        st.session_state.update({
+                            'logged_in': True, 'role': user_role, 'user': user, 
+                            'nickname': user_nick if user_nick else user, 'perms': perm_dict,
+                            'last_active': current_now
+                        })
+                        
+                        cursor.execute("UPDATE users SET last_active = ? WHERE username = ?", (current_now, user))
+                        conn.commit()
+                        
+                    if keep_logged_in:
+                        st.session_state['auto_login_key'] = user
+                        cookie_manager.set('erp_auto_login', user, key="set_cookie_login", max_age=604800, same_site="none", secure=True)
+                    else:
+                        cookie_manager.set('erp_auto_login', user, key="set_cookie_login", same_site="none", secure=True)
+                    
+                    time.sleep(0.5) 
+                    log_login_event(user)
+                    st.rerun()
+                else:
+                    # ❌ 密碼錯誤
+                    st.error("帳號或密碼錯誤！")
     else: 
         with st.form("register_form"):
             new_user = st.text_input("設定新帳號", autocomplete="username")
