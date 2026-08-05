@@ -2465,6 +2465,35 @@ elif menu == "訂單明細":
         # 取得被勾選的訂單編號
         selected_orders = edited_orders[edited_orders["🗑️ 勾選"] == True]['訂單編號'].tolist() if not edited_orders.empty and "🗑️ 勾選" in edited_orders.columns else []
 
+        # 🌟 導出完整詳細資料區塊
+        with c_export_detail:
+            if can_download:
+                if len(selected_orders) > 0:
+                    import io
+                    df_selected_detail = df_orders[df_orders['訂單編號'].isin(selected_orders)].copy()
+                    
+                    df_selected_detail['品項內容'] = df_selected_detail['品項翻譯']
+                    cols_to_drop = ['is_repeat', '品項內容_原始', '品項預覽', '品項翻譯', '下單總數', '物流運費_RMB']
+                    df_selected_detail = df_selected_detail.drop(columns=[c for c in cols_to_drop if c in df_selected_detail.columns])
+
+                    output_detail = io.BytesIO()
+                    with pd.ExcelWriter(output_detail, engine='openpyxl') as writer:
+                        df_selected_detail.to_excel(writer, index=False, sheet_name='訂單詳細資料')
+                    
+                    file_name_detail = f"訂單詳細匯出_{pd.Timestamp.today().strftime('%Y%m%d_%H%M')}.xlsx"
+
+                    st.download_button(
+                        label=f"📊 詳細資料 ({len(selected_orders)} 筆)",
+                        data=output_detail.getvalue(),
+                        file_name=file_name_detail,
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        use_container_width=True
+                    )
+                else:
+                    st.button("📊 請先勾選", disabled=True, use_container_width=True, key="btn_no_detail")
+            else:
+                st.button("🔒 無下載權限", disabled=True, use_container_width=True, key="btn_lock_detail")
+        
         # 🌟 導出列印面單區塊
         with c_export_label:
             if can_download:
@@ -2522,35 +2551,6 @@ elif menu == "訂單明細":
                     st.button("📥 請先勾選", disabled=True, use_container_width=True, key="btn_no_label")
             else:
                 st.button("🔒 無下載權限", disabled=True, use_container_width=True, key="btn_lock_label")
-
-        # 🌟 導出完整詳細資料區塊
-        with c_export_detail:
-            if can_download:
-                if len(selected_orders) > 0:
-                    import io
-                    df_selected_detail = df_orders[df_orders['訂單編號'].isin(selected_orders)].copy()
-                    
-                    df_selected_detail['品項內容'] = df_selected_detail['品項翻譯']
-                    cols_to_drop = ['is_repeat', '品項內容_原始', '品項預覽', '品項翻譯', '下單總數', '物流運費_RMB']
-                    df_selected_detail = df_selected_detail.drop(columns=[c for c in cols_to_drop if c in df_selected_detail.columns])
-
-                    output_detail = io.BytesIO()
-                    with pd.ExcelWriter(output_detail, engine='openpyxl') as writer:
-                        df_selected_detail.to_excel(writer, index=False, sheet_name='訂單詳細資料')
-                    
-                    file_name_detail = f"訂單詳細匯出_{pd.Timestamp.today().strftime('%Y%m%d_%H%M')}.xlsx"
-
-                    st.download_button(
-                        label=f"📊 詳細資料 ({len(selected_orders)} 筆)",
-                        data=output_detail.getvalue(),
-                        file_name=file_name_detail,
-                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                        use_container_width=True
-                    )
-                else:
-                    st.button("📊 請先勾選", disabled=True, use_container_width=True, key="btn_no_detail")
-            else:
-                st.button("🔒 無下載權限", disabled=True, use_container_width=True, key="btn_lock_detail")
 
         # 🌟 深港台重出表格導出區塊
         with c_export_reship:
@@ -3328,24 +3328,11 @@ elif menu == "訂單明細":
                                     else:
                                         raw_logi = ''
 
-                                    # 👇 精準解析品項數量 (支援換行、頓號分隔，且會抓取 *1, *2 等數量)
-                                    import re
+                                    # 👇 🌟 核心修正：拋棄寫死的 50 元，全面改用智能成本連動引擎
                                     items_str = str(row.get('品項內容', ''))
-                                    # 加了全形 ，
-                                    parts = re.split(r'[\n、,，]', items_str.replace('•', ''))
-                                    item_count = 0
-                                    for part in parts:
-                                        part = part.strip()
-                                        if not part: continue
-                                        # 加了乘號 ×
-                                        match = re.search(r'[\*xX×]\s*(\d+)', part)
-                                        if match:
-                                            item_count += int(match.group(1))
-                                        else:
-                                            item_count += 1
-                                    item_count = item_count if item_count > 0 else 1
+                                    dynamic_cost_rmb = calculate_dynamic_rmb_cost(items_str)
+                                    default_cost_twd = dynamic_cost_rmb * rate
                                     
-                                    default_cost_twd = (item_count * 50.0) * rate
                                     init_profit = rev - default_cost_twd
                                     
                                     cursor.execute("""
@@ -3680,20 +3667,20 @@ elif menu == "財務報表":
         is_admin = (st.session_state.get('role') == 'Admin')
         
         # 🌟 動態生成 Tab 分頁，為管理員新增日誌頁籤
-        tabs_list = ["💰 收支總表", "🏆 品牌/單品毛利分析", "🚚 物流結款核對 (詳細版)", "💱 匯率與成本設定"]
+        tabs_list = ["🚚 物流結款核對 (詳細版)", "💰 收支總表", "🏆 品牌/單品毛利分析", "💱 匯率與成本設定"]
         if is_admin:
             tabs_list.append("📜 財務異動日誌 (僅管理員可見)")
             
         tabs = st.tabs(tabs_list)
         t1, t2, t3, t4 = tabs[0], tabs[1], tabs[2], tabs[3]
         
-        with t1: st.info("統整銷售收入與採購支出。")
-        with t2: st.info("利用 FIFO (先進先出) 邏輯，精準計算各品牌與單品的實際利潤率。")
+        with t2: st.info("統整銷售收入與採購支出。")
+        with t3: st.info("利用 FIFO (先進先出) 邏輯，精準計算各品牌與單品的實際利潤率。")
         
         # ==========================================
         # --- 新增的第 3 頁籤：物流結款核對詳細版 ---
         # ==========================================
-        with t3:
+        with t1:
             st.info("💡 這裡為您展示系統內【每日】的結款預估明細。您可直接查看應收帳款，或在下方上傳物流收據進行自動抓錯！")
             
             # 確保系統有一個專門儲存「物流結款紀錄」的資料庫表
