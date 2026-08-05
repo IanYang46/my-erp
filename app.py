@@ -244,21 +244,22 @@ def get_db():
     finally:
         db_pool.putconn(conn)
         
-# 👇 🌟 新增這段：攔截 Pandas 警告並優化記憶體，徹底防止伺服器崩潰無限重啟 👇
+# 👇 🌟 新增這段：攔截 Pandas 警告並優化記憶體 (加入無限迴圈防護) 👇
 import warnings
 warnings.filterwarnings('ignore', category=UserWarning, module='pandas')
 
-_original_read_sql = pd.read_sql
-def _safe_read_sql(sql, con, index_col=None, coerce_float=True, params=None, parse_dates=None, columns=None, chunksize=None):
-    # 攔截自訂的資料庫包裝器，強制將 Pandas 查詢轉交給高效能的 SQLAlchemy 引擎
-    if isinstance(con, PostgresConnWrapper) and db_engine is not None:
-        con = db_engine
-        # 自動修正語法：將 SQLite 的 ? 參數替換為 PostgreSQL 專用的 %s
-        if isinstance(sql, str) and params is not None:
-            sql = sql.replace("?", "%s")
-    return _original_read_sql(sql, con, index_col=index_col, coerce_float=coerce_float, params=params, parse_dates=parse_dates, columns=columns, chunksize=chunksize)
+# 🌟 核心防護：確保攔截器只會掛載一次，避免 Streamlit 重新整理時引發無限迴圈當機 502！
+if not hasattr(pd, '_is_patched_for_erp'):
+    _original_read_sql = pd.read_sql
+    def _safe_read_sql(sql, con, index_col=None, coerce_float=True, params=None, parse_dates=None, columns=None, chunksize=None):
+        if isinstance(con, PostgresConnWrapper) and db_engine is not None:
+            con = db_engine
+            if isinstance(sql, str) and params is not None:
+                sql = sql.replace("?", "%s")
+        return _original_read_sql(sql, con, index_col=index_col, coerce_float=coerce_float, params=params, parse_dates=parse_dates, columns=columns, chunksize=chunksize)
 
-pd.read_sql = _safe_read_sql
+    pd.read_sql = _safe_read_sql
+    pd._is_patched_for_erp = True # 打上安全標記，宣告已成功攔截
 # 👆 攔截器新增結束 👆
     
 # --- 3. 初始化資料庫與預設權限 ---
