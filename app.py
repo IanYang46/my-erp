@@ -207,8 +207,6 @@ class PostgresConnWrapper:
         return cur
     def commit(self):
         self.conn.commit()
-    def rollback(self):           # 👈 🌟 補上這個救命的還原指令
-        self.conn.rollback()      # 👈 🌟 補上這個救命的還原指令
     def close(self):
         pass # 🌟 重要魔法：把 close 留空。交給連線池管理，不強制掛斷電話
 
@@ -1974,7 +1972,6 @@ elif menu == "訂單明細":
         for part in parts:
             part = part.strip()
             if not part: continue
-            part_lower = part.lower()  # 🌟 新增：將訂單品項轉小寫，防呆客人亂打
             
             match = re.search(r'[\*xX×]\s*(\d+)', part)
             qty = int(match.group(1)) if match else 1
@@ -1982,15 +1979,15 @@ elif menu == "訂單明細":
             item_rmb = 50.0
             matched = False
             
-            # 1. 優先以編碼比對 (全面不分大小寫)
+            # 1. 優先以編碼比對
             for code in all_codes:
-                if code.lower() in part_lower:
+                if code in part:
                     item_rmb = code_cost_map[code]
                     matched = True; break
-            # 2. 若無編碼，以商品名稱比對 (全面不分大小寫)
+            # 2. 若無編碼，以商品名稱比對
             if not matched:
                 for name in all_names:
-                    if name.lower() in part_lower:
+                    if name in part:
                         c = name_to_code[name]
                         item_rmb = code_cost_map.get(c, 50.0)
                         matched = True; break
@@ -2021,6 +2018,58 @@ elif menu == "訂單明細":
             rate_val = cursor.execute("SELECT value FROM settings WHERE key='exchange_rate'").fetchone()[0]
             cursor.execute("UPDATE customer_orders SET 物流運費_RMB = 物流運費 / ? WHERE 物流運費 > 0", (rate_val,))
             conn.commit()
+
+        # 🌟 系統熱更新：精準解析「所有」歷史訂單品項數量 (突破原本只抓 0 元的限制)
+        try:
+            rate_val = cursor.execute("SELECT value FROM settings WHERE key='exchange_rate'").fetchone()[0]
+            
+            # 💡 修正 1：不再只抓 WHERE 商品成本 = 0，因為舊系統已經把它們算成 50 (1件) 存起來了！
+            cursor.execute("SELECT 訂單編號, 品項內容, 商品成本 FROM customer_orders")
+            all_orders = cursor.fetchall()
+            
+            if all_orders:
+                import re
+                for row_data in all_orders:
+                    oid = row_data[0]
+                    items_str = str(row_data[1]) if row_data[1] else ""
+                    current_cost_twd = float(row_data[2] or 0.0)
+                    
+                    # 推算舊版錯誤邏輯算出來的台幣成本 (當初1個黑點算50)
+                    old_item_count = items_str.count('•') if items_str.count('•') > 0 else 1
+                    old_calc_cost_twd = (old_item_count * 50.0) * rate_val
+                    
+                    # 💡 修正 2：如果成本是 0，或者「被舊邏輯錯算成 50 塊(或舊黑點倍數)」，才允許覆蓋重算
+                    # (這樣可以完美保護您在編輯後台「手動更改過」的特殊成本，不被系統洗掉)
+                    if current_cost_twd == 0 or abs(current_cost_twd - old_calc_cost_twd) < 1 or abs(current_cost_twd - (50.0 * rate_val)) < 1:
+                        
+                        # 拆分換行、頓號、逗號 (偷偷加了全形逗號 '，' 防呆)
+                        parts = re.split(r'[\n、,，]', items_str.replace('•', ''))
+                        total_q = 0
+                        for part in parts:
+                            part = part.strip()
+                            if not part: continue
+                            # 找尋 *1, *2, x2, X3, ×2 等數量標記 (新增乘號 × 支援)
+                            match = re.search(r'[\*xX×]\s*(\d+)', part)
+                            if match:
+                                total_q += int(match.group(1))
+                            else:
+                                total_q += 1
+                                
+                        new_cost_rmb = calculate_dynamic_rmb_cost(items_str)
+                        new_cost_twd = new_cost_rmb * rate_val
+                        
+                        # 若新算出來的成本跟現在資料庫裡的不同，代表抓到兇手，立刻執行 UPDATE 修正！
+                        if abs(current_cost_twd - new_cost_twd) > 0.1:
+                            cursor.execute("""
+                                UPDATE customer_orders 
+                                SET 商品成本 = ?, 
+                                    出貨成本 = ? + 物流運費,
+                                    訂單損益 = 包裹應收 - (? + 物流運費)
+                                WHERE 訂單編號 = ?
+                            """, (new_cost_twd, new_cost_twd, new_cost_twd, oid))
+                conn.commit()
+        except Exception as e:
+            conn.rollback()
             
         # 👇👇👇 請把這段插入在這裡：升級資料庫的日期欄位型態 👇👇👇
         try:
@@ -2052,41 +2101,6 @@ elif menu == "訂單明細":
         st.toast(f"✅ 匯率已更新為 {new_rate}！系統已自動幫您重新核算所有訂單的台幣運費與利潤。")
         time.sleep(1.5)
         st.rerun()
-
-    # 👇 🌟 新增：強制重算所有訂單成本按鈕 👇
-    st.sidebar.divider()
-    if st.sidebar.button("⚠️ 強制重新核算所有訂單成本", type="primary", key="btn_force_recalc"):
-        with st.spinner("🔄 正在讀取庫存最新成本，全面覆寫歷史訂單中..."):
-            with get_db() as conn:
-                cursor = conn.cursor()
-                cursor.execute("SELECT 訂單編號, 品項內容, 包裹應收, 物流運費 FROM customer_orders")
-                all_rows = cursor.fetchall()
-                
-                update_count = 0
-                for row_data in all_rows:
-                    oid = row_data[0]
-                    items_str = str(row_data[1]) if row_data[1] else ""
-                    rev = float(row_data[2] or 0.0)
-                    ship_fee_twd = float(row_data[3] or 0.0)
-                    
-                    # 呼叫我們升級過的引擎，算出最新的人民幣成本
-                    new_cost_rmb = calculate_dynamic_rmb_cost(items_str)
-                    new_cost_twd = new_cost_rmb * rate
-                    new_total_cost = new_cost_twd + ship_fee_twd
-                    new_profit = rev - new_total_cost
-                    
-                    # 不管三七二十一，直接暴力覆寫舊成本！
-                    cursor.execute("""
-                        UPDATE customer_orders 
-                        SET 商品成本 = ?, 出貨成本 = ?, 訂單損益 = ?
-                        WHERE 訂單編號 = ?
-                    """, (new_cost_twd, new_total_cost, new_profit, oid))
-                    update_count += 1
-                    
-                conn.commit()
-            st.sidebar.success(f"✅ 大功告成！已成功強制重新計算 {update_count} 筆歷史訂單的成本與利潤！")
-            time.sleep(2)
-            st.rerun()
 
     # 🌟 1. 取得資料庫資料
     with get_db() as conn:
@@ -2141,12 +2155,10 @@ elif menu == "訂單明細":
         def translate_items(text):
             res = str(text) if pd.notna(text) else ""
             if not res or res.strip() in ['nan', 'None']: return ""
-            import re  # 🌟 引入正則表達式
             for code in sorted_codes:
-                # 🌟 判斷與替換全面忽略大小寫 (IGNORECASE)
-                if code.lower() in res.lower():
+                if code in res:
                     # 執行精準替換
-                    res = re.sub(re.escape(code), prod_map[code], res, flags=re.IGNORECASE)
+                    res = res.replace(code, prod_map[code])
             return res
         # 👆 新增結束
 
@@ -3305,9 +3317,7 @@ elif menu == "訂單明細":
                                             item_count += 1
                                     item_count = item_count if item_count > 0 else 1
                                     
-                                    # 🌟 核心修正：直接呼叫上方寫好的智能成本引擎，不再寫死 50 塊！
-                                    dynamic_cost_rmb = calculate_dynamic_rmb_cost(items_str)
-                                    default_cost_twd = dynamic_cost_rmb * rate
+                                    default_cost_twd = (item_count * 50.0) * rate
                                     init_profit = rev - default_cost_twd
                                     
                                     cursor.execute("""
