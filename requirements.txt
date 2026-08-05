@@ -4,5 +4,4 @@ openpyxl
 extra-streamlit-components
 psycopg2-binary
 SQLAlchemy
-fastapi>=0.109.2
-starlette>=0.36.3
+
