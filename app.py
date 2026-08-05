@@ -2103,6 +2103,41 @@ elif menu == "訂單明細":
         time.sleep(1.5)
         st.rerun()
 
+    # 👇 🌟 新增：強制重算所有訂單成本按鈕 👇
+    st.sidebar.divider()
+    if st.sidebar.button("⚠️ 強制重新核算所有訂單成本", type="primary", key="btn_force_recalc"):
+        with st.spinner("🔄 正在讀取庫存最新成本，全面覆寫歷史訂單中..."):
+            with get_db() as conn:
+                cursor = conn.cursor()
+                cursor.execute("SELECT 訂單編號, 品項內容, 包裹應收, 物流運費 FROM customer_orders")
+                all_rows = cursor.fetchall()
+                
+                update_count = 0
+                for row_data in all_rows:
+                    oid = row_data[0]
+                    items_str = str(row_data[1]) if row_data[1] else ""
+                    rev = float(row_data[2] or 0.0)
+                    ship_fee_twd = float(row_data[3] or 0.0)
+                    
+                    # 呼叫我們升級過的引擎，算出最新的人民幣成本
+                    new_cost_rmb = calculate_dynamic_rmb_cost(items_str)
+                    new_cost_twd = new_cost_rmb * rate
+                    new_total_cost = new_cost_twd + ship_fee_twd
+                    new_profit = rev - new_total_cost
+                    
+                    # 不管三七二十一，直接暴力覆寫舊成本！
+                    cursor.execute("""
+                        UPDATE customer_orders 
+                        SET 商品成本 = ?, 出貨成本 = ?, 訂單損益 = ?
+                        WHERE 訂單編號 = ?
+                    """, (new_cost_twd, new_total_cost, new_profit, oid))
+                    update_count += 1
+                    
+                conn.commit()
+            st.sidebar.success(f"✅ 大功告成！已成功強制重新計算 {update_count} 筆歷史訂單的成本與利潤！")
+            time.sleep(2)
+            st.rerun()
+
     # 🌟 1. 取得資料庫資料
     with get_db() as conn:
         df_orders = pd.read_sql("SELECT * FROM customer_orders ORDER BY 訂單日期 DESC", conn)
