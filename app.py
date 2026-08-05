@@ -248,30 +248,35 @@ def get_db():
 # 👇 🌟 請將這整段完整貼在 finally: db_pool.putconn(conn) 的正下方 👇
 # ==========================================
 
-# 給 Pandas 專用的引擎 (剛剛被不小心刪除的關鍵變數！)
-db_url = os.getenv("DB_URL") or os.getenv("DATABASE_URL") or ""
-if db_url:
-    db_engine = create_engine(db_url.replace("postgres://", "postgresql://"))
-else:
-    db_engine = None
+# 1. 給 Pandas 專用的引擎 (🌟 加上快取，防止無限建立連線撐爆記憶體！)
+@st.cache_resource
+def get_db_engine():
+    db_url = os.getenv("DB_URL") or os.getenv("DATABASE_URL") or ""
+    if db_url:
+        # 加入 pool_size 限制，保護資料庫連線不溢出
+        return create_engine(db_url.replace("postgres://", "postgresql://"), pool_size=5, max_overflow=10)
+    return None
 
-# 🌟 攔截 Pandas 警告並優化記憶體 (加入無限迴圈防護) 
+# 2. 🌟 攔截 Pandas 警告並優化記憶體 (終極安全綁定版) 
 import warnings
 warnings.filterwarnings('ignore', category=UserWarning, module='pandas')
 
-if not hasattr(pd, '_is_patched_for_erp'):
-    _original_read_sql = pd.read_sql
-    def _safe_read_sql(sql, con, index_col=None, coerce_float=True, params=None, parse_dates=None, columns=None, chunksize=None):
-        # 攔截自訂的資料庫包裝器，強制將 Pandas 查詢轉交給高效能的 SQLAlchemy 引擎
-        if isinstance(con, PostgresConnWrapper) and db_engine is not None:
-            con = db_engine
-            # 自動修正語法：將 SQLite 的 ? 參數替換為 PostgreSQL 專用的 %s
-            if isinstance(sql, str) and params is not None:
-                sql = sql.replace("?", "%s")
-        return _original_read_sql(sql, con, index_col=index_col, coerce_float=coerce_float, params=params, parse_dates=parse_dates, columns=columns, chunksize=chunksize)
+# 確保只會被攔截一次，且原始函數綁定在 pd 本身上，不怕 Streamlit 失憶
+if not hasattr(pd, '_erp_orig_read_sql'):
+    pd._erp_orig_read_sql = pd.read_sql
+    
+    def _erp_safe_read_sql(sql, con, *args, **kwargs):
+        # 如果發現使用的是自訂的連線包裝器，就自動切換成我們的高速快取引擎
+        if isinstance(con, PostgresConnWrapper):
+            engine = get_db_engine()
+            if engine is not None:
+                con = engine
+                # 自動修正語法：將 SQLite 的 ? 參數替換為 PostgreSQL 專用的 %s
+                if isinstance(sql, str) and kwargs.get('params') is not None:
+                    sql = sql.replace("?", "%s")
+        return pd._erp_orig_read_sql(sql, con, *args, **kwargs)
 
-    pd.read_sql = _safe_read_sql
-    pd._is_patched_for_erp = True # 打上安全標記，宣告已成功攔截
+    pd.read_sql = _erp_safe_read_sql
 
 # ==========================================
 # 👆 🌟 貼上到此結束，下方緊接著就是 init_db_v7() 👆
