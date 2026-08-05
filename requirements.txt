@@ -1,6 +1,8 @@
-streamlit
+streamlit==1.56.0
+pandas==2.2.3
+pyarrow==18.1.0
+numpy==1.26.4
 starlette<=0.37.2
-pandas
 openpyxl
 extra-streamlit-components
 psycopg2-binary
