@@ -2223,124 +2223,113 @@ elif menu == "訂單明細":
 
         df_orders['is_repeat'] = df_orders.apply(check_repeat, axis=1)
 
-# 🌟 3. 營運數據看板 (加入特規：對 CS 帳號隱藏)
-if st.session_state.get('user') != 'CS':
-    st.subheader("📊 營運數據看板")
-    c_time, c_custom = st.columns([1, 2])
-    # 👇 這裡新增了「本週」選項
-    time_filter = c_time.selectbox("📅 選擇統計區間", ["全部", "今日", "本週", "本月", "本季", "今年", "自訂區間"])
-    
-    df_dash = df_orders.copy()
-    if not df_dash.empty:
-        df_dash['訂單日期_dt'] = pd.to_datetime(df_dash['訂單日期'], errors='coerce')
-        now = pd.Timestamp.today()
+    # 🌟 3. 營運數據看板 (加入特規：對 CS 帳號隱藏)
+    if st.session_state.get('user') != 'CS':
+        st.subheader("📊 營運數據看板")
+        c_time, c_custom = st.columns([1, 2])
+        # 👇 這裡新增了「本週」選項
+        time_filter = c_time.selectbox("📅 選擇統計區間", ["全部", "今日", "本週", "本月", "本季", "今年", "自訂區間"])
         
-        if time_filter == "今日": 
-            df_dash = df_dash[df_dash['訂單日期_dt'].dt.date == now.date()]
-        elif time_filter == "本週": 
-            # 👇 這裡新增「本週」的判斷邏輯 (依據 ISO 標準，週一到週日為一週)
-            current_year = now.isocalendar().year
-            current_week = now.isocalendar().week
-            df_dash = df_dash[(df_dash['訂單日期_dt'].dt.isocalendar().year == current_year) & (df_dash['訂單日期_dt'].dt.isocalendar().week == current_week)]
-        elif time_filter == "本月": 
-            df_dash = df_dash[(df_dash['訂單日期_dt'].dt.year == now.year) & (df_dash['訂單日期_dt'].dt.month == now.month)]
-        elif time_filter == "本季":
-            current_quarter = (now.month - 1) // 3 + 1
-            df_dash = df_dash[(df_dash['訂單日期_dt'].dt.year == now.year) & (df_dash['訂單日期_dt'].dt.quarter == current_quarter)]
-        elif time_filter == "今年": 
-            df_dash = df_dash[df_dash['訂單日期_dt'].dt.year == now.year]
-        elif time_filter == "自訂區間":
-            import datetime
+        df_dash = df_orders.copy()
+        if not df_dash.empty:
+            df_dash['訂單日期_dt'] = pd.to_datetime(df_dash['訂單日期'], errors='coerce')
+            now = pd.Timestamp.today()
             
-            # 👇 1. 這裡必須先設定好今天的日期與變數，不然下面找不到會報錯！
-            today = datetime.datetime.today()
-            year_list = list(range(2025, 2030))
-            default_year_idx = year_list.index(today.year) if today.year in year_list else 1
-            default_month_idx = today.month - 1
-            default_day_idx = today.day - 1
+            if time_filter == "今日": 
+                df_dash = df_dash[df_dash['訂單日期_dt'].dt.date == now.date()]
+            elif time_filter == "本週": 
+                current_year = now.isocalendar().year
+                current_week = now.isocalendar().week
+                df_dash = df_dash[(df_dash['訂單日期_dt'].dt.isocalendar().year == current_year) & (df_dash['訂單日期_dt'].dt.isocalendar().week == current_week)]
+            elif time_filter == "本月": 
+                df_dash = df_dash[(df_dash['訂單日期_dt'].dt.year == now.year) & (df_dash['訂單日期_dt'].dt.month == now.month)]
+            elif time_filter == "本季":
+                current_quarter = (now.month - 1) // 3 + 1
+                df_dash = df_dash[(df_dash['訂單日期_dt'].dt.year == now.year) & (df_dash['訂單日期_dt'].dt.quarter == current_quarter)]
+            elif time_filter == "今年": 
+                df_dash = df_dash[df_dash['訂單日期_dt'].dt.year == now.year]
+            elif time_filter == "自訂區間":
+                import datetime
+                today = datetime.datetime.today()
+                year_list = list(range(2025, 2030))
+                default_year_idx = year_list.index(today.year) if today.year in year_list else 1
+                default_month_idx = today.month - 1
+                default_day_idx = today.day - 1
 
-            # 建立開始與結束日期的選單
-            st.write("🗓️ **請設定日期範圍**")
-            
-            # 第一列：開始日期 (預設為今天)
-            c1, c2, c3 = st.columns(3)
-            start_y = c1.selectbox("開始年份", year_list, index=default_year_idx)
-            start_m = c2.selectbox("開始月份", list(range(1, 13)), index=default_month_idx)
-            start_d = c3.selectbox("開始日期", list(range(1, 32)), index=default_day_idx)
-            
-            # 第二列：結束日期 (同樣預設為今天)
-            c4, c5, c6 = st.columns(3)
-            end_y = c4.selectbox("結束年份", year_list, index=default_year_idx)
-            end_m = c5.selectbox("結束月份", list(range(1, 13)), index=11) # 預設選12月
-            end_d = c6.selectbox("結束日期", list(range(1, 32)), index=30) # 預設選31號
-            
-            # 轉換為 Timestamp 物件以便比對
-            try:
-                start_dt = pd.Timestamp(year=start_y, month=start_m, day=start_d)
-                end_dt = pd.Timestamp(year=end_y, month=end_m, day=end_d)
+                st.write("🗓️ **請設定日期範圍**")
+                c1, c2, c3 = st.columns(3)
+                start_y = c1.selectbox("開始年份", year_list, index=default_year_idx)
+                start_m = c2.selectbox("開始月份", list(range(1, 13)), index=default_month_idx)
+                start_d = c3.selectbox("開始日期", list(range(1, 32)), index=default_day_idx)
                 
-                if start_dt > end_dt:
-                    st.error("❌ 開始日期不能晚於結束日期！")
-                else:
-                    # 篩選邏輯：包含開始與結束當天
-                    df_dash = df_dash[(df_dash['訂單日期_dt'] >= start_dt) & (df_dash['訂單日期_dt'] <= end_dt)]
-            except ValueError:
-                st.warning("⚠️ 請確認選擇的日期是否合理 (例如：2月沒有30號)")
-    
-    total_orders = len(df_dash)
-    total_revenue = df_dash['包裹應收'].sum() if not df_dash.empty else 0
-    total_cost = df_dash['商品成本'].sum() if not df_dash.empty else 0
-    total_shipping = df_dash['物流運費'].sum() if not df_dash.empty else 0
-    total_est_profit = df_dash['訂單損益'].sum() if not df_dash.empty else 0
-    
-    # 👇 🌟 更新你指定的狀態對應邏輯
-    picked_up = len(df_dash[df_dash['取貨狀態'] == '簽收']) if not df_dash.empty else 0
-    # 總退回數：包含 退回、已上架、已重出、客訴
-    unclaimed = len(df_dash[df_dash['取貨狀態'].isin(['退回', '已上架', '已重出', '客訴'])]) if not df_dash.empty else 0
-    # 未處理訂單：只算 待出貨
-    pending = len(df_dash[df_dash['取貨狀態'] == '待出貨']) if not df_dash.empty else 0
-    # 總取消數：只算 已取消
-    cancelled = len(df_dash[df_dash['取貨狀態'] == '已取消']) if not df_dash.empty else 0
-    
-    actual_profit = 0
-    if not df_dash.empty:
-        profit_from_picked = df_dash[df_dash['取貨狀態'] == '簽收']['訂單損益'].sum()
-        loss_from_unclaimed = df_dash[df_dash['取貨狀態'] == '退回']['物流運費'].sum()
-        actual_profit = profit_from_picked - loss_from_unclaimed
+                c4, c5, c6 = st.columns(3)
+                end_y = c4.selectbox("結束年份", year_list, index=default_year_idx)
+                end_m = c5.selectbox("結束月份", list(range(1, 13)), index=11) 
+                end_d = c6.selectbox("結束日期", list(range(1, 32)), index=30) 
+                
+                try:
+                    start_dt = pd.Timestamp(year=start_y, month=start_m, day=start_d)
+                    end_dt = pd.Timestamp(year=end_y, month=end_m, day=end_d)
+                    if start_dt > end_dt:
+                        st.error("❌ 開始日期不能晚於結束日期！")
+                    else:
+                        df_dash = df_dash[(df_dash['訂單日期_dt'] >= start_dt) & (df_dash['訂單日期_dt'] <= end_dt)]
+                except ValueError:
+                    st.warning("⚠️ 請確認選擇的日期是否合理")
+        
+        total_orders = len(df_dash)
+        total_revenue = df_dash['包裹應收'].sum() if not df_dash.empty else 0
+        total_cost = df_dash['商品成本'].sum() if not df_dash.empty else 0
+        total_shipping = df_dash['物流運費'].sum() if not df_dash.empty else 0
+        total_est_profit = df_dash['訂單損益'].sum() if not df_dash.empty else 0
+        
+        picked_up = len(df_dash[df_dash['取貨狀態'] == '簽收']) if not df_dash.empty else 0
+        unclaimed = len(df_dash[df_dash['取貨狀態'].isin(['退回', '已上架', '已重出', '客訴'])]) if not df_dash.empty else 0
+        pending = len(df_dash[df_dash['取貨狀態'] == '待出貨']) if not df_dash.empty else 0
+        cancelled = len(df_dash[df_dash['取貨狀態'] == '已取消']) if not df_dash.empty else 0
+        
+        actual_profit = 0
+        if not df_dash.empty:
+            profit_from_picked = df_dash[df_dash['取貨狀態'] == '簽收']['訂單損益'].sum()
+            loss_from_unclaimed = df_dash[df_dash['取貨狀態'] == '退回']['物流運費'].sum()
+            actual_profit = profit_from_picked - loss_from_unclaimed
 
-    st.markdown("""
-    <style>
-    div[data-testid="metric-container"] {
-        background-color: #f8f9fa; border: 1px solid #e9ecef; padding: 10px; border-radius: 8px;
-    }
-    </style>
-    """, unsafe_allow_html=True)
-    
-    # 第一排：核心營收與利潤 (4個欄位)
-    m1, m2, m3, m4 = st.columns(4)
-    m1.metric("📦 總訂單數", f"{total_orders:,}")
-    m2.metric("💰 總營業額", f"${total_revenue:,.0f}")
-    m3.metric("📈 總預估利潤", f"${total_est_profit:,.0f}")
-    m4.metric("💎 總實際利潤", f"${actual_profit:,.0f}", help="實際利潤 = (簽收的訂單損益) - (退回所損失的物流運費)")
-    
-    # 增加一點排與排之間的呼吸空間
-    st.markdown("<br>", unsafe_allow_html=True) 
+        st.markdown("""
+        <style>
+        div[data-testid="metric-container"] {
+            background-color: #f8f9fa; border: 1px solid #e9ecef; padding: 10px; border-radius: 8px;
+        }
+        </style>
+        """, unsafe_allow_html=True)
+        
+        m1, m2, m3, m4 = st.columns(4)
+        m1.metric("📦 總訂單數", f"{total_orders:,}")
+        m2.metric("💰 總營業額", f"${total_revenue:,.0f}")
+        m3.metric("📈 總預估利潤", f"${total_est_profit:,.0f}")
+        m4.metric("💎 總實際利潤", f"${actual_profit:,.0f}")
+        
+        st.markdown("<br>", unsafe_allow_html=True) 
 
-    # 第二排：成本與物流狀態 (4個欄位)
-    m5, m6, m7, m8 = st.columns(4)
-    m5.metric("🛒 總成本", f"${total_cost:,.0f}")
-    m6.metric("🚚 總運費", f"${total_shipping:,.0f}")
-    m7.metric("✅ 總簽收數", f"{picked_up:,}")
-    m8.metric("❌ 總退回數", f"{unclaimed:,}", help="包含：退回、已上架、已重出、客訴")
-    
-    st.markdown("<br>", unsafe_allow_html=True)
+        m5, m6, m7, m8 = st.columns(4)
+        m5.metric("🛒 總成本", f"${total_cost:,.0f}")
+        m6.metric("🚚 總運費", f"${total_shipping:,.0f}")
+        m7.metric("✅ 總簽收數", f"{picked_up:,}")
+        m8.metric("❌ 總退回數", f"{unclaimed:,}")
+        
+        st.markdown("<br>", unsafe_allow_html=True)
 
-    # 第三排：待處理與取消 (切成 4 格但只放 2 個，維持一致的寬度)
-    m9, m10, _1, _2 = st.columns(4)
-    m9.metric("⏳ 未處理訂單", f"{pending:,}", help="僅計算狀態為「待出貨」的訂單")
-    m10.metric("🚫 總取消數", f"{cancelled:,}")
+        m9, m10, _1, _2 = st.columns(4)
+        m9.metric("⏳ 未處理訂單", f"{pending:,}")
+        m10.metric("🚫 總取消數", f"{cancelled:,}")
 
-    st.divider()
+        st.divider()
+    else:
+        # CS 帳號：隱藏儀表板，並預設只給近3個月資料防止卡頓
+        df_dash = df_orders.copy()
+        if not df_dash.empty:
+            df_dash['訂單日期_dt'] = pd.to_datetime(df_dash['訂單日期'], errors='coerce')
+            now = pd.Timestamp.today()
+            df_dash = df_dash[df_dash['訂單日期_dt'] >= (now - pd.DateOffset(months=3))]
     
     can_edit = check_perm(role, "訂單明細", "can_edit")
     can_download = check_perm(role, "訂單明細", "can_download") # 👈 新增下載權限變數
