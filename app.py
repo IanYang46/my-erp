@@ -320,6 +320,25 @@ def init_db_v7():
         
         # 7. 預設 Admin 帳號
         cursor.execute("INSERT INTO users (username, password, nickname, role) VALUES ('admin', %s, '總管理員', 'Admin') ON CONFLICT (username) DO NOTHING", (encode_pw('123456'),))
+
+        # 🌟 自動建立指定的 CS 訪客/客服帳號
+        cursor.execute("INSERT INTO users (username, password, nickname, role) VALUES ('CS', %s, '客服/訪客', 'CS') ON CONFLICT (username) DO NOTHING", (encode_pw('123456'),))
+        
+        # 🌟 為 CS 帳號預設設定：僅允許查看「訂單明細」，其餘全部關閉
+        default_cs_perms = [
+            ("CS", "首頁", False, False, False, False),
+            ("CS", "商品訊息", False, False, False, False),
+            ("CS", "商品庫存", False, False, False, False),
+            ("CS", "採購管理", False, False, False, False),
+            ("CS", "訂單明細", True, False, False, False),  # 僅允許查看
+            ("CS", "財務報表", False, False, False, False),
+        ]
+        for p in default_cs_perms:
+            cursor.execute("""
+                INSERT INTO user_perms (username, module, can_view, can_edit, can_upload, can_download) 
+                VALUES (%s, %s, %s, %s, %s, %s) 
+                ON CONFLICT (username, module) DO NOTHING
+            """, p)
         
         # 8. 日誌表
         cursor.execute('''CREATE TABLE IF NOT EXISTS product_logs (id SERIAL PRIMARY KEY, timestamp TEXT, operator TEXT, action_type TEXT, details TEXT)''')
@@ -2399,11 +2418,19 @@ elif menu == "訂單明細":
         if not df_display.empty:
             df_display['⚠️ 警示'] = df_display['is_repeat'].apply(lambda x: '🚨 重複' if x else '')
 
-        if show_all_cols:
-            display_cols = ["🗑️ 勾選", "⚠️ 警示", "訂單日期", "訂單編號", "訂單連結", "姓名", "電話", "信箱", "門市", "店號", "品項預覽", "包裹應收", "商品成本", "物流運費", "出貨成本", "訂單損益", "物流編號", "取貨狀態", "取貨日期", "顧客備註", "商家備註"]
+        # 🌟 針對 CS 帳號與一般管理員套用不同的顯示欄位
+        if st.session_state.get('user') == 'CS':
+            # 嚴格對應你要求的 15 個欄位：訂單日期、訂單編號、訂單連結、姓名、電話、信箱、門市、店號、品項內容、包裹應收、物流編號、狀態、取貨日期、顧客備註、商家備註
+            display_cols = [
+                "訂單日期", "訂單編號", "訂單連結", "姓名", "電話", "信箱", 
+                "門市", "店號", "品項預覽", "包裹應收", "物流編號", 
+                "取貨狀態", "取貨日期", "顧客備註", "商家備註"
+            ]
         else:
-            # 預設把信箱、顧客備註、商家備註拿掉，讓它們「縮起來」
-            display_cols = ["🗑️ 勾選", "⚠️ 警示", "訂單編號", "訂單日期", "姓名", "電話", "品項預覽", "包裹應收", "出貨成本", "訂單損益", "物流編號", "取貨狀態"]
+            if show_all_cols:
+                display_cols = ["🗑️ 勾選", "⚠️ 警示", "訂單日期", "訂單編號", "訂單連結", "姓名", "電話", "信箱", "門市", "店號", "品項預覽", "包裹應收", "商品成本", "物流運費", "出貨成本", "訂單損益", "物流編號", "取貨狀態", "取貨日期", "顧客備註", "商家備註"]
+            else:
+                display_cols = ["🗑️ 勾選", "⚠️ 警示", "訂單編號", "訂單日期", "姓名", "電話", "品項預覽", "包裹應收", "出貨成本", "訂單損益", "物流編號", "取貨狀態"]
 
         if not df_display.empty:
             # 1. 確保訂單日期是真正的 datetime 格式 (才能精準排序與格式化)
@@ -2908,6 +2935,49 @@ elif menu == "訂單明細":
                             except Exception as e:
                                 st.error(f"❌ 轉單失敗：{str(e)}")
 
+    # =========== 以下為新增的【運費漏填檢查區】 ===========
+        st.markdown("---")
+        st.subheader("⚠️ 運費漏填檢查區 (有物流單號但無運費)")
+        
+        # 篩選出：有物流編號、但沒有填寫運費(RMB)、且不是已取消的單
+        mask_missing_fee = (
+            (df_orders['物流編號'].astype(str).str.strip() != "") & 
+            (df_orders['物流編號'].notna()) &
+            (df_orders['物流運費_RMB'].fillna(0.0) <= 0.0) &
+            (df_orders['取貨狀態'] != '已取消')
+        )
+        df_missing_fee = df_orders[mask_missing_fee].copy()
+        
+        if df_missing_fee.empty:
+            st.success("🎉 太棒了！目前系統內所有已產生『物流編號』的訂單，皆已完整填寫運費，利潤計算精準無誤。")
+        else:
+            # 🌟 權限控管：依照權限顯示不同提示語
+            if can_edit:
+                st.warning(f"🚨 系統偵測到以下 {len(df_missing_fee)} 筆訂單已有『物流編號』，但尚未填寫『運費 (RMB)』。請複製單號至上方搜尋並補齊運費，以免導致利潤虛增：")
+            else:
+                st.warning(f"🚨 系統偵測到以下 {len(df_missing_fee)} 筆訂單漏填運費。您目前僅有『查看』權限，請通知管理員或有編輯權限的同仁補齊資料：")
+                
+            show_missing_cols = ['訂單編號', '訂單日期', '姓名', '取貨狀態', '物流編號']
+            df_show_missing = df_missing_fee[show_missing_cols].copy()
+            
+            # 將訂單日期轉回字串，切掉秒數，讓畫面更乾淨
+            df_show_missing['訂單日期'] = pd.to_datetime(df_show_missing['訂單日期'], errors='coerce').dt.strftime('%Y-%m-%d')
+            
+            # 使用 st.dataframe 顯示，並加上專屬的點擊複製體驗
+            st.dataframe(
+                df_show_missing,
+                use_container_width=True,
+                hide_index=True,
+                column_config={
+                    "訂單編號": st.column_config.TextColumn("🧾 訂單編號 (點擊可複製)"),
+                    "訂單日期": st.column_config.TextColumn("📅 訂單日期"),
+                    "姓名": st.column_config.TextColumn("👤 姓名"),
+                    "取貨狀態": st.column_config.TextColumn("📌 狀態"),
+                    "物流編號": st.column_config.TextColumn("🚚 物流編號")
+                }
+            )
+        # =========== 【運費漏填檢查區】結束 ===========
+        
     with t2:
         st.subheader("📊 產品銷售總數統計")
         st.info("💡 統計範圍：上方選擇的「日期區間」內所有訂單。")
