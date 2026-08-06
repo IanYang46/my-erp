@@ -733,10 +733,10 @@ if menu == "首頁":
         st.markdown("#### 📊 今日與昨日營收概況")
         c1, c2, c3, c4 = st.columns(4)
         
-        c1.metric("🟢 今日訂單數", f"{today_orders_cnt} 筆")
-        c2.metric("🟢 今日營業額", f"${today_rev:,.0f}")
-        c3.metric("🔵 昨日訂單數", f"{yesterday_orders_cnt} 筆")
-        c4.metric("🔵 昨日營業額", f"${yesterday_rev:,.0f}")
+        c1.metric("🟢 今日訂單數", f"{today_orders_cnt} 筆", help="訂單日期為今日的總單數")
+        c2.metric("🟢 今日營業額", f"${today_rev:,.0f}", help="訂單日期為今日的『包裹應收』總和")
+        c3.metric("🔵 昨日訂單數", f"{yesterday_orders_cnt} 筆", help="訂單日期為昨日的總單數")
+        c4.metric("🔵 昨日營業額", f"${yesterday_rev:,.0f}", help="訂單日期為昨日的『包裹應收』總和")
 
     st.divider()
     
@@ -796,29 +796,29 @@ if menu == "首頁":
     with st.container(border=True):
         # 第一排：營收與利潤指標 (4個) - 將預估與實際左右對比
         m1, m2, m3, m4 = st.columns(4)
-        m1.metric("營業額", f"${rev_m:,.0f}")
-        m2.metric("預估利潤", f"${est_profit_m:,.0f}")
+        m1.metric("營業額", f"${rev_m:,.0f}", help="該月所有訂單的『包裹應收』總和")
+        m2.metric("預估利潤", f"${est_profit_m:,.0f}", help="營業額 - (該月總商品成本 + 總運費 + 總廣告費)")
         # 👇 新增：實取金額 (直接讀取上面算好的 actual_rev_m)
         m3.metric("實取金額", f"${actual_rev_m:,.0f}", help="僅計算狀態為「簽收」的包裹應收總和")
-        m4.metric("實際利潤", f"${actual_profit_m:,.0f}")
+        m4.metric("實際利潤", f"${actual_profit_m:,.0f}", help="實取金額 - (已簽收的商品成本 + 該月所有訂單的總運費 + 總廣告費)")
         
         st.divider()
         
         # 第二排：物流與廣告開銷 (4個)
         m5, m6, m7, m8 = st.columns(4)
-        m5.metric("取件率", f"{pickup_rate_m:.1f}%")    # 👈 從第一排移下來
-        m6.metric("預估 ROI", f"{est_roi_m:.2f}")
-        m7.metric("實際 ROI", f"{actual_roi_m:.2f}")
-        m8.metric("實際 ROAS", f"{total_roas_m:.2f}")
+        m5.metric("取件率", f"{pickup_rate_m:.1f}%", help="狀態為「簽收」的訂單數 ÷ 該月總訂單數")    # 👈 從第一排移下來
+        m6.metric("預估 ROI", f"{est_roi_m:.2f}", help="預估利潤 ÷ (總商品成本 + 總運費 + 總廣告費)")
+        m7.metric("實際 ROI", f"{actual_roi_m:.2f}", help="實際利潤 ÷ (已簽收的商品成本 + 該月總運費 + 總廣告費)")
+        m8.metric("實際 ROAS", f"{total_roas_m:.2f}", help="營業額 ÷ 總廣告費")
 
         st.divider()
         
         # 第三排：商品成本與投資報酬率 (4個)
         m9, m10, m11, m12 = st.columns(4) 
-        m9.metric("商品佔比", f"{prod_pct_m:.1f}%")     # 👈 從第二排移下來
-        m10.metric("總運費", f"${ship_fee_m:,.0f}")
-        m11.metric("廣告佔比", f"{ad_pct_m:.1f}%")
-        m12.metric("總廣告費", f"${ad_m:,.0f}")
+        m9.metric("商品佔比", f"{prod_pct_m:.1f}%", help="總商品成本 ÷ 營業額")     # 👈 從第二排移下來
+        m10.metric("總運費", f"${ship_fee_m:,.0f}", help="該月份所有訂單的物流運費總和")
+        m11.metric("廣告佔比", f"{ad_pct_m:.1f}%", help="總廣告費 ÷ 營業額")
+        m12.metric("總廣告費", f"${ad_m:,.0f}", help="手動輸入的分攤後當月廣告花費總計")
 
     st.divider()
 
@@ -1052,21 +1052,22 @@ if menu == "首頁":
         use_container_width=True,
         hide_index=True,
         column_config={
-            "處理中": st.column_config.NumberColumn(format="%d 單"),       # 👈 🌟 新增格式化
-            "異常/取消": st.column_config.NumberColumn(format="%d 單"),   # 👈 🌟 新增格式化
-            "取件率": st.column_config.NumberColumn(format="%.1f%%", help="已簽收數 / 訂單總數"),
-            "物流運費": st.column_config.NumberColumn(format="$ %.0f"), 
-            "預估ROI": st.column_config.NumberColumn(format="%.2f"), 
-            "實際成本": st.column_config.NumberColumn(format="$ %.0f"), 
-            "實際ROI": st.column_config.NumberColumn(format="%.2f"), 
-            "實際ROAS": st.column_config.NumberColumn(format="%.2f"), 
-            "預估利潤": st.column_config.NumberColumn(format="$ %.0f"),
-            "實際利潤": st.column_config.NumberColumn(format="$ %.0f"),
-            "營業額": st.column_config.NumberColumn(format="$ %.0f"),
-            "實際收入": st.column_config.NumberColumn(format="$ %.0f"),
-            "廣告費": st.column_config.NumberColumn(format="$ %.0f"),
-            "商品成本": st.column_config.NumberColumn(format="$ %.0f")
+            "處理中": st.column_config.NumberColumn(format="%d", help="包含：待出貨、備貨中、配送中、已送達待取"),
+            "異常/取消": st.column_config.NumberColumn(format="%d", help="包含：退回、已取消、客訴、已上架、已重出"),
+            "取件率": st.column_config.NumberColumn(format="%.1f%%", help="已簽收數 ÷ 訂單總數"),
+            "物流運費": st.column_config.NumberColumn(format="$ %.0f", help="當日所有訂單的物流運費總和"), 
+            "商品成本": st.column_config.NumberColumn(format="$ %.0f", help="當日所有訂單的商品成本總和"),
+            "廣告費": st.column_config.NumberColumn(format="$ %.0f", help="當日分攤的廣告花費"),
+            "營業額": st.column_config.NumberColumn(format="$ %.0f", help="當日所有訂單的『包裹應收』總和"),
+            "預估利潤": st.column_config.NumberColumn(format="$ %.0f", help="營業額 - (商品成本 + 物流運費 + 廣告費)"),
+            "預估ROI": st.column_config.NumberColumn(format="%.2f", help="預估利潤 ÷ (商品成本 + 物流運費 + 廣告費)"), 
+            "實際收入": st.column_config.NumberColumn(format="$ %.0f", help="當日狀態為「簽收」的包裹應收總和"),
+            "實際成本": st.column_config.NumberColumn(format="$ %.0f", help="當日已簽收的商品成本 + 當日「所有」物流運費"), 
+            "實際利潤": st.column_config.NumberColumn(format="$ %.0f", help="實際收入 - 實際成本 - 廣告費"),
+            "實際ROAS": st.column_config.NumberColumn(format="%.2f", help="營業額 ÷ 當日廣告費"), 
+            "實際ROI": st.column_config.NumberColumn(format="%.2f", help="實際利潤 ÷ (實際成本 + 廣告費)")
         }
+    )  }
     )
     
     # ==========================================
@@ -2322,18 +2323,18 @@ elif menu == "訂單明細":
         """, unsafe_allow_html=True)
         
         m1, m2, m3, m4 = st.columns(4)
-        m1.metric("📦 總訂單數", f"{total_orders:,}")
-        m2.metric("💰 總營業額", f"${total_revenue:,.0f}")
-        m3.metric("📈 總預估利潤", f"${total_est_profit:,.0f}")
-        m4.metric("💎 總實際利潤", f"${actual_profit:,.0f}", help="實際利潤 = (簽收的包裹應收) - (簽收的商品成本) - (期間內所有訂單的總運費)")
+        m1.metric("📦 總訂單數", f"{total_orders:,}", help="當前篩選區間內的總訂單數量")
+        m2.metric("💰 總營業額", f"${total_revenue:,.0f}", help="當前篩選區間內的所有訂單『包裹應收』總和")
+        m3.metric("📈 總預估利潤", f"${total_est_profit:,.0f}", help="總營業額 - (該區間所有商品成本 + 該區間所有運費)")
+        m4.metric("💎 總實際利潤", f"${actual_profit:,.0f}", help="實際利潤 = (簽收的包裹應收) - (簽收的商品成本) - (該區間內所有訂單的總運費)")
         
         st.markdown("<br>", unsafe_allow_html=True) 
 
         m5, m6, m7, m8 = st.columns(4)
-        m5.metric("🛒 總成本", f"${total_cost:,.0f}")
-        m6.metric("🚚 總運費", f"${total_shipping:,.0f}")
-        m7.metric("✅ 總簽收數", f"{picked_up:,}")
-        m8.metric("❌ 總退回數", f"{unclaimed:,}")
+        m5.metric("🛒 總成本", f"${total_cost:,.0f}", help="該區間內的所有商品成本總和")
+        m6.metric("🚚 總運費", f"${total_shipping:,.0f}", help="該區間內的所有物流運費總和")
+        m7.metric("✅ 總簽收數", f"{picked_up:,}", help="僅計算狀態為「簽收」的訂單")
+        m8.metric("❌ 總退回數", f"{unclaimed:,}", help="包含：退回、已上架、已重出、客訴")
         
         st.markdown("<br>", unsafe_allow_html=True)
 
