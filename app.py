@@ -1006,7 +1006,7 @@ if menu == "首頁":
         monthly_data.append({
             "日期": f"{day_str} ({weekday_str})", "狀態": status_label,
             "訂單總數": orders_cnt, "已簽收數": picked_cnt, 
-            "處理中": processing_cnt, "異常/取消": abnormal_cnt,  # 👈 🌟 新增這兩個欄位放入表單
+            "處理/配送": processing_cnt, "退回/取消": abnormal_cnt,  # 👈 🌟 修改這兩個名稱
             "取件率": pickup_rate,
             "廣告費": ad_d, "物流運費": ship_fee, "商品成本": prod_cost,
             "營業額": rev, "預估利潤": est_profit, "預估ROI": est_roi,
@@ -1037,7 +1037,7 @@ if menu == "首頁":
     monthly_data.append({
         "日期": "🌟 該月合計", "狀態": "-", 
         "訂單總數": sum_orders, "已簽收數": sum_picked, 
-        "處理中": sum_processing, "異常/取消": sum_abnormal, # 👈 🌟 新增這兩個總計
+        "處理/配送": sum_processing, "退回/取消": sum_abnormal, # 👈 🌟 修改這兩個名稱
         "取件率": sum_pickup_rate,
         "廣告費": sum_ad, "物流運費": sum_ship_fee, "商品成本": sum_prod_cost,
         "營業額": sum_rev, "預估利潤": sum_est_profit, "預估ROI": sum_est_roi,
@@ -1052,8 +1052,8 @@ if menu == "首頁":
         use_container_width=True,
         hide_index=True,
         column_config={
-            "處理中": st.column_config.NumberColumn(format="%d", help="包含：待出貨、備貨中、配送中、已送達待取"),
-            "異常/取消": st.column_config.NumberColumn(format="%d", help="包含：退回、已取消、客訴、已上架、已重出"),
+            "處理/配送": st.column_config.NumberColumn(format="%d", help="包含：待出貨、備貨中、配送中、已送達待取"), # 👈 🌟 修改這行
+            "退回/取消": st.column_config.NumberColumn(format="%d", help="包含：退回、已取消、客訴、已上架、已重出"), # 👈 🌟 修改這行
             "取件率": st.column_config.NumberColumn(format="%.1f%%", help="已簽收數 ÷ 訂單總數"),
             "物流運費": st.column_config.NumberColumn(format="$ %.0f", help="當日所有訂單的物流運費總和"), 
             "商品成本": st.column_config.NumberColumn(format="$ %.0f", help="當日所有訂單的商品成本總和"),
@@ -2290,10 +2290,8 @@ elif menu == "訂單明細":
         prod_cost = df_dash['商品成本'].sum() if not df_dash.empty else 0
         total_shipping = df_dash['物流運費'].sum() if not df_dash.empty else 0
         
-        # 預估總成本 = 所有商品成本 + 所有運費
-        total_cost = prod_cost + total_shipping 
-        # 預估總利潤 = 總營業額 - 預估總成本
-        total_est_profit = total_revenue - total_cost 
+        # 預估總利潤 = 總營業額 - 純商品成本 - 總運費 (此處不含廣告費)
+        total_est_profit = total_revenue - prod_cost - total_shipping
         
         picked_up = len(df_dash[df_dash['取貨狀態'] == '簽收']) if not df_dash.empty else 0
         unclaimed = len(df_dash[df_dash['取貨狀態'].isin(['退回', '已上架', '已重出', '客訴'])]) if not df_dash.empty else 0
@@ -2330,7 +2328,8 @@ elif menu == "訂單明細":
         st.markdown("<br>", unsafe_allow_html=True) 
 
         m5, m6, m7, m8 = st.columns(4)
-        m5.metric("🛒 總成本", f"${total_cost:,.0f}", help="該區間內的所有商品成本總和")
+        # 👇 變更：將總成本拆開，這裡只單純顯示純「商品成本」
+        m5.metric("🛒 總商品成本", f"${prod_cost:,.0f}", help="該區間內的所有純商品進貨成本總和")
         m6.metric("🚚 總運費", f"${total_shipping:,.0f}", help="該區間內的所有物流運費總和")
         m7.metric("✅ 總簽收數", f"{picked_up:,}", help="僅計算狀態為「簽收」的訂單")
         m8.metric("❌ 總退回數", f"{unclaimed:,}", help="包含：退回、已上架、已重出、客訴")
