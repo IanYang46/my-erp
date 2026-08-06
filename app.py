@@ -1067,8 +1067,7 @@ if menu == "首頁":
             "實際ROAS": st.column_config.NumberColumn(format="%.2f", help="營業額 ÷ 當日廣告費"), 
             "實際ROI": st.column_config.NumberColumn(format="%.2f", help="實際利潤 ÷ (實際成本 + 廣告費)")
         }
-    )  }
-    )
+    )  
     
     # ==========================================
     # --- 5. 歷史物流代收結款核對 (每週自動總結) ---
