@@ -2354,7 +2354,11 @@ elif menu == "訂單明細":
         with c_status: status_filter = st.selectbox("📌 狀態篩選", ["全部"] + STATUS_LIST)
         with c_toggle:
             st.write(""); st.write("")
-            show_all_cols = st.toggle("🔍 展開顯示所有詳細欄位", value=False)
+            # 👇 🌟 修復：針對 CS 帳號隱藏展開按鈕，因為他的欄位已經鎖死了
+            if current_user_id != 'CS':
+                show_all_cols = st.toggle("🔍 展開顯示所有詳細欄位", value=False)
+            else:
+                show_all_cols = False
 
         # 🌟 核心修正：直接使用已經被上方「營運數據看板」篩選好的 df_dash，取代原始的 df_orders
         df_display = df_dash.copy()
