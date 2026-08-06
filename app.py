@@ -2460,6 +2460,7 @@ elif menu == "訂單明細":
                         data=output_detail.getvalue(),
                         file_name=file_name_detail,
                         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        type="primary",  # 👈 🌟 加上這行，讓它變成藍色按鈕
                         use_container_width=True
                     )
                 else:
@@ -2549,7 +2550,8 @@ elif menu == "訂單明細":
                             with get_db() as conn:
                                 cursor = conn.cursor()
                                 placeholders = ','.join(['?'] * len(selected_orders))
-                                cursor.execute(f"UPDATE customer_orders SET 取貨狀態='備貨中' WHERE 訂單編號 IN ({placeholders})", tuple(selected_orders))
+                                # 👇 🌟 修復：嚴格限制只有「待出貨」的訂單，印面單時才允許自動轉成「備貨中」，保護已取消/退回的單！
+                                cursor.execute(f"UPDATE customer_orders SET 取貨狀態='備貨中' WHERE 訂單編號 IN ({placeholders}) AND 取貨狀態 = '待出貨'", tuple(selected_orders))
                                 conn.commit()
                         except Exception as e:
                             pass
@@ -2559,7 +2561,6 @@ elif menu == "訂單明細":
                         data=output.getvalue(),
                         file_name=file_name,
                         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                        type="primary",
                         use_container_width=True,
                         on_click=mark_as_preparing
                     )
