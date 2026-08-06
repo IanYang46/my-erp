@@ -655,6 +655,11 @@ role = st.session_state['role']
 
 # 👇 1. 動態根據權限生成側邊欄選單 👇
 available_modules = []
+current_user_id = st.session_state.get('user')
+
+if current_user_id == 'CS':
+    # 🌟 特規：帳號名稱為 'CS' 的訪客，強迫只能看到訂單明細
+    available_modules.append("訂單明細")
 
 # 🌟 修復：嚴格檢查首頁權限，只有被允許的人才看得到首頁
 if check_perm(role, "首頁", "can_view"):
@@ -2218,7 +2223,8 @@ elif menu == "訂單明細":
 
         df_orders['is_repeat'] = df_orders.apply(check_repeat, axis=1)
 
-    # 🌟 3. 營運數據看板
+# 🌟 3. 營運數據看板 (加入特規：對 CS 帳號隱藏)
+if st.session_state.get('user') != 'CS':
     st.subheader("📊 營運數據看板")
     c_time, c_custom = st.columns([1, 2])
     # 👇 這裡新增了「本週」選項
@@ -2466,6 +2472,11 @@ elif menu == "訂單明細":
             column_config=col_cfg,
             key="orders_editor"
         )
+        
+        # 👇 🌟 終極防護：CS 帳號專屬阻斷點！看完表格程式立刻停止，隱藏下方所有按鈕與分頁
+        if st.session_state.get('user') == 'CS':
+            st.stop()
+        # 👆 ==========================================
 
         # 🌟 權限分離：將導出按鈕改由 can_download 控制，刪除按鈕由 can_edit 控制
         # 👇 按照您的要求，完美排序為: 詳細資料(1), 重出單(2), 列印面單(3), 金蝶倒出(4), 刪除(5)
@@ -4124,7 +4135,7 @@ elif menu == "權限管理":
             selected_str = st.selectbox("🔍 請選擇要設定權限的帳號：", user_options)
             select_u = selected_str.split(" (")[0]
             
-            modules = ["商品訊息", "商品庫存", "採購管理", "訂單明細", "財務報表"]
+            modules = ["首頁", "商品訊息", "商品庫存", "採購管理", "訂單明細", "財務報表"]
             with get_db() as conn:
                 df_p = pd.read_sql("SELECT module, can_view, can_edit, can_upload, can_download FROM user_perms WHERE username=?", conn, params=(select_u,))
                 
