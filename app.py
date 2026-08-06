@@ -658,28 +658,17 @@ available_modules = []
 current_user_id = st.session_state.get('user')
 
 if current_user_id == 'CS':
-    # 🌟 特規：帳號名稱為 'CS' 的訪客，強迫只能看到訂單明細
+    # 🌟 特規：帳號名稱為 'CS' 的訪客，強迫只能看到訂單明細，且不重複添加
     available_modules.append("訂單明細")
-
-# 🌟 修復：嚴格檢查首頁權限，只有被允許的人才看得到首頁
-if check_perm(role, "首頁", "can_view"):
-    available_modules.append("首頁")
-
-# 逐一檢查各大模組的「查看(can_view)」權限，有權限才加入選單
-if check_perm(role, "商品訊息", "can_view"):
-    available_modules.append("商品訊息")
-if check_perm(role, "商品庫存", "can_view"):
-    available_modules.append("商品庫存")
-if check_perm(role, "採購管理", "can_view"):
-    available_modules.append("採購管理")
-if check_perm(role, "訂單明細", "can_view"):
-    available_modules.append("訂單明細")
-if check_perm(role, "財務報表", "can_view"):
-    available_modules.append("財務報表")
-
-# 🌟 2. 權限管理模組，強制只有 Admin 總管理員才看得見
-if role == "Admin" or st.session_state.get('user') == 'admin':
-    available_modules.append("權限管理")
+else:
+    # 🌟 一般員工與管理員：預設開放首頁，其餘依照資料庫權限勾選判定
+    if check_perm(role, "首頁", "can_view"): available_modules.append("首頁")
+    if check_perm(role, "商品訊息", "can_view"): available_modules.append("商品訊息")
+    if check_perm(role, "商品庫存", "can_view"): available_modules.append("商品庫存")
+    if check_perm(role, "採購管理", "can_view"): available_modules.append("採購管理")
+    if check_perm(role, "訂單明細", "can_view"): available_modules.append("訂單明細")
+    if check_perm(role, "財務報表", "can_view"): available_modules.append("財務報表")
+    if role == "Admin" or current_user_id == 'admin': available_modules.append("權限管理")
 
 # 🌟 防呆：如果該帳號完全沒有任何權限，顯示警告
 if not available_modules:
@@ -2324,30 +2313,37 @@ elif menu == "訂單明細":
 
         st.divider()
     else:
-        # CS 帳號：隱藏儀表板，並預設只給近3個月資料防止卡頓
+        # CS 帳號：隱藏儀表板，並預設只給「當月」資料
         df_dash = df_orders.copy()
         if not df_dash.empty:
             df_dash['訂單日期_dt'] = pd.to_datetime(df_dash['訂單日期'], errors='coerce')
             now = pd.Timestamp.today()
-            df_dash = df_dash[df_dash['訂單日期_dt'] >= (now - pd.DateOffset(months=3))]
+            df_dash = df_dash[(df_dash['訂單日期_dt'].dt.year == now.year) & (df_dash['訂單日期_dt'].dt.month == now.month)]
     
     can_edit = check_perm(role, "訂單明細", "can_edit")
     can_download = check_perm(role, "訂單明細", "can_download") # 👈 新增下載權限變數
     is_admin = (st.session_state.get('role') == 'Admin')
+    current_user_id = st.session_state.get('user')
     
-    # 🌟 動態生成 Tab 分頁，為管理員新增日誌頁籤
-    tabs_list = ["📄 訂單總表與追蹤", "📊 產品銷售統計", "✍️ 手動新增單筆", "📥 批量導入與更新"]
-    if is_admin:
-        tabs_list.append("📜 訂單異動日誌 (僅管理員可見)")
-        
-    tabs = st.tabs(tabs_list)
-    t1, t2, t3, t4 = tabs[0], tabs[1], tabs[2], tabs[3]
+    # 🌟 動態生成 Tab 分頁 (CS 帳號只給一個分頁，不顯示其他分頁標籤)
+    if current_user_id == 'CS':
+        tabs_list = ["📄 訂單總表與追蹤"]
+        tabs = st.tabs(tabs_list)
+        t1 = tabs[0]
+    else:
+        tabs_list = ["📄 訂單總表與追蹤", "📊 產品銷售統計", "✍️ 手動新增單筆", "📥 批量導入與更新"]
+        if is_admin:
+            tabs_list.append("📜 訂單異動日誌 (僅管理員可見)")
+        tabs = st.tabs(tabs_list)
+        t1, t2, t3, t4 = tabs[0], tabs[1], tabs[2], tabs[3]
     
     # 🌟 共用新的狀態清單
     STATUS_LIST = ["待出貨", "備貨中", "配送中", "已送達待取", "簽收", "退回", "已取消", "客訴", "已上架", "已重出"]
 
     with t1:
-        st.info("💡 **自動防護偵測**：若表格前方的「⚠️ 警示」欄位顯示「🚨 重複」，代表該顧客（依姓名、電話或信箱比對）在系統內有 **2筆以上** 紀錄，方便一眼識別常客或潛在惡意未取顧客。若要查看完整備註與信箱，請開啟上方「展開顯示所有詳細欄位」。")
+        # 🌟 針對 CS 帳號隱藏自動防護偵測的藍色提示字眼
+        if current_user_id != 'CS':
+            st.info("💡 **自動防護偵測**：若表格前方的「⚠️ 警示」欄位顯示「🚨 重複」，代表該顧客（依姓名、電話或信箱比對）在系統內有 **2筆以上** 紀錄，方便一眼識別常客或潛在惡意未取顧客。若要查看完整備註與信箱，請開啟上方「展開顯示所有詳細欄位」。")
 
         if df_orders.empty:
             st.warning("目前尚無任何訂單資料。請至「批次匯入與建檔」上傳 Excel/CSV。")
