@@ -322,7 +322,7 @@ def init_db_v7():
         cursor.execute("INSERT INTO users (username, password, nickname, role) VALUES ('admin', %s, '總管理員', 'Admin') ON CONFLICT (username) DO NOTHING", (encode_pw('123456'),))
 
         # 🌟 自動建立指定的 CS 訪客/客服帳號
-        cursor.execute("INSERT INTO users (username, password, nickname, role) VALUES ('CS', %s, '客服/訪客', 'CS') ON CONFLICT (username) DO NOTHING", (encode_pw('123456'),))
+        cursor.execute("INSERT INTO users (username, password, nickname, role) VALUES ('CS', %s, '客服', 'CS') ON CONFLICT (username) DO NOTHING", (encode_pw('123456'),))
         
         # 🌟 為 CS 帳號預設設定：僅允許查看「訂單明細」，其餘全部關閉
         default_cs_perms = [
@@ -625,16 +625,18 @@ st.sidebar.markdown(f"""
 </div>
 """, unsafe_allow_html=True)
 
-with st.sidebar.expander("✏️ 修改我的顯示暱稱"):
-    new_nick = st.text_input("輸入新暱稱", value=show_name if show_name != st.session_state['user'] else "")
-    if st.button("更新暱稱", use_container_width=True):
-        with get_db() as conn:
-            conn.execute("UPDATE users SET nickname = ? WHERE username = ?", (new_nick, st.session_state['user']))
-            conn.commit()
-        st.session_state['nickname'] = new_nick
-        st.success("暱稱已更新！")
-        time.sleep(0.5)
-        st.rerun()
+# 👇 🌟 隱藏 CS 帳號的修改暱稱功能
+if st.session_state.get('user') != 'CS':
+    with st.sidebar.expander("✏️ 修改我的顯示暱稱"):
+        new_nick = st.text_input("輸入新暱稱", value=show_name if show_name != st.session_state['user'] else "")
+        if st.button("更新暱稱", use_container_width=True):
+            with get_db() as conn:
+                conn.execute("UPDATE users SET nickname = ? WHERE username = ?", (new_nick, st.session_state['user']))
+                conn.commit()
+            st.session_state['nickname'] = new_nick
+            st.success("暱稱已更新！")
+            time.sleep(0.5)
+            st.rerun()
 
 # 👇 更改主動登出按鈕邏輯，徹底清除 Cookie 與資料庫紀錄 👇
 if st.sidebar.button("登出系統", use_container_width=True): 
@@ -2107,22 +2109,24 @@ elif menu == "訂單明細":
     with get_db() as conn:
         rate = conn.execute("SELECT value FROM settings WHERE key='exchange_rate'").fetchone()[0]
 
-    new_rate = st.sidebar.number_input("當前人民幣匯率 (RMB to TWD)", value=rate, step=0.01, key="order_sidebar_rate")
-    if st.sidebar.button("更新匯率", key="btn_update_order_rate"):
-        with get_db() as conn:
-            conn.execute("UPDATE settings SET value=? WHERE key='exchange_rate'", (new_rate,))
-            # 🌟 核心修正：自動根據新的匯率，重新核算所有訂單的台幣運費、出貨總成本與損益！(保留原本的 RMB 運費完全不變)
-            conn.execute("""
-                UPDATE customer_orders 
-                SET 物流運費 = 物流運費_RMB * ?,
-                    出貨成本 = 商品成本 + (物流運費_RMB * ?),
-                    訂單損益 = 包裹應收 - (商品成本 + (物流運費_RMB * ?))
-                WHERE 物流運費_RMB > 0
-            """, (new_rate, new_rate, new_rate))
-            conn.commit()
-        st.toast(f"✅ 匯率已更新為 {new_rate}！系統已自動幫您重新核算所有訂單的台幣運費與利潤。")
-        time.sleep(1.5)
-        st.rerun()
+    # 👇 🌟 隱藏 CS 帳號的側邊欄匯率更新功能
+    if current_operator != 'CS':
+        new_rate = st.sidebar.number_input("當前人民幣匯率 (RMB to TWD)", value=rate, step=0.01, key="order_sidebar_rate")
+        if st.sidebar.button("更新匯率", key="btn_update_order_rate"):
+            with get_db() as conn:
+                conn.execute("UPDATE settings SET value=? WHERE key='exchange_rate'", (new_rate,))
+                # 🌟 核心修正：自動根據新的匯率，重新核算所有訂單的台幣運費、出貨總成本與損益！(保留原本的 RMB 運費完全不變)
+                conn.execute("""
+                    UPDATE customer_orders 
+                    SET 物流運費 = 物流運費_RMB * ?,
+                        出貨成本 = 商品成本 + (物流運費_RMB * ?),
+                        訂單損益 = 包裹應收 - (商品成本 + (物流運費_RMB * ?))
+                    WHERE 物流運費_RMB > 0
+                """, (new_rate, new_rate, new_rate))
+                conn.commit()
+            st.toast(f"✅ 匯率已更新為 {new_rate}！系統已自動幫您重新核算所有訂單的台幣運費與利潤。")
+            time.sleep(1.5)
+            st.rerun()
 
     # 🌟 1. 取得資料庫資料
     with get_db() as conn:
