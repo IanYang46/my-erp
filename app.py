@@ -654,7 +654,11 @@ st.sidebar.divider()
 role = st.session_state['role']
 
 # 👇 1. 動態根據權限生成側邊欄選單 👇
-available_modules = ["首頁"]  # 首頁預設大家都看得到
+available_modules = []
+
+# 🌟 修復：嚴格檢查首頁權限，只有被允許的人才看得到首頁
+if check_perm(role, "首頁", "can_view"):
+    available_modules.append("首頁")
 
 # 逐一檢查各大模組的「查看(can_view)」權限，有權限才加入選單
 if check_perm(role, "商品訊息", "can_view"):
@@ -671,6 +675,11 @@ if check_perm(role, "財務報表", "can_view"):
 # 🌟 2. 權限管理模組，強制只有 Admin 總管理員才看得見
 if role == "Admin" or st.session_state.get('user') == 'admin':
     available_modules.append("權限管理")
+
+# 🌟 防呆：如果該帳號完全沒有任何權限，顯示警告
+if not available_modules:
+    st.error("🚨 您的帳號目前沒有任何模組的瀏覽權限，請聯絡管理員開通。")
+    st.stop()
 
 # 👇 3. 將過濾後的可用清單渲染到側邊欄 👇
 menu = st.sidebar.radio(
@@ -2728,7 +2737,11 @@ elif menu == "訂單明細":
 
         # 👇 單筆訂單完整詳細檢視與獨立編輯區 👇
         st.subheader("🔍 單筆訂單完整詳細檢視與編輯")
-        if not df_orders.empty:
+        
+        # 🌟 核心防護：直接封殺 CS 帳號查看單筆明細的權限，防止成本洩漏！
+        if st.session_state.get('user') == 'CS':
+            st.warning("🔒 您的權限級別無法使用單筆訂單編輯功能。")
+        elif not df_orders.empty:
             detail_options = {}
             for _, row in df_orders.iterrows():
                 logi_info = row.get('物流編號', '').strip()
