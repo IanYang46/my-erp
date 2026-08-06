@@ -688,7 +688,7 @@ menu = st.sidebar.radio(
 # --- 7. 各大模組骨架預覽 ---
 
 if menu == "首頁":
-    st.title("🏠 營運儀表板 (Dashboard)")
+    st.title("🏠 營運儀表板")
     st.write("一眼掌握今日與昨日的關鍵營業數據，包含廣告成效 (ROAS) 追蹤。")
     
     # ==========================================
@@ -945,6 +945,7 @@ if menu == "首頁":
     # 建立統計變數 (為了最後算合計)
     sum_orders = sum_rev = sum_prod_cost = sum_ship_fee = sum_ad = 0
     sum_picked = sum_actual_rev = sum_actual_cost = 0
+    sum_processing = sum_abnormal = 0  # 👈 🌟 新增：為了最後算兩項新指標的總計
 
     # 迴圈執行該月的每一天 (1 到 days_in_month)
     for d in range(1, days_in_month + 1):
@@ -967,7 +968,14 @@ if menu == "首頁":
         picked_up_mask = df_d['取貨狀態'].isin(['簽收'])
         resolved_mask = df_d['取貨狀態'].isin(['簽收', '退回', '已取消', '客訴', '已上架', '已重出'])
         
+        # 👇 🌟 新增：針對你要求的狀態進行分類計算
+        processing_mask = df_d['取貨狀態'].isin(['待出貨', '備貨中', '配送中', '已送達待取'])
+        abnormal_mask = df_d['取貨狀態'].isin(['退回', '已取消', '客訴', '已上架', '已重出'])
+        
         picked_cnt = picked_up_mask.sum()
+        processing_cnt = processing_mask.sum()  # 👈 🌟 新增：計算處理中數量
+        abnormal_cnt = abnormal_mask.sum()      # 👈 🌟 新增：計算異常/取消數量
+        
         actual_rev = df_d.loc[picked_up_mask, '包裹應收'].sum()
         actual_prod_cost = df_d.loc[picked_up_mask, '商品成本'].sum()
         
@@ -997,7 +1005,9 @@ if menu == "首頁":
             
         monthly_data.append({
             "日期": f"{day_str} ({weekday_str})", "狀態": status_label,
-            "訂單總數": orders_cnt, "已簽收數": picked_cnt, "取件率": pickup_rate,
+            "訂單總數": orders_cnt, "已簽收數": picked_cnt, 
+            "處理中": processing_cnt, "異常/取消": abnormal_cnt,  # 👈 🌟 新增這兩個欄位放入表單
+            "取件率": pickup_rate,
             "廣告費": ad_d, "物流運費": ship_fee, "商品成本": prod_cost,
             "營業額": rev, "預估利潤": est_profit, "預估ROI": est_roi,
             "實際收入": actual_rev, "實際成本": actual_cost, "實際利潤": actual_profit, 
@@ -1008,6 +1018,8 @@ if menu == "首頁":
         sum_orders += orders_cnt; sum_picked += picked_cnt
         sum_rev += rev; sum_prod_cost += prod_cost; sum_ship_fee += ship_fee; sum_ad += ad_d
         sum_actual_rev += actual_rev; sum_actual_cost += actual_cost
+        sum_processing += processing_cnt  # 👈 🌟 新增累加
+        sum_abnormal += abnormal_cnt      # 👈 🌟 新增累加
 
     # 建立總計列
     sum_est_profit = sum_rev - sum_prod_cost - sum_ship_fee - sum_ad
@@ -1024,13 +1036,14 @@ if menu == "首頁":
 
     monthly_data.append({
         "日期": "🌟 該月合計", "狀態": "-", 
-        "訂單總數": sum_orders, "已簽收數": sum_picked, "取件率": sum_pickup_rate,
+        "訂單總數": sum_orders, "已簽收數": sum_picked, 
+        "處理中": sum_processing, "異常/取消": sum_abnormal, # 👈 🌟 新增這兩個總計
+        "取件率": sum_pickup_rate,
         "廣告費": sum_ad, "物流運費": sum_ship_fee, "商品成本": sum_prod_cost,
         "營業額": sum_rev, "預估利潤": sum_est_profit, "預估ROI": sum_est_roi,
         "實際收入": sum_actual_rev, "實際成本": sum_actual_cost, "實際利潤": sum_actual_profit,
         "實際ROAS": sum_actual_roas, "實際ROI": sum_actual_roi
     })
-
     # 轉為 DataFrame 並在前端顯示
     df_monthly = pd.DataFrame(monthly_data)
     
@@ -1039,6 +1052,8 @@ if menu == "首頁":
         use_container_width=True,
         hide_index=True,
         column_config={
+            "處理中": st.column_config.NumberColumn(format="%d 單"),       # 👈 🌟 新增格式化
+            "異常/取消": st.column_config.NumberColumn(format="%d 單"),   # 👈 🌟 新增格式化
             "取件率": st.column_config.NumberColumn(format="%.1f%%", help="已簽收數 / 訂單總數"),
             "物流運費": st.column_config.NumberColumn(format="$ %.0f"), 
             "預估ROI": st.column_config.NumberColumn(format="%.2f"), 
@@ -2272,20 +2287,31 @@ elif menu == "訂單明細":
         
         total_orders = len(df_dash)
         total_revenue = df_dash['包裹應收'].sum() if not df_dash.empty else 0
-        total_cost = df_dash['商品成本'].sum() if not df_dash.empty else 0
+        prod_cost = df_dash['商品成本'].sum() if not df_dash.empty else 0
         total_shipping = df_dash['物流運費'].sum() if not df_dash.empty else 0
-        total_est_profit = df_dash['訂單損益'].sum() if not df_dash.empty else 0
+        
+        # 預估總成本 = 所有商品成本 + 所有運費
+        total_cost = prod_cost + total_shipping 
+        # 預估總利潤 = 總營業額 - 預估總成本
+        total_est_profit = total_revenue - total_cost 
         
         picked_up = len(df_dash[df_dash['取貨狀態'] == '簽收']) if not df_dash.empty else 0
         unclaimed = len(df_dash[df_dash['取貨狀態'].isin(['退回', '已上架', '已重出', '客訴'])]) if not df_dash.empty else 0
         pending = len(df_dash[df_dash['取貨狀態'] == '待出貨']) if not df_dash.empty else 0
+        # 👇 🌟 新增：精細分類「配送中」與「待取件」的數量
+        delivering = len(df_dash[df_dash['取貨狀態'].isin(['備貨中', '配送中'])]) if not df_dash.empty else 0
+        awaiting_pickup = len(df_dash[df_dash['取貨狀態'] == '已送達待取']) if not df_dash.empty else 0
         cancelled = len(df_dash[df_dash['取貨狀態'] == '已取消']) if not df_dash.empty else 0
         
+        # 🌟 對齊首頁算法：實際利潤 = (已簽收應收) - (已簽收商品成本) - (該區間【所有】運費)
         actual_profit = 0
         if not df_dash.empty:
-            profit_from_picked = df_dash[df_dash['取貨狀態'] == '簽收']['訂單損益'].sum()
-            loss_from_unclaimed = df_dash[df_dash['取貨狀態'] == '退回']['物流運費'].sum()
-            actual_profit = profit_from_picked - loss_from_unclaimed
+            picked_mask = df_dash['取貨狀態'].isin(['簽收'])
+            actual_rev = df_dash.loc[picked_mask, '包裹應收'].sum()
+            actual_prod_cost = df_dash.loc[picked_mask, '商品成本'].sum()
+            
+            actual_cost = actual_prod_cost + total_shipping
+            actual_profit = actual_rev - actual_cost
 
         st.markdown("""
         <style>
@@ -2299,7 +2325,7 @@ elif menu == "訂單明細":
         m1.metric("📦 總訂單數", f"{total_orders:,}")
         m2.metric("💰 總營業額", f"${total_revenue:,.0f}")
         m3.metric("📈 總預估利潤", f"${total_est_profit:,.0f}")
-        m4.metric("💎 總實際利潤", f"${actual_profit:,.0f}")
+        m4.metric("💎 總實際利潤", f"${actual_profit:,.0f}", help="實際利潤 = (簽收的包裹應收) - (簽收的商品成本) - (期間內所有訂單的總運費)")
         
         st.markdown("<br>", unsafe_allow_html=True) 
 
@@ -2311,9 +2337,12 @@ elif menu == "訂單明細":
         
         st.markdown("<br>", unsafe_allow_html=True)
 
-        m9, m10, _1, _2 = st.columns(4)
-        m9.metric("⏳ 未處理訂單", f"{pending:,}")
-        m10.metric("🚫 總取消數", f"{cancelled:,}")
+        # 第三排：物流過程狀態與取消數 (填滿 4 個位置，資訊更透明)
+        m9, m10, m11, m12 = st.columns(4)
+        m9.metric("⏳ 未處理訂單", f"{pending:,}", help="僅計算狀態為「待出貨」的訂單")
+        m10.metric("🚚 配送中", f"{delivering:,}", help="包含：備貨中、配送中")
+        m11.metric("📍 待取件", f"{awaiting_pickup:,}", help="僅計算狀態為「已送達待取」的訂單")
+        m12.metric("🚫 總取消數", f"{cancelled:,}", help="僅計算狀態為「已取消」的訂單")
 
         st.divider()
     else:
