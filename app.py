@@ -2350,7 +2350,8 @@ elif menu == "訂單明細":
         if not df_dash.empty:
             df_dash['訂單日期_dt'] = pd.to_datetime(df_dash['訂單日期'], errors='coerce')
             now = pd.Timestamp.today()
-            df_dash = df_dash[(df_dash['訂單日期_dt'].dt.year == now.year) & (df_dash['訂單日期_dt'].dt.month == now.month)]
+            # 👇 🌟 修改這裡：過濾條件改為「大於等於現在時間扣除3個月」
+            df_dash = df_dash[df_dash['訂單日期_dt'] >= (now - pd.DateOffset(months=3))]
     
     can_edit = check_perm(role, "訂單明細", "can_edit")
     can_download = check_perm(role, "訂單明細", "can_download") # 👈 新增下載權限變數
