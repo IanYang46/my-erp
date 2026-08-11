@@ -868,16 +868,11 @@ if menu == "首頁":
                 st.markdown(f"> 👻 **隱藏損失提醒**：您的「預估利潤」與「實際利潤」相差了 **${profit_gap:,.0f}** 元。這主要是因為「未簽收/退回」的包裹不僅沒讓您賺到錢，您還**白白倒賠了寄出的運費與包裝耗材**。這就是為什麼提升取件率比提高營收更重要的原因！")
 
             # ==========================================
-            # 🌟 新增：自訂目標利潤分析 (達標模擬器 - 全自動智能版)
+            # 🌟 新增：自訂目標利潤分析 (雙變數動態預測版)
             # ==========================================
             st.divider()
-            st.markdown("#### 🎯 達標模擬器 (全自動智能版)")
-            st.caption("💡 只需要給定目標，系統會自動排除「時間差」，用您目前的『真實體質 (客單價、智能取件率、單均廣告費)』直接推算需要的總單量與廣告預算！")
-            
-            target_profit = st.number_input("請輸入本月期望的『目標利潤』 (TWD)", min_value=0, step=10000, value=1000000, key="target_profit_sim")
-            
-            # 👇 即時動態格式化顯示
-            st.markdown(f"<div style='margin-top: -10px; margin-bottom: 15px; color: #2563EB; font-size: 15px; font-weight: 600;'>🎯 目前設定金額：${target_profit:,.0f}</div>", unsafe_allow_html=True)
+            st.markdown("#### 🎯 達標模擬器")
+            st.caption("💡 設定您的「目標利潤」與「預估取件率」，系統將根據目前的真實客單價與廣告成本，為您精準推算所需的各項目標！")
             
             if orders_cnt_m > 0:
                 # 1. 提取共用的基礎單效指標 (Unit Economics)
@@ -886,43 +881,43 @@ if menu == "首頁":
                 avg_ship_fee = ship_fee_m / orders_cnt_m # 單均運費
                 avg_ad_cost = ad_m / orders_cnt_m # 單均廣告費
                 
-                # 2. 🌟 解決時間差的關鍵：智能校正取件率 (只拿「已簽收」跟「異常退回」來算，排除還在路上的)
+                # 2. 計算智能校正取件率 (作為輸入框的預設值，最貼近真實情況)
                 abnormal_mask_m = df_m_orders['取貨狀態'].isin(['退回', '已取消', '客訴', '已上架', '已重出'])
                 abnormal_cnt_m = abnormal_mask_m.sum()
                 resolved_orders = picked_cnt_m + abnormal_cnt_m
+                smart_pickup_rate = (picked_cnt_m / resolved_orders * 100) if resolved_orders > 0 else 85.0
                 
-                # 如果還沒有完結的訂單，先預設給 85% 防呆
-                smart_pickup_rate = (picked_cnt_m / resolved_orders) if resolved_orders > 0 else 0.85
+                # 橫向排列兩個輸入框
+                c_sim1, c_sim2 = st.columns(2)
+                target_profit = c_sim1.number_input("請輸入本月期望的『目標利潤』 (TWD)", min_value=0, step=10000, value=1000000, key="target_profit_sim")
+                est_pickup_rate_input = c_sim2.number_input("請設定預估『取件率』 (%)", min_value=1.0, max_value=100.0, step=1.0, value=float(round(smart_pickup_rate, 1)), key="est_pickup_rate_sim")
+                est_pickup_rate = est_pickup_rate_input / 100.0
+                
+                # 👇 即時動態格式化顯示
+                st.markdown(f"<div style='margin-top: -10px; margin-bottom: 15px; color: #2563EB; font-size: 15px; font-weight: 600;'>🎯 目標淨利：${target_profit:,.0f} ｜ 📈 預估取件率：{est_pickup_rate_input}%</div>", unsafe_allow_html=True)
                 
                 # 3. 算出極度精準的「單件模型」淨利
-                # 每出一單的真實期望淨利 = (客單價 - 成本) * 智能取件率 - 運費 - 廣告費
-                unit_net_profit = ((aov - avg_prod_cost) * smart_pickup_rate) - avg_ship_fee - avg_ad_cost
+                # 每出一單的真實期望淨利 = (客單價 - 成本) * 取件率 - 運費 - 廣告費
+                unit_net_profit = ((aov - avg_prod_cost) * est_pickup_rate) - avg_ship_fee - avg_ad_cost
                 
                 if unit_net_profit <= 0:
-                    st.error(f"🚨 **系統體質警訊**：\n依據您目前真實的客單價、廣告費與智能校正取件率 ({smart_pickup_rate*100:.1f}%)，您目前每出一單其實是 **虧損 ${abs(unit_net_profit):,.0f}**。\n👉 **解決方案**：必須先提高客單價、壓低單均獲客成本 (提升ROAS)，或提升取件率，否則單量放大只會賠更多。")
+                    st.error(f"🚨 **系統體質警訊**：\n依據您設定的取件率 ({est_pickup_rate*100:.1f}%) 與目前的客單價、廣告費，您每出一單預估會 **虧損 ${abs(unit_net_profit):,.0f}**。\n👉 **解決方案**：必須先提高客單價、壓低單均獲客成本 (提升ROAS)，或進一步調高取件率，否則單量放大只會賠更多。")
                 else:
                     # 需要的總單數
                     req_orders = int(target_profit / unit_net_profit) + 1
                     req_revenue = req_orders * aov
                     req_ad_spend = req_orders * avg_ad_cost
-                    req_roas = (req_revenue / req_ad_spend) if req_ad_spend > 0 else 0
+                    req_total_prod_cost = req_orders * avg_prod_cost
                     
-                    # 計算預期總成本 = (預期售出商品成本) + (總運費) + 廣告費
-                    est_total_actual_cost = (req_orders * avg_prod_cost * smart_pickup_rate) + (req_orders * avg_ship_fee) + req_ad_spend
-                    req_roi = (target_profit / est_total_actual_cost) if est_total_actual_cost > 0 else 0
+                    st.success(f"📈 **推演完成！** 根據您的設定，要達成 **${target_profit:,.0f}** 的淨利，團隊必須完成以下指標：")
                     
-                    st.success(f"📈 **智能推演完成！** 系統已自動排除物流時間差。以目前的真實體質 (單均廣告費 ${avg_ad_cost:,.0f}、智能取件率 {smart_pickup_rate*100:.1f}%)，要達成目標需完成以下指標：")
-                    
-                    c_r1, c_r2, c_r3, c_r4 = st.columns(4)
-                    c_r1.metric("📦 目標總出貨單數", f"{req_orders:,} 單", f"需日均出貨 {int(req_orders/30)} 單")
-                    c_r2.metric("💰 目標總營業額", f"${req_revenue:,.0f}", f"包含未取件的下單總額")
-                    
-                    if req_ad_spend > 0:
-                        c_r3.metric("💸 需準備廣告費", f"${req_ad_spend:,.0f}", f"維持目標 ROAS {req_roas:.2f}")
-                    else:
-                        c_r3.metric("💸 需準備廣告費", "純自然流量", "無廣告支出")
-                        
-                    c_r4.metric("🏆 預期達成 ROI", f"{req_roi:.2f}", "每投入1元總成本賺回的淨利")
+                    # 依據您要求的 5 個指標，切成 5 欄顯示
+                    c_r1, c_r2, c_r3, c_r4, c_r5 = st.columns(5)
+                    c_r1.metric("📦 目標總出貨單數", f"{req_orders:,} 單", help="需達成的總出貨單數")
+                    c_r2.metric("💰 目標總營業額", f"${req_revenue:,.0f}", help="總出貨單數 × 目前平均客單價")
+                    c_r3.metric("💸 需準備廣告費", f"${req_ad_spend:,.0f}", help="總出貨單數 × 目前單均獲客成本")
+                    c_r4.metric("🛒 商品客單價", f"${aov:,.0f}", help="系統目前計算的平均每單營業額")
+                    c_r5.metric("📦 商品成本", f"${req_total_prod_cost:,.0f}", help="出貨所需準備的總商品成本 (單均成本 × 總單數)")
             else:
                 st.info("💡 當月尚無訂單，系統無法進行智能模擬。")
     
