@@ -866,6 +866,66 @@ if menu == "首頁":
             # 4. 預估與實際的落差揭露
             if profit_gap > 0 and pickup_rate_m < 100:
                 st.markdown(f"> 👻 **隱藏損失提醒**：您的「預估利潤」與「實際利潤」相差了 **${profit_gap:,.0f}** 元。這主要是因為「未簽收/退回」的包裹不僅沒讓您賺到錢，您還**白白倒賠了寄出的運費與包裝耗材**。這就是為什麼提升取件率比提高營收更重要的原因！")
+
+            # ==========================================
+            # 🌟 新增：自訂目標利潤分析 (達標模擬器)
+            # ==========================================
+            st.divider()
+            st.markdown("#### 🎯 達標模擬器 (Target Profit Simulator)")
+            st.caption("設定您本月期望達成的「實際淨利」目標，系統將以您目前的營運體質（客單價、毛利率、取件率）自動推算需要達成的關鍵指標！")
+            
+            target_profit = st.number_input("請輸入本月期望的『目標利潤』 (TWD)", min_value=0, step=10000, value=1000000, key="target_profit_sim")
+            
+            if target_profit > 0:
+                if actual_profit_m <= 0:
+                    st.warning("⚠️ 您目前的實際利潤為負數或零。請先優化體質（降低廣告佔比或提升取件率）使單月轉虧為盈，系統才能為您進行有效的擴張預測。")
+                else:
+                    # 計算目前的基礎體質單效
+                    aov = rev_m / orders_cnt_m if orders_cnt_m > 0 else 0  # 客單價
+                    avg_profit_per_order = actual_profit_m / orders_cnt_m if orders_cnt_m > 0 else 0 # 單均淨利
+                    
+                    # ----------------------------------------------------
+                    # 🚀 策略一：直接放大規模 (維持現狀，單純增加單量與廣告費)
+                    # ----------------------------------------------------
+                    req_orders_scale = int(target_profit / avg_profit_per_order) + 1
+                    req_rev_scale = req_orders_scale * aov
+                    req_ad_scale = (ad_m / actual_profit_m) * target_profit if actual_profit_m > 0 else 0
+                    
+                    st.markdown("##### 🚀 策略一：預算加碼 (維持現有廣告轉換率與取件率)")
+                    st.info("💡 **解讀**：如果您目前的 ROAS 表現維持不變，單純透過「增加廣告預算」來衝出更多訂單，您的各項指標必須達到：")
+                    
+                    c_s1, c_s2, c_s3, c_s4 = st.columns(4)
+                    c_s1.metric("📦 需要總單數", f"{req_orders_scale:,} 單", help="目標利潤 ÷ 目前單均淨利")
+                    c_s2.metric("💰 需要總營業額", f"${req_rev_scale:,.0f}", help="需要總單數 × 目前客單價")
+                    c_s3.metric("💸 需準備廣告費", f"${req_ad_scale:,.0f}", f"ROAS 維持現況 {total_roas_m:.2f}")
+                    c_s4.metric("💎 達標 ROI", f"{actual_roi_m:.2f}", "與現況持平")
+                    
+                    # ----------------------------------------------------
+                    # 🧠 策略二：體質優化突破 (廣告預算鎖死不變，硬拉 ROAS)
+                    # ----------------------------------------------------
+                    if ad_m > 0:
+                        # 基礎毛利率 (不扣廣告費的利潤佔比) = (實際利潤 + 廣告費) / 營業額
+                        gross_margin = (actual_profit_m + ad_m) / rev_m if rev_m > 0 else 0
+                        
+                        if gross_margin > 0:
+                            # 需求營業額 = (目標利潤 + 固定的廣告費) / 毛利率
+                            req_rev_opt = (target_profit + ad_m) / gross_margin
+                            req_orders_opt = int(req_rev_opt / aov) + 1
+                            req_roas_opt = req_rev_opt / ad_m
+                            
+                            # 優化後的總成本 = 營業額扣掉毛利，再加回廣告費
+                            opt_total_cost = (req_rev_opt - (req_rev_opt * gross_margin)) + ad_m
+                            req_roi_opt = target_profit / opt_total_cost if opt_total_cost > 0 else 0
+                            
+                            st.markdown("<br>", unsafe_allow_html=True)
+                            st.markdown("##### 🧠 策略二：體質優化突破 (廣告預算不增加，提升受眾精準度)")
+                            st.success(f"💡 **解讀**：如果您**不想多花任何廣告費 (維持現有的 ${ad_m:,.0f})**，必須靠優化廣告素材、提高客單價，逼迫廣告成效(ROAS)提升才能達標：")
+                            
+                            c_o1, c_o2, c_o3, c_o4 = st.columns(4)
+                            c_o1.metric("📦 需要總單數", f"{req_orders_opt:,} 單", help="不增加廣告費下的目標總單量")
+                            c_o2.metric("💰 需要總營業額", f"${req_rev_opt:,.0f}", help="不增加廣告費下的目標營業額")
+                            c_o3.metric("🔥 嚴格要求 ROAS", f"{req_roas_opt:.2f}", f"必須比現在高 {req_roas_opt - total_roas_m:.2f}")
+                            c_o4.metric("🏆 嚴格要求 ROI", f"{req_roi_opt:.2f}", f"必須比現在高 {req_roi_opt - actual_roi_m:.2f}")
     
     # ==========================================
     # --- 3. 廣告費區間輸入與漏填檢查 (僅限管理員) ---
