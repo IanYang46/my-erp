@@ -868,11 +868,11 @@ if menu == "首頁":
                 st.markdown(f"> 👻 **隱藏損失提醒**：您的「預估利潤」與「實際利潤」相差了 **${profit_gap:,.0f}** 元。這主要是因為「未簽收/退回」的包裹不僅沒讓您賺到錢，您還**白白倒賠了寄出的運費與包裝耗材**。這就是為什麼提升取件率比提高營收更重要的原因！")
 
             # ==========================================
-            # 🌟 新增：自訂目標利潤分析 (雙變數動態預測版)
+            # 🌟 新增：自訂目標利潤分析 (進階決策版)
             # ==========================================
             st.divider()
             st.markdown("#### 🎯 達標模擬器")
-            st.caption("💡 設定您的「目標利潤」與「預估取件率」，系統將根據目前的真實客單價與廣告成本，為您精準推算所需的各項目標！")
+            st.caption("💡 設定您的「目標利潤」與「預估取件率」，系統將為您推算【還差多少】、【規模擴張】與【體質優化】的達標策略！")
             
             if orders_cnt_m > 0:
                 # 1. 提取共用的基礎單效指標 (Unit Economics)
@@ -893,8 +893,15 @@ if menu == "首頁":
                 est_pickup_rate_input = c_sim2.number_input("請設定預估『取件率』 (%)", min_value=1.0, max_value=100.0, step=1.0, value=float(round(smart_pickup_rate, 1)), key="est_pickup_rate_sim")
                 est_pickup_rate = est_pickup_rate_input / 100.0
                 
-                # 👇 即時動態格式化顯示
-                st.markdown(f"<div style='margin-top: -10px; margin-bottom: 15px; color: #2563EB; font-size: 15px; font-weight: 600;'>🎯 目標淨利：${target_profit:,.0f} ｜ 📈 預估取件率：{est_pickup_rate_input}%</div>", unsafe_allow_html=True)
+                # 差距計算
+                gap_profit = target_profit - actual_profit_m
+                if gap_profit <= 0:
+                    gap_text = f"🎉 恭喜！您目前的實際利潤已超越目標 ${abs(gap_profit):,.0f}"
+                else:
+                    gap_text = f"⚠️ 距離目標尚差：${gap_profit:,.0f}"
+                
+                # 👇 即時動態格式化顯示 (加入差距提示)
+                st.markdown(f"<div style='margin-top: -10px; margin-bottom: 15px; color: #2563EB; font-size: 15px; font-weight: 600;'>🎯 目標淨利：${target_profit:,.0f} ｜ 📈 預估取件率：{est_pickup_rate_input}% ｜ {gap_text}</div>", unsafe_allow_html=True)
                 
                 # 3. 算出極度精準的「單件模型」淨利
                 # 每出一單的真實期望淨利 = (客單價 - 成本) * 取件率 - 運費 - 廣告費
@@ -903,21 +910,52 @@ if menu == "首頁":
                 if unit_net_profit <= 0:
                     st.error(f"🚨 **系統體質警訊**：\n依據您設定的取件率 ({est_pickup_rate*100:.1f}%) 與目前的客單價、廣告費，您每出一單預估會 **虧損 ${abs(unit_net_profit):,.0f}**。\n👉 **解決方案**：必須先提高客單價、壓低單均獲客成本 (提升ROAS)，或進一步調高取件率，否則單量放大只會賠更多。")
                 else:
-                    # 需要的總單數
+                    # ----------------------------------------------------
+                    # 🚀 策略一：規模擴張 (維持客單價與成本，靠增加單量達標)
+                    # ----------------------------------------------------
                     req_orders = int(target_profit / unit_net_profit) + 1
                     req_revenue = req_orders * aov
                     req_ad_spend = req_orders * avg_ad_cost
-                    req_total_prod_cost = req_orders * avg_prod_cost
+                    req_roas_scale = (req_revenue / req_ad_spend) if req_ad_spend > 0 else 0
                     
-                    st.success(f"📈 **推演完成！** 根據您的設定，要達成 **${target_profit:,.0f}** 的淨利，團隊必須完成以下指標：")
+                    est_total_actual_cost_scale = (req_orders * avg_prod_cost * est_pickup_rate) + (req_orders * avg_ship_fee) + req_ad_spend
+                    req_roi_scale = target_profit / est_total_actual_cost_scale if est_total_actual_cost_scale > 0 else 0
                     
-                    # 依據您要求的 5 個指標，切成 5 欄顯示
-                    c_r1, c_r2, c_r3, c_r4, c_r5 = st.columns(5)
-                    c_r1.metric("📦 目標總出貨單數", f"{req_orders:,} 單", help="需達成的總出貨單數")
-                    c_r2.metric("💰 目標總營業額", f"${req_revenue:,.0f}", help="總出貨單數 × 目前平均客單價")
-                    c_r3.metric("💸 需準備廣告費", f"${req_ad_spend:,.0f}", help="總出貨單數 × 目前單均獲客成本")
-                    c_r4.metric("🛒 商品客單價", f"${aov:,.0f}", help="系統目前計算的平均每單營業額")
-                    c_r5.metric("📦 商品成本", f"${req_total_prod_cost:,.0f}", help="出貨所需準備的總商品成本 (單均成本 × 總單數)")
+                    # ----------------------------------------------------
+                    # 🧠 策略二：體質優化 (單量與廣告費一毛不加，靠優化指標達標)
+                    # ----------------------------------------------------
+                    req_collected_margin_total = target_profit + ship_fee_m + ad_m
+                    
+                    # 建議客單價 (維持目前成本)
+                    rec_aov = (req_collected_margin_total / (orders_cnt_m * est_pickup_rate)) + avg_prod_cost
+                    rec_total_rev = rec_aov * orders_cnt_m
+                    rec_roas_opt = rec_total_rev / ad_m if ad_m > 0 else 0
+                    
+                    opt_total_actual_cost = (avg_prod_cost * orders_cnt_m * est_pickup_rate) + ship_fee_m + ad_m
+                    rec_roi_opt = target_profit / opt_total_actual_cost if opt_total_actual_cost > 0 else 0
+                    
+                    # 建議商品成本 (維持目前客單價)
+                    rec_avg_cost = aov - (req_collected_margin_total / (orders_cnt_m * est_pickup_rate))
+                    
+                    st.success(f"📈 **推演完成！** 要達成 **${target_profit:,.0f}** 的淨利，團隊可以選擇以下兩種策略方向：")
+                    
+                    st.markdown("##### 🚀 策略一：規模擴張 (客單價/成本不變，靠衝單量達標)")
+                    c_r1, c_r2, c_r3, c_r4 = st.columns(4)
+                    c_r1.metric("📦 目標總出貨單數", f"{req_orders:,} 單", f"需再增加 {req_orders - orders_cnt_m:,} 單")
+                    c_r2.metric("💰 目標總營業額", f"${req_revenue:,.0f}", f"需再增加 ${(req_revenue - rev_m):,.0f}")
+                    c_r3.metric("💸 需準備廣告費", f"${req_ad_spend:,.0f}", f"需再投入 ${(req_ad_spend - ad_m):,.0f}")
+                    c_r4.metric("⚖️ 維持目前 ROAS / ROI", f"{req_roas_scale:.2f} / {req_roi_scale:.2f}")
+                    
+                    st.markdown("##### 🧠 策略二：體質優化 (單量與廣告費一毛不加，靠優化指標達標)")
+                    c_o1, c_o2, c_o3, c_o4 = st.columns(4)
+                    c_o1.metric("🛒 建議『商品客單價』", f"${rec_aov:,.0f}", f"每單需提高 ${(rec_aov - aov):,.0f}")
+                    if rec_avg_cost >= 0:
+                        c_o2.metric("📉 或壓低『單均成本』", f"${rec_avg_cost:,.0f}", f"每單需降低 ${(avg_prod_cost - rec_avg_cost):,.0f}")
+                    else:
+                        c_o2.metric("📉 或壓低『單均成本』", "無法達成", "利潤缺口過大")
+                        
+                    c_o3.metric("🔥 建議達標 ROAS", f"{rec_roas_opt:.2f}", f"需提高 {(rec_roas_opt - total_roas_m):.2f}")
+                    c_o4.metric("🏆 建議達標 ROI", f"{rec_roi_opt:.2f}", f"需提高 {(rec_roi_opt - actual_roi_m):.2f}")
             else:
                 st.info("💡 當月尚無訂單，系統無法進行智能模擬。")
     
