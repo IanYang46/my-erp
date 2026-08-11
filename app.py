@@ -876,6 +876,9 @@ if menu == "首頁":
             
             target_profit = st.number_input("請輸入本月期望的『目標利潤』 (TWD)", min_value=0, step=10000, value=1000000, key="target_profit_sim")
             
+            # 👇 🌟 新增：在輸入框下方加入帶有千分位逗號的即時格式化數字，防呆避免少打零！
+            st.markdown(f"<div style='margin-top: -10px; margin-bottom: 15px; color: #2563EB; font-size: 15px; font-weight: 600;'>🎯 目前設定金額：${target_profit:,.0f}</div>", unsafe_allow_html=True)
+            
             if target_profit > 0:
                 if actual_profit_m <= 0:
                     st.warning("⚠️ 您目前的實際利潤為負數或零。請先優化體質（降低廣告佔比或提升取件率）使單月轉虧為盈，系統才能為您進行有效的擴張預測。")
