@@ -946,21 +946,22 @@ if menu == "首頁":
                     
                     st.success(f"📈 **推演完成！** 要達成 **${target_profit:,.0f}** 的淨利，團隊可以選擇以下兩種策略方向：")
                     
-                    st.markdown("##### 🚀 策略一：規模擴張 (客單價/成本不變，靠衝單量達標)")
-                    c_r1, c_r2, c_r3, c_r4 = st.columns(4)
+                    # 🌟 修正 1：將過長的「維持現狀」數值移到標題旁邊作為小字補充，解決「...」截斷問題
+                    # 🌟 修正 2：直接抓取上方算好的「實際 ROI (actual_roi_m)」與「實際 ROAS (total_roas_m)」顯示，確保數字完全一致
+                    st.markdown(f"##### 🚀 策略一：規模擴張 (客單價/成本不變，靠衝單量達標) <span style='font-size: 14px; font-weight: normal; color: #64748b;'>&nbsp; ⚖️ 維持目前實際 ROAS: {total_roas_m:.2f} ｜ 實際 ROI: {actual_roi_m:.2f}</span>", unsafe_allow_html=True)
+                    
+                    # 移除第四格，還原成更寬敞的三格排版
+                    c_r1, c_r2, c_r3 = st.columns(3)
                     c_r1.metric("📦 目標總出貨單數", f"{req_orders:,} 單", f"需再增加 {req_orders - orders_cnt_m:,} 單")
                     c_r2.metric("💰 目標總營業額", f"${req_revenue:,.0f}", f"需再增加 ${(req_revenue - rev_m):,.0f}")
                     c_r3.metric("💸 需準備廣告費", f"${req_ad_spend:,.0f}", f"需再投入 ${(req_ad_spend - ad_m):,.0f}")
-                    c_r4.metric("⚖️ 維持目前 ROAS / ROI", f"{req_roas_scale:.2f} / {req_roi_scale:.2f}")
                     
-                    st.markdown("##### 🧠 策略二：體質優化 (單量與廣告費一毛不加，靠優化指標達標)")
-                    c_o1, c_o2, c_o3, c_o4 = st.columns(4)
+                    st.markdown(f"##### 🧠 策略二：體質優化 (單量與廣告費一毛不加，靠優化指標達標) <span style='font-size: 14px; font-weight: normal; color: #64748b;'>&nbsp; ⚖️ 維持目前單量: {orders_cnt_m:,} 單 ｜ 廣告費: ${ad_m:,.0f}</span>", unsafe_allow_html=True)
                     
-                    # 🌟 將拔除成本後的版面重新排列，並在最後一格補上維持現狀的單量與廣告費
+                    c_o1, c_o2, c_o3 = st.columns(3)
                     c_o1.metric("🛒 建議『商品客單價』", f"${rec_aov:,.0f}", f"每單需提高 ${(rec_aov - aov):,.0f}")
                     c_o2.metric("🔥 建議達標 ROAS", f"{rec_roas_opt:.2f}", f"需提高 {(rec_roas_opt - total_roas_m):.2f}")
                     c_o3.metric("🏆 建議達標 ROI", f"{rec_roi_opt:.2f}", f"需提高 {(rec_roi_opt - actual_roi_m):.2f}")
-                    c_o4.metric("⚖️ 維持目前單量 / 廣告費", f"{orders_cnt_m:,} 單 / ${ad_m:,.0f}")
             else:
                 st.info("💡 當月尚無訂單，系統無法進行智能模擬。")
     
