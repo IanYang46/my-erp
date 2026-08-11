@@ -871,7 +871,7 @@ if menu == "首頁":
             # 🌟 新增：自訂目標利潤分析 (達標模擬器)
             # ==========================================
             st.divider()
-            st.markdown("#### 🎯 達標模擬器 (Target Profit Simulator)")
+            st.markdown("#### 🎯 達標模擬器")
             st.caption("設定您本月期望達成的「實際淨利」目標，系統將以您目前的營運體質（客單價、毛利率、取件率）自動推算需要達成的關鍵指標！")
             
             target_profit = st.number_input("請輸入本月期望的『目標利潤』 (TWD)", min_value=0, step=10000, value=1000000, key="target_profit_sim")
