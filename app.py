@@ -934,8 +934,15 @@ if menu == "首頁":
                     opt_total_actual_cost = (avg_prod_cost * orders_cnt_m * est_pickup_rate) + ship_fee_m + ad_m
                     rec_roi_opt = target_profit / opt_total_actual_cost if opt_total_actual_cost > 0 else 0
                     
-                    # 建議商品成本 (維持目前客單價)
-                    rec_avg_cost = aov - (req_collected_margin_total / (orders_cnt_m * est_pickup_rate))
+                    # 建議客單價 (維持目前成本)
+                    rec_aov = (req_collected_margin_total / (orders_cnt_m * est_pickup_rate)) + avg_prod_cost
+                    rec_total_rev = rec_aov * orders_cnt_m
+                    rec_roas_opt = rec_total_rev / ad_m if ad_m > 0 else 0
+                    
+                    opt_total_actual_cost = (avg_prod_cost * orders_cnt_m * est_pickup_rate) + ship_fee_m + ad_m
+                    rec_roi_opt = target_profit / opt_total_actual_cost if opt_total_actual_cost > 0 else 0
+                    
+                    # 🌟 移除不切實際的「壓低成本」計算
                     
                     st.success(f"📈 **推演完成！** 要達成 **${target_profit:,.0f}** 的淨利，團隊可以選擇以下兩種策略方向：")
                     
@@ -948,14 +955,12 @@ if menu == "首頁":
                     
                     st.markdown("##### 🧠 策略二：體質優化 (單量與廣告費一毛不加，靠優化指標達標)")
                     c_o1, c_o2, c_o3, c_o4 = st.columns(4)
+                    
+                    # 🌟 將拔除成本後的版面重新排列，並在最後一格補上維持現狀的單量與廣告費
                     c_o1.metric("🛒 建議『商品客單價』", f"${rec_aov:,.0f}", f"每單需提高 ${(rec_aov - aov):,.0f}")
-                    if rec_avg_cost >= 0:
-                        c_o2.metric("📉 或壓低『單均成本』", f"${rec_avg_cost:,.0f}", f"每單需降低 ${(avg_prod_cost - rec_avg_cost):,.0f}")
-                    else:
-                        c_o2.metric("📉 或壓低『單均成本』", "無法達成", "利潤缺口過大")
-                        
-                    c_o3.metric("🔥 建議達標 ROAS", f"{rec_roas_opt:.2f}", f"需提高 {(rec_roas_opt - total_roas_m):.2f}")
-                    c_o4.metric("🏆 建議達標 ROI", f"{rec_roi_opt:.2f}", f"需提高 {(rec_roi_opt - actual_roi_m):.2f}")
+                    c_o2.metric("🔥 建議達標 ROAS", f"{rec_roas_opt:.2f}", f"需提高 {(rec_roas_opt - total_roas_m):.2f}")
+                    c_o3.metric("🏆 建議達標 ROI", f"{rec_roi_opt:.2f}", f"需提高 {(rec_roi_opt - actual_roi_m):.2f}")
+                    c_o4.metric("⚖️ 維持目前單量 / 廣告費", f"{orders_cnt_m:,} 單 / ${ad_m:,.0f}")
             else:
                 st.info("💡 當月尚無訂單，系統無法進行智能模擬。")
     
