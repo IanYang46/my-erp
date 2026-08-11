@@ -879,12 +879,37 @@ if menu == "首頁":
             # 👇 🌟 新增：在輸入框下方加入帶有千分位逗號的即時格式化數字，防呆避免少打零！
             st.markdown(f"<div style='margin-top: -10px; margin-bottom: 15px; color: #2563EB; font-size: 15px; font-weight: 600;'>🎯 目前設定金額：${target_profit:,.0f}</div>", unsafe_allow_html=True)
             
-            if target_profit > 0:
+            if target_profit > 0 and orders_cnt_m > 0:
+                # 提取共用的基礎單效指標 (無論盈虧皆可計算)
+                aov = rev_m / orders_cnt_m if orders_cnt_m > 0 else 0  # 客單價
+                avg_prod_cost = prod_cost_m / orders_cnt_m if orders_cnt_m > 0 else 0 # 單均商品成本
+                avg_ship_fee = ship_fee_m / orders_cnt_m if orders_cnt_m > 0 else 0 # 單均運費
+                # 單均基礎毛利 (賣出一單，扣掉商品和運費後，還沒扣廣告費前賺的錢)
+                base_margin_per_order = aov - avg_prod_cost - avg_ship_fee 
+
                 if actual_profit_m <= 0:
-                    st.warning("⚠️ 您目前的實際利潤為負數或零。請先優化體質（降低廣告佔比或提升取件率）使單月轉虧為盈，系統才能為您進行有效的擴張預測。")
+                    st.warning("⚠️ 系統偵測到目前的實際利潤為虧損或零，已自動為您切換為【轉虧為盈 ➔ 達標救援模式】！")
+                    if base_margin_per_order <= 0:
+                        st.error(f"🚨 **致命警訊**：您目前的客單價 (${aov:,.0f}) 甚至不足以支付單均的商品與運費成本 (${avg_prod_cost + avg_ship_fee:,.0f})！這代表賣越多賠越多，完全無法靠廣告補救。請立即調高商品售價、加推組合包、或降低進貨物流成本。")
+                    else:
+                        # 救援運算：要補平廣告費並達到目標利潤，需要多少單？
+                        req_gross_profit = target_profit + ad_m
+                        req_orders_rescue = int(req_gross_profit / base_margin_per_order) + 1
+                        req_rev_rescue = req_orders_rescue * aov
+                        req_roas_rescue = (req_rev_rescue / ad_m) if ad_m > 0 else 0
+                        
+                        st.info(f"💡 **救援處方箋**：您目前每出一單，扣除商品與運費其實還能賺 **${base_margin_per_order:,.0f}**。目前的虧損是因為「單量還不夠攤平現有的廣告費」，或是「退件運費吃掉了毛利」。\n\n**如果您的廣告費不再增加 (鎖死在目前的 ${ad_m:,.0f})，行銷團隊接下來必須將 ROAS 逼到以下水準才能達標：**")
+                        
+                        c_r1, c_r2, c_r3, c_r4 = st.columns(4)
+                        c_r1.metric("📦 需要衝刺總單數", f"{req_orders_rescue:,} 單", f"還需 {req_orders_rescue - orders_cnt_m:,} 單")
+                        c_r2.metric("💰 需要衝刺總營業額", f"${req_rev_rescue:,.0f}", f"還需 ${(req_rev_rescue - rev_m):,.0f}")
+                        if ad_m > 0:
+                            c_r3.metric("🔥 嚴格要求 ROAS", f"{req_roas_rescue:.2f}", f"必須比現在高 {req_roas_rescue - total_roas_m:.2f}")
+                        else:
+                            c_r3.metric("🔥 嚴格要求 ROAS", "純自然流量", "無廣告支出")
+                        c_r4.metric("🎯 距離目標尚欠淨利", f"${(target_profit - actual_profit_m):,.0f}")
                 else:
-                    # 計算目前的基礎體質單效
-                    aov = rev_m / orders_cnt_m if orders_cnt_m > 0 else 0  # 客單價
+                    # 原本賺錢時的擴張模式
                     avg_profit_per_order = actual_profit_m / orders_cnt_m if orders_cnt_m > 0 else 0 # 單均淨利
                     
                     # ----------------------------------------------------
