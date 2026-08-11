@@ -3834,10 +3834,14 @@ elif menu == "財務報表":
                 df_sys['系統結款_RMB'] = (df_sys['系統結款_TWD'] / logi_rate).round(2)
                 
                 # 產生每日匯總表
-                # 預估部分：利用 drop_duplicates 避免一單被拆成多包裹時，預估總額翻倍
-                df_sys_unique = df_sys.drop_duplicates('訂單編號')
+                # 🌟 新增：計算每日的「已結單數」與「未結單數」
+                df_sys_unique = df_sys.drop_duplicates('訂單編號').copy()
+                df_sys_unique['is_settled'] = df_sys_unique['已存結款日期'].notna()
+                
                 daily_est = df_sys_unique.groupby(df_sys_unique['訂單日期_dt'].dt.strftime('%m/%d')).agg(
                     訂單數=('訂單編號', 'count'),
+                    已結單數=('is_settled', 'sum'),                     # 👈 🌟 新增
+                    未結單數=('is_settled', lambda x: (~x).sum()),      # 👈 🌟 新增
                     應收台幣=('系統應收台幣', 'sum'),
                     手續費=('系統手續費', 'sum'),
                     預估結款=('系統結款_RMB', 'sum')
@@ -3850,10 +3854,31 @@ elif menu == "財務報表":
                 
                 daily_sys = pd.merge(daily_est, daily_act, on='日期', how='left').fillna(0)
                 
-                # 👇 變更 4：新增差額欄位
+                # 計算差額
                 daily_sys['差額'] = (daily_sys['實際結款'] - daily_sys['預估結款']).round(2)
                 
+                # 👇 🌟 新增：智能備註生成邏輯
+                def generate_remark(row):
+                    remarks = []
+                    if row['未結單數'] > 0:
+                        remarks.append(f"尚有 {int(row['未結單數'])} 單未收到款項")
+                    
+                    if row['實際結款'] > 0 and abs(row['差額']) > 1:
+                        # 只有在有實際結款，且有差額時才判定原因
+                        if row['差額'] > 0:
+                            remarks.append("物流實撥金額高於系統預估")
+                        else:
+                            remarks.append("物流實撥金額低於系統預估 (可能是匯率落差、手續費多扣、或包裹損壞賠償等)")
+                    
+                    return "；".join(remarks) if remarks else "✅ 帳務吻合"
+
+                daily_sys['備註'] = daily_sys.apply(generate_remark, axis=1)
+                
                 daily_sys = daily_sys.sort_values('日期', ascending=False)
+                
+                # 🌟 重新排列 DataFrame 的欄位順序以符合要求
+                cols_order = ['日期', '訂單數', '已結單數', '未結單數', '應收台幣', '手續費', '預估結款', '實際結款', '差額', '備註']
+                daily_sys = daily_sys[cols_order]
                 
                 st.data_editor(
                     daily_sys,
@@ -3862,11 +3887,14 @@ elif menu == "財務報表":
                     column_config={
                         "日期": st.column_config.TextColumn(disabled=True),
                         "訂單數": st.column_config.NumberColumn(format="%d 單", disabled=True),
+                        "已結單數": st.column_config.NumberColumn(format="%d 單", disabled=True), # 👈 🌟 新增
+                        "未結單數": st.column_config.NumberColumn(format="%d 單", disabled=True), # 👈 🌟 新增
                         "應收台幣": st.column_config.NumberColumn(format="$ %.0f", disabled=True),
                         "手續費": st.column_config.NumberColumn(format="-$ %.0f", disabled=True),
                         "預估結款": st.column_config.NumberColumn(format="¥ %.2f", disabled=True),
                         "實際結款": st.column_config.NumberColumn(format="¥ %.2f", disabled=True),
-                        "差額": st.column_config.NumberColumn(format="¥ %.2f", disabled=True)
+                        "差額": st.column_config.NumberColumn(format="¥ %.2f", disabled=True),
+                        "備註": st.column_config.TextColumn(disabled=True)                       # 👈 🌟 新增
                     }
                 )
 
@@ -4047,7 +4075,48 @@ elif menu == "財務報表":
                     # 3. 顯示明細表格
                     show_unsettled = unsettled_df[['訂單編號', '物流編號', '訂單日期', '系統應收台幣', '系統手續費', '系統結款_RMB']]
                     st.dataframe(show_unsettled, use_container_width=True, hide_index=True)
-        
+                    
+                st.divider()
+                
+                # ---------------------------------------------------------
+                # 🌟 第四步：新增歷史已結款清單
+                # ---------------------------------------------------------
+                st.markdown("#### 🏦 歷史已結款清單 (已消帳)")
+                st.caption("以下是歷史以來所有已經透過物流對帳單成功『消帳』的單據明細。")
+                
+                # 抓出已經有「結款日期」的單
+                df_settled_sys = df_sys[df_sys['已存結款日期'].notna()].copy()
+                
+                if df_settled_sys.empty:
+                    st.info("目前還沒有任何已經成功結款的歷史紀錄。")
+                else:
+                    # 按照結款日期由新到舊排序
+                    df_settled_sys['結款日期_dt'] = pd.to_datetime(df_settled_sys['已存結款日期'], errors='coerce')
+                    df_settled_sys = df_settled_sys.sort_values(by='結款日期_dt', ascending=False)
+                    
+                    # 顯示明細表格
+                    show_settled = df_settled_sys[['已存結款日期', '訂單編號', '物流編號', '系統結款_RMB', '已存實際結款']].copy()
+                    show_settled = show_settled.rename(columns={
+                        '已存結款日期': '結帳入庫日',
+                        '系統結款_RMB': '系統當時預估(RMB)',
+                        '已存實際結款': '實際核銷金額(RMB)'
+                    })
+                    
+                    # 加入當筆差額計算
+                    show_settled['當筆差額(RMB)'] = (show_settled['實際核銷金額(RMB)'] - show_settled['系統當時預估(RMB)']).round(2)
+                    
+                    st.dataframe(
+                        show_settled, 
+                        use_container_width=True, 
+                        hide_index=True,
+                        column_config={
+                            "結帳入庫日": st.column_config.TextColumn("結帳入庫日"),
+                            "系統當時預估(RMB)": st.column_config.NumberColumn(format="¥ %.2f"),
+                            "實際核銷金額(RMB)": st.column_config.NumberColumn(format="¥ %.2f"),
+                            "當筆差額(RMB)": st.column_config.NumberColumn(format="¥ %.2f")
+                        }
+                    )
+                    
         with t4: st.info("設定當前人民幣/外幣匯率，讓進貨成本自動轉換為台幣。")
         
         # 🌟 僅 Admin 可見的財務日誌分頁
