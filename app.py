@@ -868,92 +868,63 @@ if menu == "首頁":
                 st.markdown(f"> 👻 **隱藏損失提醒**：您的「預估利潤」與「實際利潤」相差了 **${profit_gap:,.0f}** 元。這主要是因為「未簽收/退回」的包裹不僅沒讓您賺到錢，您還**白白倒賠了寄出的運費與包裝耗材**。這就是為什麼提升取件率比提高營收更重要的原因！")
 
             # ==========================================
-            # 🌟 新增：自訂目標利潤分析 (達標模擬器)
+            # 🌟 新增：自訂目標利潤分析 (達標模擬器 - 全自動智能版)
             # ==========================================
             st.divider()
-            st.markdown("#### 🎯 達標模擬器")
-            st.caption("設定您本月期望達成的「實際淨利」目標，系統將以您目前的營運體質（客單價、毛利率、取件率）自動推算需要達成的關鍵指標！")
+            st.markdown("#### 🎯 達標模擬器 (全自動智能版)")
+            st.caption("💡 只需要給定目標，系統會自動排除「時間差」，用您目前的『真實體質 (客單價、智能取件率、單均廣告費)』直接推算需要的總單量與廣告預算！")
             
             target_profit = st.number_input("請輸入本月期望的『目標利潤』 (TWD)", min_value=0, step=10000, value=1000000, key="target_profit_sim")
             
-            # 👇 🌟 新增：在輸入框下方加入帶有千分位逗號的即時格式化數字，防呆避免少打零！
+            # 👇 即時動態格式化顯示
             st.markdown(f"<div style='margin-top: -10px; margin-bottom: 15px; color: #2563EB; font-size: 15px; font-weight: 600;'>🎯 目前設定金額：${target_profit:,.0f}</div>", unsafe_allow_html=True)
             
-            if target_profit > 0 and orders_cnt_m > 0:
-                # 提取共用的基礎單效指標 (無論盈虧皆可計算)
-                aov = rev_m / orders_cnt_m if orders_cnt_m > 0 else 0  # 客單價
-                avg_prod_cost = prod_cost_m / orders_cnt_m if orders_cnt_m > 0 else 0 # 單均商品成本
-                avg_ship_fee = ship_fee_m / orders_cnt_m if orders_cnt_m > 0 else 0 # 單均運費
-                # 單均基礎毛利 (賣出一單，扣掉商品和運費後，還沒扣廣告費前賺的錢)
-                base_margin_per_order = aov - avg_prod_cost - avg_ship_fee 
-
-                if actual_profit_m <= 0:
-                    st.warning("⚠️ 系統偵測到目前的實際利潤為虧損或零，已自動為您切換為【轉虧為盈 ➔ 達標救援模式】！")
-                    if base_margin_per_order <= 0:
-                        st.error(f"🚨 **致命警訊**：您目前的客單價 (${aov:,.0f}) 甚至不足以支付單均的商品與運費成本 (${avg_prod_cost + avg_ship_fee:,.0f})！這代表賣越多賠越多，完全無法靠廣告補救。請立即調高商品售價、加推組合包、或降低進貨物流成本。")
-                    else:
-                        # 救援運算：要補平廣告費並達到目標利潤，需要多少單？
-                        req_gross_profit = target_profit + ad_m
-                        req_orders_rescue = int(req_gross_profit / base_margin_per_order) + 1
-                        req_rev_rescue = req_orders_rescue * aov
-                        req_roas_rescue = (req_rev_rescue / ad_m) if ad_m > 0 else 0
-                        
-                        st.info(f"💡 **救援處方箋**：您目前每出一單，扣除商品與運費其實還能賺 **${base_margin_per_order:,.0f}**。目前的虧損是因為「單量還不夠攤平現有的廣告費」，或是「退件運費吃掉了毛利」。\n\n**如果您的廣告費不再增加 (鎖死在目前的 ${ad_m:,.0f})，行銷團隊接下來必須將 ROAS 逼到以下水準才能達標：**")
-                        
-                        c_r1, c_r2, c_r3, c_r4 = st.columns(4)
-                        c_r1.metric("📦 需要衝刺總單數", f"{req_orders_rescue:,} 單", f"還需 {req_orders_rescue - orders_cnt_m:,} 單")
-                        c_r2.metric("💰 需要衝刺總營業額", f"${req_rev_rescue:,.0f}", f"還需 ${(req_rev_rescue - rev_m):,.0f}")
-                        if ad_m > 0:
-                            c_r3.metric("🔥 嚴格要求 ROAS", f"{req_roas_rescue:.2f}", f"必須比現在高 {req_roas_rescue - total_roas_m:.2f}")
-                        else:
-                            c_r3.metric("🔥 嚴格要求 ROAS", "純自然流量", "無廣告支出")
-                        c_r4.metric("🎯 距離目標尚欠淨利", f"${(target_profit - actual_profit_m):,.0f}")
+            if orders_cnt_m > 0:
+                # 1. 提取共用的基礎單效指標 (Unit Economics)
+                aov = rev_m / orders_cnt_m  # 客單價
+                avg_prod_cost = prod_cost_m / orders_cnt_m # 單均商品成本
+                avg_ship_fee = ship_fee_m / orders_cnt_m # 單均運費
+                avg_ad_cost = ad_m / orders_cnt_m # 單均廣告費
+                
+                # 2. 🌟 解決時間差的關鍵：智能校正取件率 (只拿「已簽收」跟「異常退回」來算，排除還在路上的)
+                abnormal_mask_m = df_m_orders['取貨狀態'].isin(['退回', '已取消', '客訴', '已上架', '已重出'])
+                abnormal_cnt_m = abnormal_mask_m.sum()
+                resolved_orders = picked_cnt_m + abnormal_cnt_m
+                
+                # 如果還沒有完結的訂單，先預設給 85% 防呆
+                smart_pickup_rate = (picked_cnt_m / resolved_orders) if resolved_orders > 0 else 0.85
+                
+                # 3. 算出極度精準的「單件模型」淨利
+                # 每出一單的真實期望淨利 = (客單價 - 成本) * 智能取件率 - 運費 - 廣告費
+                unit_net_profit = ((aov - avg_prod_cost) * smart_pickup_rate) - avg_ship_fee - avg_ad_cost
+                
+                if unit_net_profit <= 0:
+                    st.error(f"🚨 **系統體質警訊**：\n依據您目前真實的客單價、廣告費與智能校正取件率 ({smart_pickup_rate*100:.1f}%)，您目前每出一單其實是 **虧損 ${abs(unit_net_profit):,.0f}**。\n👉 **解決方案**：必須先提高客單價、壓低單均獲客成本 (提升ROAS)，或提升取件率，否則單量放大只會賠更多。")
                 else:
-                    # 原本賺錢時的擴張模式
-                    avg_profit_per_order = actual_profit_m / orders_cnt_m if orders_cnt_m > 0 else 0 # 單均淨利
+                    # 需要的總單數
+                    req_orders = int(target_profit / unit_net_profit) + 1
+                    req_revenue = req_orders * aov
+                    req_ad_spend = req_orders * avg_ad_cost
+                    req_roas = (req_revenue / req_ad_spend) if req_ad_spend > 0 else 0
                     
-                    # ----------------------------------------------------
-                    # 🚀 策略一：直接放大規模 (維持現狀，單純增加單量與廣告費)
-                    # ----------------------------------------------------
-                    req_orders_scale = int(target_profit / avg_profit_per_order) + 1
-                    req_rev_scale = req_orders_scale * aov
-                    req_ad_scale = (ad_m / actual_profit_m) * target_profit if actual_profit_m > 0 else 0
+                    # 計算預期總成本 = (預期售出商品成本) + (總運費) + 廣告費
+                    est_total_actual_cost = (req_orders * avg_prod_cost * smart_pickup_rate) + (req_orders * avg_ship_fee) + req_ad_spend
+                    req_roi = (target_profit / est_total_actual_cost) if est_total_actual_cost > 0 else 0
                     
-                    st.markdown("##### 🚀 策略一：預算加碼 (維持現有廣告轉換率與取件率)")
-                    st.info("💡 **解讀**：如果您目前的 ROAS 表現維持不變，單純透過「增加廣告預算」來衝出更多訂單，您的各項指標必須達到：")
+                    st.success(f"📈 **智能推演完成！** 系統已自動排除物流時間差。以目前的真實體質 (單均廣告費 ${avg_ad_cost:,.0f}、智能取件率 {smart_pickup_rate*100:.1f}%)，要達成目標需完成以下指標：")
                     
-                    c_s1, c_s2, c_s3, c_s4 = st.columns(4)
-                    c_s1.metric("📦 需要總單數", f"{req_orders_scale:,} 單", help="目標利潤 ÷ 目前單均淨利")
-                    c_s2.metric("💰 需要總營業額", f"${req_rev_scale:,.0f}", help="需要總單數 × 目前客單價")
-                    c_s3.metric("💸 需準備廣告費", f"${req_ad_scale:,.0f}", f"ROAS 維持現況 {total_roas_m:.2f}")
-                    c_s4.metric("💎 達標 ROI", f"{actual_roi_m:.2f}", "與現況持平")
+                    c_r1, c_r2, c_r3, c_r4 = st.columns(4)
+                    c_r1.metric("📦 目標總出貨單數", f"{req_orders:,} 單", f"需日均出貨 {int(req_orders/30)} 單")
+                    c_r2.metric("💰 目標總營業額", f"${req_revenue:,.0f}", f"包含未取件的下單總額")
                     
-                    # ----------------------------------------------------
-                    # 🧠 策略二：體質優化突破 (廣告預算鎖死不變，硬拉 ROAS)
-                    # ----------------------------------------------------
-                    if ad_m > 0:
-                        # 基礎毛利率 (不扣廣告費的利潤佔比) = (實際利潤 + 廣告費) / 營業額
-                        gross_margin = (actual_profit_m + ad_m) / rev_m if rev_m > 0 else 0
+                    if req_ad_spend > 0:
+                        c_r3.metric("💸 需準備廣告費", f"${req_ad_spend:,.0f}", f"維持目標 ROAS {req_roas:.2f}")
+                    else:
+                        c_r3.metric("💸 需準備廣告費", "純自然流量", "無廣告支出")
                         
-                        if gross_margin > 0:
-                            # 需求營業額 = (目標利潤 + 固定的廣告費) / 毛利率
-                            req_rev_opt = (target_profit + ad_m) / gross_margin
-                            req_orders_opt = int(req_rev_opt / aov) + 1
-                            req_roas_opt = req_rev_opt / ad_m
-                            
-                            # 優化後的總成本 = 營業額扣掉毛利，再加回廣告費
-                            opt_total_cost = (req_rev_opt - (req_rev_opt * gross_margin)) + ad_m
-                            req_roi_opt = target_profit / opt_total_cost if opt_total_cost > 0 else 0
-                            
-                            st.markdown("<br>", unsafe_allow_html=True)
-                            st.markdown("##### 🧠 策略二：體質優化突破 (廣告預算不增加，提升受眾精準度)")
-                            st.success(f"💡 **解讀**：如果您**不想多花任何廣告費 (維持現有的 ${ad_m:,.0f})**，必須靠優化廣告素材、提高客單價，逼迫廣告成效(ROAS)提升才能達標：")
-                            
-                            c_o1, c_o2, c_o3, c_o4 = st.columns(4)
-                            c_o1.metric("📦 需要總單數", f"{req_orders_opt:,} 單", help="不增加廣告費下的目標總單量")
-                            c_o2.metric("💰 需要總營業額", f"${req_rev_opt:,.0f}", help="不增加廣告費下的目標營業額")
-                            c_o3.metric("🔥 嚴格要求 ROAS", f"{req_roas_opt:.2f}", f"必須比現在高 {req_roas_opt - total_roas_m:.2f}")
-                            c_o4.metric("🏆 嚴格要求 ROI", f"{req_roi_opt:.2f}", f"必須比現在高 {req_roi_opt - actual_roi_m:.2f}")
+                    c_r4.metric("🏆 預期達成 ROI", f"{req_roi:.2f}", "每投入1元總成本賺回的淨利")
+            else:
+                st.info("💡 當月尚無訂單，系統無法進行智能模擬。")
     
     # ==========================================
     # --- 3. 廣告費區間輸入與漏填檢查 (僅限管理員) ---
