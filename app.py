@@ -3855,6 +3855,8 @@ elif menu == "訂單明細":
 
 elif menu == "財務報表":
     st.title("📈 財務與利潤分析")
+    current_operator = st.session_state.get('user', 'admin') # 👈 🌟 補上這一行，讓系統知道現在是誰在操作
+    
     if check_perm(role, "財務報表", "can_view"):
         is_admin = (st.session_state.get('role') == 'Admin')
         
