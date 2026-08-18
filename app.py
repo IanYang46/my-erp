@@ -4164,20 +4164,36 @@ elif menu == "財務報表":
                 st.markdown("#### ⏳ 系統已簽收但【未結清】清單")
                 st.caption("以下是歷史以來所有真正還沒結到款的漏網之魚！(若您有上傳檔案，系統會暫時隱藏本次準備結清的單)")
                 
-                # 只抓出「尚未存入資料庫」的單
-                df_unsettled_sys = df_sys[df_sys['已存結款日期'].isna()].copy()
+                # 🌟 智能修復 1：找出已經有「任何一個包裹」成功結清的訂單編號
+                settled_oids = df_sys[df_sys['已存結款日期'].notna()]['訂單編號'].unique()
+                
+                # 🌟 智能修復 2：排除掉那些「已經有部分包裹結清」的訂單 (解決退回單卡住的問題)
+                df_unsettled_raw = df_sys[
+                    (df_sys['已存結款日期'].isna()) & 
+                    (~df_sys['訂單編號'].isin(settled_oids))
+                ].copy()
                 
                 if df_logi_for_exclusion is not None and not df_logi_for_exclusion.empty:
                     # 有上傳檔案：排除本次上傳名單
-                    merged_unsettled = pd.merge(df_unsettled_sys, df_logi_for_exclusion, on='物流編號', how='left', indicator=True)
+                    merged_unsettled = pd.merge(df_unsettled_raw, df_logi_for_exclusion, on='物流編號', how='left', indicator=True)
                     unsettled_df = merged_unsettled[merged_unsettled['_merge'] == 'left_only'].copy()
                 else:
                     # 沒上傳檔案：直接顯示系統內所有未結的單
-                    unsettled_df = df_unsettled_sys.copy()
+                    unsettled_df = df_unsettled_raw.copy()
                 
                 if unsettled_df.empty:
                     st.success("✅ 恭喜！歷史以來所有已簽收的訂單，全部都已經結清了！")
                 else:
+                    # 🌟 智能修復 3：將同一個訂單的多個包裹合併為一行，防止「未結金額」翻倍計算！
+                    unsettled_df = unsettled_df.groupby('訂單編號').agg({
+                        '物流編號': lambda x: '、'.join(x.dropna().unique()),
+                        '訂單日期_dt': 'first',
+                        '訂單日期': 'first',
+                        '系統應收台幣': 'first',
+                        '系統手續費': 'first',
+                        '系統結款_RMB': 'first'
+                    }).reset_index()
+                    
                     # 按照訂單日期從舊排到新
                     unsettled_df = unsettled_df.sort_values(by='訂單日期_dt', ascending=True)
                     
