@@ -3917,7 +3917,7 @@ elif menu == "財務報表":
                 df_s = pd.read_sql(query_s, conn)
                 
             if df_c_all.empty:
-                st.warning("系統目前沒有狀態為『簽收』的訂單。")
+                st.warning("系統目前沒有具備物流單號的訂單。")
             else:
                 # 自動剃除應收為 0 的單 (無須結帳)
                 df_c_all['系統應收台幣'] = pd.to_numeric(df_c_all['包裹應收'], errors='coerce').fillna(0.0)
@@ -3933,7 +3933,17 @@ elif menu == "財務報表":
                 # 結合資料庫結款紀錄 (總表)
                 df_all_sys = pd.merge(df_c_all, df_s, on='物流編號', how='left')
                 
-                # 🌟 升級 2：智能過濾！只顯示「簽收」、「已結清」、或備註含有「部分取件」的單！
+                # 👇 🌟 救回遺失的計算邏輯：幫總表無死角算好手續費與人民幣！
+                import numpy as np
+                conditions = [df_all_sys['系統應收台幣'] <= 9999, df_all_sys['系統應收台幣'] >= 10000]
+                choices = [30, 160]
+                df_all_sys['系統手續費'] = np.select(conditions, choices, default=30)
+                
+                df_all_sys['系統結款_TWD'] = df_all_sys['系統應收台幣'] - df_all_sys['系統手續費']
+                df_all_sys['系統結款_RMB'] = (df_all_sys['系統結款_TWD'] / logi_rate).round(2)
+                # 👆 救回完畢 👆
+
+                # 🌟 升級 2：智能過濾！UI上只顯示「簽收」、「已結清」、或備註含有「部分取件」的單！
                 mask_signed = df_all_sys['取貨狀態'] == '簽收'
                 mask_settled = df_all_sys['已存結款日期'].notna()
                 mask_partial = df_all_sys['商家備註'].astype(str).str.contains('部分取件', na=False)
