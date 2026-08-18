@@ -3752,13 +3752,13 @@ elif menu == "訂單明細":
                                         if not t_num: 
                                             continue
                                         
-                                        # 🌟 修改 1：改用 LIKE 模糊搜尋，只要包含該單號就能比對成功！
-                                        cursor.execute("SELECT 訂單編號, 包裹應收, 商品成本, 物流運費_RMB FROM customer_orders WHERE 物流編號 LIKE ?", (f"%{t_num}%",))
+                                        # 🌟 修改 1：多抓出「取貨狀態」與「商家備註」來做比對
+                                        cursor.execute("SELECT 訂單編號, 包裹應收, 商品成本, 物流運費_RMB, 取貨狀態, 商家備註 FROM customer_orders WHERE 物流編號 LIKE ?", (f"%{t_num}%",))
                                         db_rows = cursor.fetchall() 
                                         
                                         if db_rows:
                                             for db_row in db_rows:
-                                                oid, db_revenue, db_cost, db_shipping_rmb = db_row
+                                                oid, db_revenue, db_cost, db_shipping_rmb, db_status, db_note = db_row
                                                 
                                                 raw_status = str(row['狀態']).strip() if has_status and str(row['狀態']).strip() != "" else None
                                                 
@@ -3777,22 +3777,28 @@ elif menu == "訂單明細":
                                                 if new_status == '簽收' and has_date and str(row['取貨日期']).strip() != "":
                                                     new_date = str(row['取貨日期']).strip()
                                                     
+                                                # 👇 🌟 核心新增：智能偵測「部分取件」衝突，並自動寫入商家備註
+                                                conflict_note = ""
+                                                if db_status == '簽收' and new_status in ['退回', '已取消', '客訴', '已上架', '已重出']:
+                                                    if '部分取件' not in str(db_note):
+                                                        conflict_note = f"\n[系統] 偵測多包裹分歧 (前包裹簽收，此包裹{new_status})，標記為【部分取件】"
+                                                elif db_status in ['退回', '已取消', '客訴', '已上架', '已重出'] and new_status == '簽收':
+                                                    if '部分取件' not in str(db_note):
+                                                        conflict_note = f"\n[系統] 偵測多包裹分歧 (前包裹{db_status}，此包裹簽收)，標記為【部分取件】"
+                                                        
                                                 # 🌟 修改 2：多包裹的智能運費累加邏輯 (防覆蓋)
                                                 if has_fee and str(row['物流運費']).strip() != "":
                                                     current_row_fee = float(row['物流運費'])
                                                     
                                                     if oid not in processed_orders:
-                                                        # 此訂單在「這份表格」第一次遇到：以表格運費為主
                                                         new_fee_rmb = current_row_fee
                                                         processed_orders.add(oid)
                                                     else:
-                                                        # 發現多個包裹！讀取剛寫入的運費，並將第二筆以上的運費「加上去」
                                                         cursor.execute("SELECT 物流運費_RMB FROM customer_orders WHERE 訂單編號=?", (oid,))
                                                         latest_fee_row = cursor.fetchone()
                                                         latest_fee = float(latest_fee_row[0]) if latest_fee_row and latest_fee_row[0] is not None else 0.0
                                                         new_fee_rmb = latest_fee + current_row_fee
                                                 else:
-                                                    # 表格沒填運費：保留資料庫原有運費
                                                     new_fee_rmb = float(db_shipping_rmb if db_shipping_rmb is not None else 0.0)
                                                     
                                                 new_fee_twd = new_fee_rmb * rate
@@ -3804,10 +3810,14 @@ elif menu == "訂單明細":
                                                     updates.append("取貨狀態=?")
                                                     params.append(new_status)
                                                     
-                                                # 🌟 新增：如果狀態是簽收且有時間，寫入資料庫
                                                 if new_date:
                                                     updates.append("取貨日期=?")
                                                     params.append(new_date)
+                                                
+                                                # 👇 🌟 新增：如果發現衝突，將備註也加進更新清單中
+                                                if conflict_note:
+                                                    updates.append("商家備註=?")
+                                                    params.append(str(db_note if db_note else '') + conflict_note)
                                                 
                                                 updates.append("物流運費_RMB=?"); params.append(new_fee_rmb)
                                                 updates.append("物流運費=?"); params.append(new_fee_twd)
@@ -3900,28 +3910,35 @@ elif menu == "財務報表":
             st.caption("以下資料來自系統內部紀錄。如果該單已經核對儲存過，系統會自動帶入『實際結款』。")
             
             with get_db() as conn:
-                # 👇 變更 1：分開讀取，方便我們先進行資料清洗與拆解
-                query_c = "SELECT 訂單編號, 物流編號, 包裹應收, 訂單日期 FROM customer_orders WHERE 取貨狀態='簽收'"
-                df_c = pd.read_sql(query_c, conn)
+                # 🌟 升級 1：移除 '簽收' 限制，並拉出「取貨狀態」與「商家備註」
+                query_c = "SELECT 訂單編號, 物流編號, 包裹應收, 訂單日期, 取貨狀態, 商家備註 FROM customer_orders WHERE 物流編號 IS NOT NULL AND 物流編號 != ''"
+                df_c_all = pd.read_sql(query_c, conn)
                 query_s = "SELECT 物流編號, 結款日期 AS 已存結款日期, 物流結款人民幣 AS 已存實際結款 FROM logistics_settlements"
                 df_s = pd.read_sql(query_s, conn)
                 
-            if df_c.empty:
+            if df_c_all.empty:
                 st.warning("系統目前沒有狀態為『簽收』的訂單。")
             else:
-                # 👇 變更 2：自動剃除應收為 0 的單 (無須結帳)
-                df_c['系統應收台幣'] = pd.to_numeric(df_c['包裹應收'], errors='coerce').fillna(0.0)
-                df_c = df_c[df_c['系統應收台幣'] > 0].copy()
+                # 自動剃除應收為 0 的單 (無須結帳)
+                df_c_all['系統應收台幣'] = pd.to_numeric(df_c_all['包裹應收'], errors='coerce').fillna(0.0)
+                df_c_all = df_c_all[df_c_all['系統應收台幣'] > 0].copy()
                 
-                # 👇 變更 3：處理合併物流單號 (自動將含斜線、逗號的字串拆成多筆獨立紀錄)
-                df_c['物流編號'] = df_c['物流編號'].astype(str).str.replace(' ', '')
-                df_c['物流編號'] = df_c['物流編號'].str.split(r'[/,、]')
-                df_c = df_c.explode('物流編號')
-                df_c['物流編號'] = df_c['物流編號'].str.strip()
-                df_c = df_c[df_c['物流編號'] != ""]
+                # 處理合併物流單號 (自動將含斜線、逗號的字串拆成多筆獨立紀錄)
+                df_c_all['物流編號'] = df_c_all['物流編號'].astype(str).str.replace(' ', '')
+                df_c_all['物流編號'] = df_c_all['物流編號'].str.split(r'[/,、]')
+                df_c_all = df_c_all.explode('物流編號')
+                df_c_all['物流編號'] = df_c_all['物流編號'].str.strip()
+                df_c_all = df_c_all[df_c_all['物流編號'] != ""]
                 
-                # 結合資料庫結款紀錄
-                df_sys = pd.merge(df_c, df_s, on='物流編號', how='left')
+                # 結合資料庫結款紀錄 (總表)
+                df_all_sys = pd.merge(df_c_all, df_s, on='物流編號', how='left')
+                
+                # 🌟 升級 2：智能過濾！只顯示「簽收」、「已結清」、或備註含有「部分取件」的單！
+                mask_signed = df_all_sys['取貨狀態'] == '簽收'
+                mask_settled = df_all_sys['已存結款日期'].notna()
+                mask_partial = df_all_sys['商家備註'].astype(str).str.contains('部分取件', na=False)
+                
+                df_sys = df_all_sys[mask_signed | mask_settled | mask_partial].copy()
                 
                 df_sys['訂單日期_dt'] = pd.to_datetime(df_sys['訂單日期'], errors='coerce')
                 
@@ -4057,7 +4074,8 @@ elif menu == "財務報表":
                             
                             df_logi_for_exclusion = df_logi.copy() # 備份起來，提供給下方未結清清單使用
                                     
-                            merged = pd.merge(df_sys, df_logi, on='物流編號', how='left', indicator=True)
+                            # 🌟 升級 3：上傳比對時，使用包含所有狀態的 df_all_sys，確保狀態是退回的單也能被核銷配對到！
+                            merged = pd.merge(df_all_sys, df_logi, on='物流編號', how='left', indicator=True)
                             
                             matched_df = merged[merged['_merge'] == 'both'].copy()
                             matched_df['金額差'] = matched_df['物流簽收金額'] - matched_df['系統應收台幣']
