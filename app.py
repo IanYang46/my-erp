@@ -3962,7 +3962,8 @@ elif menu == "財務報表":
                 
                 # 產生每日匯總表
                 # 🌟 新增：計算每日的「已結單數」與「未結單數」
-                df_sys_unique = df_sys.drop_duplicates('訂單編號').copy()
+                # 👇 智能修復：先依「結款日期」排序，把有結款的包裹頂到最上面，防止部分取件的未結退回單「蓋台」！
+                df_sys_unique = df_sys.sort_values(by='已存結款日期', na_position='last').drop_duplicates('訂單編號').copy()
                 df_sys_unique['is_settled'] = df_sys_unique['已存結款日期'].notna()
                 
                 daily_est = df_sys_unique.groupby(df_sys_unique['訂單日期_dt'].dt.strftime('%m/%d')).agg(
