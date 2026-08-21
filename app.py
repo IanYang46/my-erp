@@ -1345,8 +1345,14 @@ elif menu == "商品訊息":
                         for _, row in filtered_df.iterrows():
                             with st.container(border=True):
                                 img_col, info_col, remark_col, action_col = st.columns([2, 3, 5, 2])
-                                if isinstance(row['圖片路徑'], str) and row['圖片路徑'].strip() and os.path.exists(row['圖片路徑']):
-                                    img_col.image(row['圖片路徑'], use_container_width=True)
+                                # 🌟 支援讀取 Base64 永久字串，同時兼容舊的本地路徑
+                                if isinstance(row['圖片路徑'], str) and row['圖片路徑'].strip():
+                                    if str(row['圖片路徑']).startswith('data:image'):
+                                        img_col.image(row['圖片路徑'], use_container_width=True)
+                                    elif os.path.exists(row['圖片路徑']):
+                                        img_col.image(row['圖片路徑'], use_container_width=True)
+                                    else:
+                                        img_col.markdown("<div style='text-align:center; color:gray; padding-top:20px;'>📷 暫無圖片</div>", unsafe_allow_html=True)
                                 else:
                                     img_col.markdown("<div style='text-align:center; color:gray; padding-top:20px;'>📷 暫無圖片</div>", unsafe_allow_html=True)
                                     
@@ -1395,8 +1401,9 @@ elif menu == "商品訊息":
                         if st.form_submit_button("💾 儲存修改", type="primary"):
                             new_path = target[4]
                             if edit_img:
-                                new_path = f"product_images/{edit_code}.jpg"
-                                with open(new_path, "wb") as f: f.write(edit_img.getbuffer())
+                                # 🌟 改為直接轉 Base64 文字存入 Supabase 資料庫！
+                                encoded_string = base64.b64encode(edit_img.getvalue()).decode("utf-8")
+                                new_path = f"data:image/jpeg;base64,{encoded_string}"
                             
                             with get_db() as conn:
                                 conn.execute("UPDATE products SET 類別=?, 品牌=?, 名稱=?, 備註=?, 圖片路徑=? WHERE 編碼=?", (edit_cat, edit_brand, edit_name, edit_remark, new_path, edit_code))
@@ -1430,9 +1437,11 @@ elif menu == "商品訊息":
                             st.error("❌ 商品編碼為必填項目！")
                         else:
                             try:
-                                path = f"product_images/{code}.jpg" if img_file else ""
+                                path = ""
                                 if img_file:
-                                    with open(path, "wb") as f: f.write(img_file.getbuffer())
+                                    # 🌟 改為直接轉 Base64 文字存入 Supabase 資料庫！
+                                    encoded_string = base64.b64encode(img_file.getvalue()).decode("utf-8")
+                                    path = f"data:image/jpeg;base64,{encoded_string}"
                                 
                                 with get_db() as conn:
                                     conn.execute("INSERT INTO products (編碼, 類別, 品牌, 名稱, 備註, 圖片路徑) VALUES (?,?,?,?,?,?)", (code, category, brand, name, remark, path))
@@ -1587,6 +1596,8 @@ elif menu == "商品庫存":
             
             def get_image_base64(path):
                 if pd.isna(path) or not path: return None
+                # 🌟 如果已經是 Base64 格式，直接回傳給前端畫圖
+                if str(path).startswith('data:image'): return str(path)
                 if os.path.exists(path):
                     with open(path, "rb") as f: return f"data:image/jpeg;base64,{base64.b64encode(f.read()).decode('utf-8')}"
                 return None
@@ -1928,8 +1939,13 @@ elif menu == "採購管理":
                                 img_path = matching_row['圖片路徑'].values[0]
                                 with preview_cols[col_idx % 6]:
                                     st.markdown(f"<div style='text-align:center; font-size:14px; font-weight:bold;'>{raw_code}</div>", unsafe_allow_html=True)
-                                    if img_path and os.path.exists(img_path):
-                                        st.image(img_path, use_container_width=True)
+                                    if img_path:
+                                        if str(img_path).startswith('data:image'):
+                                            st.image(img_path, use_container_width=True)
+                                        elif os.path.exists(img_path):
+                                            st.image(img_path, use_container_width=True)
+                                        else:
+                                            st.info("無圖片")
                                     else:
                                         st.info("無圖片")
                                 col_idx += 1
@@ -2005,8 +2021,13 @@ elif menu == "採購管理":
                 for _, item in df_items.iterrows():
                     with st.container(border=True):
                         img_c, details_c = st.columns([1.2, 6])
-                        if item['圖片路徑'] and os.path.exists(item['圖片路徑']):
-                            img_c.image(item['圖片路徑'], width=90)
+                        if item['圖片路徑']:
+                            if str(item['圖片路徑']).startswith('data:image'):
+                                img_c.image(item['圖片路徑'], width=90)
+                            elif os.path.exists(item['圖片路徑']):
+                                img_c.image(item['圖片路徑'], width=90)
+                            else:
+                                img_c.write("無商品圖片")
                         else:
                             img_c.write("無商品圖片")
                             
@@ -2968,9 +2989,81 @@ elif menu == "訂單明細":
                     # 👇 更改提示字眼
                     new_items = st.text_area("📦 品項內容 (支援直接換行編輯，請保持原始編碼以利系統精準追蹤)", value=target_order.get('品項內容_原始', ''), height=150)
                     
-                    # 👇 修正這裡：使用 replace 把 * 加上跳脫字元 \\*，防止被系統誤認成斜體語法
-                    safe_preview = target_order.get('品項翻譯', '無品項').replace('*', '\\*')
-                    st.info(f"👁️ **系統自動翻譯對照**：\n\n{safe_preview}")
+                    st.write("##### 👁️ 系統智能圖文對照預覽")
+                    
+                    # 🌟 智能升級：解析品項並自動抓出商品圖片顯示
+                    import re
+                    raw_preview_text = target_order.get('品項內容_原始', str(new_items))
+                    parts = re.split(r'[\n、,，]', raw_preview_text.replace('•', ''))
+                    
+                    found_items = []
+                    for part in parts:
+                        part = part.strip()
+                        if not part: continue
+                        
+                        match = re.search(r'[\*xX×]\s*(\d+)', part)
+                        qty = int(match.group(1)) if match else 1
+                        
+                        matched_code = None
+                        matched_name = None
+                        
+                        # 比對編碼
+                        for code in all_codes:
+                            if code in part:
+                                matched_code = code
+                                matched_name = prod_map.get(code, "未知商品")
+                                break
+                                
+                        # 若無編碼，比對名稱
+                        if not matched_code:
+                            for name in all_names:
+                                if name in part:
+                                    matched_code = name_to_code.get(name)
+                                    matched_name = name
+                                    break
+                                    
+                        if matched_code:
+                            found_items.append({"code": matched_code, "name": matched_name, "qty": qty})
+                        else:
+                            # 沒配對到任何東西，當作未知文字顯示
+                            found_items.append({"code": None, "name": part, "qty": qty})
+                            
+                    if found_items:
+                        # 建立一排欄位來顯示圖片
+                        preview_cols = st.columns(len(found_items) if len(found_items) <= 6 else 6)
+                        
+                        with get_db() as conn:
+                            cursor = conn.cursor()
+                            col_idx = 0
+                            for item in found_items:
+                                if item["code"]:
+                                    # 去資料庫撈圖片
+                                    cursor.execute("SELECT 圖片路徑 FROM products WHERE 編碼=?", (item["code"],))
+                                    img_res = cursor.fetchone()
+                                    img_path = img_res[0] if img_res else None
+                                    
+                                    with preview_cols[col_idx % 6]:
+                                        st.markdown(f"<div style='text-align:center; font-size:13px; font-weight:bold;'>{item['code']} (*{item['qty']})</div>", unsafe_allow_html=True)
+                                        if img_path and str(img_path).startswith('data:image'):
+                                            st.image(img_path, use_container_width=True)
+                                        elif img_path and os.path.exists(img_path):
+                                            st.image(img_path, use_container_width=True)
+                                        else:
+                                            st.markdown("<div style='text-align:center; color:gray; font-size:12px; padding:10px;'>🚫 無圖片</div>", unsafe_allow_html=True)
+                                        st.caption(f"<div style='text-align:center;'>{item['name']}</div>", unsafe_allow_html=True)
+                                        
+                                    col_idx += 1
+                                else:
+                                    # 沒配對到的品項，用文字顯示
+                                    with preview_cols[col_idx % 6]:
+                                        st.markdown(f"<div style='text-align:center; font-size:13px; color: #d97706;'>❓ 未知品項</div>", unsafe_allow_html=True)
+                                        st.markdown("<div style='text-align:center; color:gray; font-size:12px; padding:10px;'>➖</div>", unsafe_allow_html=True)
+                                        st.caption(f"<div style='text-align:center;'>{item['name']}</div>", unsafe_allow_html=True)
+                                    col_idx += 1
+                                    
+                        st.write("") # 加個空行拉開距離
+                    else:
+                        st.info("無法解析任何商品品項。")
                     
                     c14, c15 = st.columns(2)
                     edit_cust_note = c14.text_area("👤 顧客備註", value=target_order.get('顧客備註', ''))
