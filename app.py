@@ -3070,11 +3070,7 @@ elif menu == "訂單明細":
                                         
                         st.write("") # 加個空行拉開距離
                     else:
-                        st.info("無法解析任何商品品項。")
-                    
-                    # 💡 修復 3：下方的純文字翻譯對照也直接吃編輯框的新字串
-                    safe_preview = translate_items(str(new_items)).replace('*', '\\*')
-                    st.info(f"👁️ **系統自動翻譯對照**：\n\n{safe_preview}")
+                        st.info("無法解析任何商品品項。")        
                     
                     c14, c15 = st.columns(2)
                     edit_cust_note = c14.text_area("👤 顧客備註", value=target_order.get('顧客備註', ''))
