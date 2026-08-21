@@ -3029,38 +3029,39 @@ elif menu == "訂單明細":
                             found_items.append({"code": None, "name": part, "qty": qty})
                             
                     if found_items:
-                        # 建立一排欄位來顯示圖片
-                        preview_cols = st.columns(len(found_items) if len(found_items) <= 6 else 6)
+                        st.markdown("<br>", unsafe_allow_html=True) # 加點距離
                         
                         with get_db() as conn:
                             cursor = conn.cursor()
-                            col_idx = 0
-                            for item in found_items:
-                                if item["code"]:
-                                    # 去資料庫撈圖片
-                                    cursor.execute("SELECT 圖片路徑 FROM products WHERE 編碼=?", (item["code"],))
-                                    img_res = cursor.fetchone()
-                                    img_path = img_res[0] if img_res else None
-                                    
-                                    with preview_cols[col_idx % 6]:
+                            
+                            # 🌟 終極修復：將商品以每 6 個為一排 (Chunk) 進行網格分組渲染
+                            # 這樣即使只有 1 個商品，也會被嚴格限制在螢幕 1/6 的大小，絕對不會變成巨無霸！
+                            for i in range(0, len(found_items), 6):
+                                chunk = found_items[i:i+6]
+                                preview_cols = st.columns(6) # 永遠切成 6 等份，鎖定縮圖比例
+                                
+                                for j, item in enumerate(chunk):
+                                    with preview_cols[j]:
                                         st.markdown(f"<div style='text-align:center; font-size:13px; font-weight:bold;'>{item['code']} (*{item['qty']})</div>", unsafe_allow_html=True)
-                                        if img_path and str(img_path).startswith('data:image'):
-                                            st.image(img_path, use_container_width=True)
-                                        elif img_path and os.path.exists(img_path):
-                                            st.image(img_path, use_container_width=True)
+                                        
+                                        if item["code"]:
+                                            # 去資料庫撈圖片
+                                            cursor.execute("SELECT 圖片路徑 FROM products WHERE 編碼=?", (item["code"],))
+                                            img_res = cursor.fetchone()
+                                            img_path = img_res[0] if img_res else None
+                                            
+                                            if img_path and str(img_path).startswith('data:image'):
+                                                st.image(img_path, use_container_width=True)
+                                            elif img_path and os.path.exists(img_path):
+                                                st.image(img_path, use_container_width=True)
+                                            else:
+                                                st.markdown("<div style='text-align:center; color:gray; font-size:12px; padding:10px;'>🚫 無圖片</div>", unsafe_allow_html=True)
                                         else:
-                                            st.markdown("<div style='text-align:center; color:gray; font-size:12px; padding:10px;'>🚫 無圖片</div>", unsafe_allow_html=True)
+                                            # 沒配對到的品項
+                                            st.markdown(f"<div style='text-align:center; font-size:13px; color: #d97706;'>❓ 未知品項</div>", unsafe_allow_html=True)
+                                            
                                         st.caption(f"<div style='text-align:center;'>{item['name']}</div>", unsafe_allow_html=True)
                                         
-                                    col_idx += 1
-                                else:
-                                    # 沒配對到的品項，用文字顯示
-                                    with preview_cols[col_idx % 6]:
-                                        st.markdown(f"<div style='text-align:center; font-size:13px; color: #d97706;'>❓ 未知品項</div>", unsafe_allow_html=True)
-                                        st.markdown("<div style='text-align:center; color:gray; font-size:12px; padding:10px;'>➖</div>", unsafe_allow_html=True)
-                                        st.caption(f"<div style='text-align:center;'>{item['name']}</div>", unsafe_allow_html=True)
-                                    col_idx += 1
-                                    
                         st.write("") # 加個空行拉開距離
                     else:
                         st.info("無法解析任何商品品項。")
