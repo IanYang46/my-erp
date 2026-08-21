@@ -2969,7 +2969,8 @@ elif menu == "訂單明細":
                     current_cost_twd = float(target_order.get('商品成本', 0.0))
                     current_cost_rmb = (current_cost_twd / rate) if current_cost_twd > 0 else 50.0
                     
-                    edit_cost_rmb = c11.number_input("商品成本 (RMB)", value=current_cost_rmb, step=5.0)
+                    # 🌟 修改提示，讓人員知道可以改成 0 讓系統算
+                    edit_cost_rmb = c11.number_input("商品成本 (RMB) [填0或改品項自動重算]", value=current_cost_rmb, step=5.0)
                     edit_cost = edit_cost_rmb * rate  # 自動轉成台幣供後續存檔運算
                     c11.caption(f"🔄 預估台幣成本：**{edit_cost:,.0f}** TWD")
                     
@@ -2987,13 +2988,14 @@ elif menu == "訂單明細":
                     st.caption(f"📝 目前存檔狀態 👉 系統結算之出貨總成本：**{db_ship_cost:,.0f}** ｜ 訂單最終損益：**{db_profit:,.0f}**")
 
                     # 👇 更改提示字眼
-                    new_items = st.text_area("📦 品項內容 (支援直接換行編輯，請保持原始編碼以利系統精準追蹤)", value=target_order.get('品項內容_原始', ''), height=150)
+                    new_items = st.text_area("📦 品項內容 (修改後請按下方『儲存』按鈕，圖片才會更新)", value=target_order.get('品項內容_原始', ''), height=150)
                     
                     st.write("##### 👁️ 系統智能圖文對照預覽")
                     
                     # 🌟 智能升級：解析品項並自動抓出商品圖片顯示
                     import re
-                    raw_preview_text = target_order.get('品項內容_原始', str(new_items))
+                    # 💡 修復 1：直接讀取上方編輯框的變數，而不是讀取資料庫舊資料
+                    raw_preview_text = str(new_items) 
                     parts = re.split(r'[\n、,，]', raw_preview_text.replace('•', ''))
                     
                     found_items = []
@@ -3007,8 +3009,12 @@ elif menu == "訂單明細":
                         matched_code = None
                         matched_name = None
                         
+                        # 💡 修復 2：把「商品總表(df_prods)」的所有編碼都抓進來，不再只抓有庫存的！
+                        all_product_codes = [str(c).strip() for c in df_prods['編碼'].dropna() if str(c).strip() != ""]
+                        combined_codes = sorted(list(set(list(code_cost_map.keys()) + all_product_codes)), key=len, reverse=True)
+                        
                         # 比對編碼
-                        for code in all_codes:
+                        for code in combined_codes:
                             if code in part:
                                 matched_code = code
                                 matched_name = prod_map.get(code, "未知商品")
@@ -3034,8 +3040,7 @@ elif menu == "訂單明細":
                         with get_db() as conn:
                             cursor = conn.cursor()
                             
-                            # 🌟 終極修復：將商品以每 6 個為一排 (Chunk) 進行網格分組渲染
-                            # 這樣即使只有 1 個商品，也會被嚴格限制在螢幕 1/6 的大小，絕對不會變成巨無霸！
+                            # 將商品以每 6 個為一排 (Chunk) 進行網格分組渲染
                             for i in range(0, len(found_items), 6):
                                 chunk = found_items[i:i+6]
                                 preview_cols = st.columns(6) # 永遠切成 6 等份，鎖定縮圖比例
@@ -3059,12 +3064,17 @@ elif menu == "訂單明細":
                                         else:
                                             # 沒配對到的品項
                                             st.markdown(f"<div style='text-align:center; font-size:13px; color: #d97706;'>❓ 未知品項</div>", unsafe_allow_html=True)
+                                            st.markdown("<div style='text-align:center; color:gray; font-size:12px; padding:10px;'>➖</div>", unsafe_allow_html=True)
                                             
                                         st.caption(f"<div style='text-align:center;'>{item['name']}</div>", unsafe_allow_html=True)
                                         
                         st.write("") # 加個空行拉開距離
                     else:
                         st.info("無法解析任何商品品項。")
+                    
+                    # 💡 修復 3：下方的純文字翻譯對照也直接吃編輯框的新字串
+                    safe_preview = translate_items(str(new_items)).replace('*', '\\*')
+                    st.info(f"👁️ **系統自動翻譯對照**：\n\n{safe_preview}")
                     
                     c14, c15 = st.columns(2)
                     edit_cust_note = c14.text_area("👤 顧客備註", value=target_order.get('顧客備註', ''))
@@ -3073,14 +3083,24 @@ elif menu == "訂單明細":
                     if can_edit:
                         if st.form_submit_button("💾 儲存這筆訂單的所有完整變更", type="primary", use_container_width=True):
                             try:
-                                calc_single_ship_cost = edit_cost + edit_shipping
+                                # 🌟 智能連動升級：偵測品項是否被修改，或成本被清空為 0
+                                orig_items = target_order.get('品項內容_原始', '')
+                                final_cost_rmb = edit_cost_rmb
+                                
+                                # 如果手動輸入 0，或者「改了品項卻沒改原本的成本金額」 -> 自動重新抓庫存算成本！
+                                if final_cost_rmb == 0 or (new_items.strip() != orig_items.strip() and final_cost_rmb == current_cost_rmb):
+                                    final_cost_rmb = calculate_dynamic_rmb_cost(new_items)
+                                
+                                final_cost_twd = final_cost_rmb * rate
+                                
+                                calc_single_ship_cost = final_cost_twd + edit_shipping
                                 calc_single_profit = edit_revenue - calc_single_ship_cost
                                 
                                 # 🌟 這裡是最關鍵的防呆：純日期物件轉換，絕對不能有 .strip()
                                 sql_pickup = edit_pickup.strftime('%Y-%m-%d') if edit_pickup else None
                                 
                                 with get_db() as conn:
-                                    # 🌟 寫入資料庫時加上 取貨日期
+                                    # 🌟 寫入資料庫時加上 取貨日期，並寫入最新的 final_cost_twd
                                     conn.execute("""
                                         UPDATE customer_orders SET 
                                         訂單日期=?, 姓名=?, 電話=?, 信箱=?, 訂單連結=?, 
@@ -3091,7 +3111,7 @@ elif menu == "訂單明細":
                                     """, (
                                         edit_date, edit_name, edit_phone, edit_email, edit_link,
                                         edit_store, edit_store_id, edit_logistics, edit_status, sql_pickup,
-                                        edit_revenue, edit_cost, edit_shipping, edit_shipping_rmb, calc_single_ship_cost, calc_single_profit,
+                                        edit_revenue, final_cost_twd, edit_shipping, edit_shipping_rmb, calc_single_ship_cost, calc_single_profit,
                                         new_items, edit_cust_note, edit_merch_note, selected_order
                                     ))
                                     conn.commit()
