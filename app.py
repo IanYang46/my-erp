@@ -890,7 +890,9 @@ if menu == "首頁":
                 # 橫向排列兩個輸入框
                 c_sim1, c_sim2 = st.columns(2)
                 target_profit = c_sim1.number_input("請輸入本月期望的『目標利潤』 (TWD)", min_value=0, step=10000, value=1000000, key="target_profit_sim")
-                est_pickup_rate_input = c_sim2.number_input("請設定預估『取件率』 (%)", min_value=1.0, max_value=100.0, step=1.0, value=float(round(smart_pickup_rate, 1)), key="est_pickup_rate_sim")
+                
+                # 🌟 直接將預估取件率預設為 70%，當作營運及格線底線
+                est_pickup_rate_input = c_sim2.number_input("請設定預估『取件率』 (%)", min_value=1.0, max_value=100.0, step=1.0, value=70.0, key="est_pickup_rate_sim")
                 est_pickup_rate = est_pickup_rate_input / 100.0
                 
                 # 差距計算
