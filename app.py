@@ -1385,16 +1385,18 @@ elif menu == "商品訊息":
                                 with st.container(border=True):
                                     st.markdown(f"<div style='text-align:center; font-size:18px; font-weight:900; color:{colors[i]}; margin-bottom: 10px;'>{medals[i]}</div>", unsafe_allow_html=True)
                                     
-                                    # 圖片顯示處理
-                                    if img_path:
-                                        if str(img_path).startswith('data:image'):
-                                            st.image(img_path, use_container_width=True)
-                                        elif os.path.exists(img_path):
-                                            st.image(img_path, use_container_width=True)
+                                    # 👇 🌟 視覺修復：利用隱形網格 [1, 1.5, 1] 將圖片夾在中間，強制縮小並完美置中！
+                                    _, img_col, _ = st.columns([1, 1.5, 1])
+                                    with img_col:
+                                        if img_path:
+                                            if str(img_path).startswith('data:image'):
+                                                st.image(img_path, use_container_width=True)
+                                            elif os.path.exists(img_path):
+                                                st.image(img_path, use_container_width=True)
+                                            else:
+                                                st.markdown("<div style='text-align:center; color:gray; padding:20px; font-size:13px;'>🚫 無圖片</div>", unsafe_allow_html=True)
                                         else:
                                             st.markdown("<div style='text-align:center; color:gray; padding:20px; font-size:13px;'>🚫 無圖片</div>", unsafe_allow_html=True)
-                                    else:
-                                        st.markdown("<div style='text-align:center; color:gray; padding:20px; font-size:13px;'>🚫 無圖片</div>", unsafe_allow_html=True)
                                         
                                     st.markdown(f"<div style='text-align:center; margin-top:12px; font-size:14px; font-weight:bold;'>{name}</div>", unsafe_allow_html=True)
                                     st.markdown(f"<div style='text-align:center; color:#e63946; font-size:18px; font-weight:900; margin-top:5px;'>售出 {qty} 件</div>", unsafe_allow_html=True)
