@@ -1305,6 +1305,77 @@ elif menu == "商品訊息":
                 st.session_state['edit_item_code'] = None
                 
             if st.session_state['edit_item_code'] is None:
+                
+                # 👇 🌟 新增：近 30 日熱銷排行 (不限狀態，售出 10 件以上) 👇
+                with get_db() as conn:
+                    # 取得 30 天前的日期字串
+                    thirty_days_ago = (pd.Timestamp.today() - pd.Timedelta(days=30)).strftime('%Y-%m-%d')
+                    # 撈取近 30 日所有訂單的品項 (不剔除任何狀態)
+                    df_recent_orders = pd.read_sql("SELECT 品項內容 FROM customer_orders WHERE 訂單日期 >= %s", conn, params=(thirty_days_ago,))
+                    df_prods_for_rank = pd.read_sql("SELECT 編碼, 名稱 FROM products", conn)
+                
+                # 建立商品編碼對應字典與翻譯函數
+                prod_map_rank = {}
+                for _, r in df_prods_for_rank.iterrows():
+                    c = str(r['編碼']).strip()
+                    if c:
+                        prod_map_rank[c] = str(r['名稱']).strip() if pd.notna(r['名稱']) else ""
+                sorted_codes_rank = sorted(prod_map_rank.keys(), key=len, reverse=True)
+
+                def translate_rank_items(text):
+                    res = str(text) if pd.notna(text) else ""
+                    if not res or res.strip() in ['nan', 'None']: return ""
+                    for code in sorted_codes_rank:
+                        if code in res:
+                            res = res.replace(code, prod_map_rank[code])
+                    return res
+                
+                import re
+                from collections import defaultdict
+                sales_counter = defaultdict(int)
+                
+                if not df_recent_orders.empty:
+                    for items_str in df_recent_orders['品項內容'].dropna():
+                        translated_str = translate_rank_items(items_str)
+                        parts = re.split(r'[\n、,，]', str(translated_str).replace('•', ''))
+                        for part in parts:
+                            part = part.strip()
+                            if not part: continue
+                            match = re.search(r'(.*?)[\*xX×]\s*(\d+)$', part)
+                            if match:
+                                item_name = match.group(1).strip()
+                                qty = int(match.group(2))
+                            else:
+                                item_name = part
+                                qty = 1
+                            if item_name:
+                                sales_counter[item_name] += qty
+                
+                # 篩選數量大於等於 10 的商品
+                hot_items = {k: v for k, v in sales_counter.items() if v >= 10}
+                
+                with st.expander("🔥 近 30 日熱銷商品排行 (總下單 10 件以上)", expanded=True):
+                    if not hot_items:
+                        st.info("近 30 日內尚無單一商品被下單達 10 件以上。")
+                    else:
+                        df_hot = pd.DataFrame([{"商品名稱": k, "近30日銷量": v} for k, v in hot_items.items()])
+                        df_hot = df_hot.sort_values(by="近30日銷量", ascending=False)
+                        st.dataframe(
+                            df_hot,
+                            use_container_width=True,
+                            hide_index=True,
+                            column_config={
+                                "商品名稱": st.column_config.TextColumn("📦 商品名稱 (自動翻譯)", width="large"),
+                                "近30日銷量": st.column_config.ProgressColumn(
+                                    "🔥 累積被下單數量 (不限狀態)",
+                                    format="%d 件",
+                                    min_value=0,
+                                    max_value=int(df_hot["近30日銷量"].max())
+                                )
+                            }
+                        )
+                # 👆 新增結束 👆
+
                 with get_db() as conn:
                     df = pd.read_sql("SELECT * FROM products ORDER BY 編碼 ASC", conn)
                 
