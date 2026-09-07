@@ -2944,7 +2944,7 @@ elif menu == "訂單明細":
                                 '业务员.名称 # empid.name': '光廷',
                                 '部门.名称 # deptid.name': '强盛集团本部',
                                 '*币别.名称 # currencyid.name': '台币',
-                                '*汇率 # exchangerate': 0.208,
+                                '*汇率 # exchangerate': 4.9,
                                 '单据备注 # remark': '',
                                 '结算日期 # duedate': '',
                                 '*商品.编码 # materialid.number': item_code,
