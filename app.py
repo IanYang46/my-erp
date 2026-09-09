@@ -832,9 +832,9 @@ if menu == "首頁":
             st.markdown("#### 📊 系統自動診斷報告")
             
             # 1. 取貨健康度解析
-            if pickup_rate_m >= 85:
+            if pickup_rate_m >= 70:
                 st.success(f"✅ **取件健康度極佳 ({pickup_rate_m:.1f}%)**：顧客黏著度與購買意願非常高，物流未取損耗極低，請繼續保持！")
-            elif pickup_rate_m >= 70:
+            elif pickup_rate_m >= 50:
                 st.warning(f"⚠️ **取件健康度尚可 ({pickup_rate_m:.1f}%)**：未取件率開始吃掉您的利潤。建議加強「出貨簡訊通知」或客服手動追蹤未取客。")
             else:
                 st.error(f"🚨 **取件健康度危險 ({pickup_rate_m:.1f}%)**：退件運費損耗過大！請立刻檢查是否遭惡意下單、物流是否卡關，或是否過度投放低意願客群。")
@@ -854,9 +854,9 @@ if menu == "首頁":
             profit_gap = est_profit_m - actual_profit_m  # 👈 就是剛剛漏掉了這行！
             
             if actual_profit_m > 0:
-                if actual_roi_m >= 0.5:
+                if actual_roi_m >= 1.0:
                     st.success(f"💰 **整體獲利能力極強 (實際 ROI {actual_roi_m:.2f})**：您投入的每一塊錢總成本 (商品+運費+廣告)，能為您淨賺 {actual_roi_m:.2f} 元。商業模式非常健康，請繼續保持！")
-                elif actual_roi_m >= 0.2:
+                elif actual_roi_m >= 0.5:
                     st.info(f"⚖️ **整體獲利能力平穩 (實際 ROI {actual_roi_m:.2f})**：利潤結構正常。商品成本佔營收 {prod_pct_m:.1f}%，廣告佔 {ad_pct_m:.1f}%，各項開銷掌控得宜，本月為穩定的淨利狀態。")
                 else:
                     st.warning(f"📉 **整體獲利微薄 (實際 ROI {actual_roi_m:.2f})**：雖然有賺錢，但資金利用效率偏低。您的「商品成本」佔了營收的 {prod_pct_m:.1f}%，建議檢視是否能「提高客單價/組合包裝」或「降低進貨與物流成本」，以拉高毛利空間。")
