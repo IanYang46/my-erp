@@ -905,9 +905,22 @@ if menu == "首頁":
                 # 👇 即時動態格式化顯示 (加入差距提示)
                 st.markdown(f"<div style='margin-top: -10px; margin-bottom: 15px; color: #2563EB; font-size: 15px; font-weight: 600;'>🎯 目標淨利：${target_profit:,.0f} ｜ 📈 預估取件率：{est_pickup_rate_input}% ｜ {gap_text}</div>", unsafe_allow_html=True)
                 
-                # 3. 算出極度精準的「單件模型」淨利
-                # 每出一單的真實期望淨利 = (客單價 - 成本) * 取件率 - 運費 - 廣告費
-                unit_net_profit = ((aov - avg_prod_cost) * est_pickup_rate) - avg_ship_fee - avg_ad_cost
+                # 3. 算出極度精準的「單件模型」淨利 (加入退回運費損耗)
+                # 💡 成功簽收的單：賺到 (客單價 - 成本 - 去程運費 - 廣告費)
+                profit_if_picked = aov - avg_prod_cost - avg_ship_fee - avg_ad_cost
+                
+                # 💡 未取退回的單：沒賺錢，還要倒賠 (去程運費 + 退回運費 + 廣告費)
+                # 預設退回運費等於去程運費，若不同可自行調整
+                loss_if_returned = avg_ship_fee + avg_ship_fee + avg_ad_cost 
+                
+                # 預估退件率
+                est_return_rate = 1.0 - est_pickup_rate
+                
+                # 🏆 綜合機率後的真實期望淨利
+                unit_net_profit = (profit_if_picked * est_pickup_rate) - (loss_if_returned * est_return_rate)
+                
+                # 👇 🌟 核心修正：算出整月的【預估最終利潤】
+                expected_final_profit = orders_cnt_m * unit_net_profit
                 
                 if unit_net_profit <= 0:
                     st.error(f"🚨 **系統體質警訊**：\n依據您設定的取件率 ({est_pickup_rate*100:.1f}%) 與目前的客單價、廣告費，您每出一單預估會 **虧損 ${abs(unit_net_profit):,.0f}**。\n👉 **解決方案**：必須先提高客單價、壓低單均獲客成本 (提升ROAS)，或進一步調高取件率，否則單量放大只會賠更多。")
