@@ -1319,74 +1319,86 @@ elif menu == "商品訊息":
                 
             if st.session_state['edit_item_code'] is None:
                 
-                # 👇 🌟 新增：近 30 日熱銷排行 (不限狀態，售出 10 件以上) 👇
-                with get_db() as conn:
-                    # 取得 30 天前的日期字串
-                    thirty_days_ago = (pd.Timestamp.today() - pd.Timedelta(days=30)).strftime('%Y-%m-%d')
-                    # 撈取近 30 日所有訂單的品項 (不剔除任何狀態)
-                    df_recent_orders = pd.read_sql("SELECT 品項內容 FROM customer_orders WHERE 訂單日期 >= %s", conn, params=(thirty_days_ago,))
-                    # 🌟 升級：多撈出「圖片路徑」，用來渲染前三名的商品圖
-                    df_prods_for_rank = pd.read_sql("SELECT 編碼, 名稱, 圖片路徑 FROM products", conn)
-                
-                # 建立商品編碼對應字典與圖片字典
-                prod_map_rank = {}
-                img_map_rank = {}
-                for _, r in df_prods_for_rank.iterrows():
-                    c = str(r['編碼']).strip()
-                    n = str(r['名稱']).strip() if pd.notna(r['名稱']) else ""
-                    if c:
-                        prod_map_rank[c] = n
-                        if n: # 將商品名稱與圖片綁定
-                            img_map_rank[n] = r['圖片路徑']
-                            
-                sorted_codes_rank = sorted(prod_map_rank.keys(), key=len, reverse=True)
+                # 👇 🌟 新增：近 30 日熱銷排行 (超高速快取版) 👇
+                # 使用 st.cache_data 讓系統把複雜計算的結果存起來，ttl=43200 代表快取保留 12 小時 (43200秒)
+                @st.cache_data(ttl=43200)
+                def get_hot_items_ranking():
+                    with get_db() as conn:
+                        # 取得 30 天前的日期字串
+                        thirty_days_ago = (pd.Timestamp.today() - pd.Timedelta(days=30)).strftime('%Y-%m-%d')
+                        # 撈取近 30 日所有訂單的品項 (不剔除任何狀態)
+                        df_recent_orders = pd.read_sql("SELECT 品項內容 FROM customer_orders WHERE 訂單日期 >= %s", conn, params=(thirty_days_ago,))
+                        # 多撈出「圖片路徑」，用來渲染前三名的商品圖
+                        df_prods_for_rank = pd.read_sql("SELECT 編碼, 名稱, 圖片路徑 FROM products", conn)
+                    
+                    prod_map_rank = {}
+                    img_map_rank = {}
+                    for _, r in df_prods_for_rank.iterrows():
+                        c = str(r['編碼']).strip()
+                        n = str(r['名稱']).strip() if pd.notna(r['名稱']) else ""
+                        if c:
+                            prod_map_rank[c] = n
+                            if n: 
+                                img_map_rank[n] = r['圖片路徑']
+                                
+                    sorted_codes_rank = sorted(prod_map_rank.keys(), key=len, reverse=True)
 
-                def translate_rank_items(text):
-                    res = str(text) if pd.notna(text) else ""
-                    if not res or res.strip() in ['nan', 'None']: return ""
-                    for code in sorted_codes_rank:
-                        if code in res:
-                            res = res.replace(code, prod_map_rank[code])
-                    return res
+                    def translate_rank_items(text):
+                        res = str(text) if pd.notna(text) else ""
+                        if not res or res.strip() in ['nan', 'None']: return ""
+                        for code in sorted_codes_rank:
+                            if code in res:
+                                res = res.replace(code, prod_map_rank[code])
+                        return res
+                    
+                    import re
+                    from collections import defaultdict
+                    sales_counter = defaultdict(int)
+                    
+                    if not df_recent_orders.empty:
+                        for items_str in df_recent_orders['品項內容'].dropna():
+                            translated_str = translate_rank_items(items_str)
+                            parts = re.split(r'[\n、,，]', str(translated_str).replace('•', ''))
+                            for part in parts:
+                                part = part.strip()
+                                if not part: continue
+                                match = re.search(r'(.*?)[\*xX×]\s*(\d+)$', part)
+                                if match:
+                                    item_name = match.group(1).strip()
+                                    qty = int(match.group(2))
+                                else:
+                                    item_name = part
+                                    qty = 1
+                                if item_name:
+                                    sales_counter[item_name] += qty
+                    
+                    # 篩選數量大於等於 10 的商品
+                    hot_items = {k: v for k, v in sales_counter.items() if v >= 10}
+                    return hot_items, img_map_rank
                 
-                import re
-                from collections import defaultdict
-                sales_counter = defaultdict(int)
-                
-                if not df_recent_orders.empty:
-                    for items_str in df_recent_orders['品項內容'].dropna():
-                        translated_str = translate_rank_items(items_str)
-                        parts = re.split(r'[\n、,，]', str(translated_str).replace('•', ''))
-                        for part in parts:
-                            part = part.strip()
-                            if not part: continue
-                            match = re.search(r'(.*?)[\*xX×]\s*(\d+)$', part)
-                            if match:
-                                item_name = match.group(1).strip()
-                                qty = int(match.group(2))
-                            else:
-                                item_name = part
-                                qty = 1
-                            if item_name:
-                                sales_counter[item_name] += qty
-                
-                # 篩選數量大於等於 10 的商品
-                hot_items = {k: v for k, v in sales_counter.items() if v >= 10}
-                
+                # 在畫面上展開區塊並呼叫快取函式
                 with st.expander("🔥 近 30 日熱銷商品排行 (總下單 10 件以上)", expanded=True):
+                    # 🌟 加一個手動刷新按鈕在標題旁邊
+                    c_title, c_refresh = st.columns([5, 1])
+                    if c_refresh.button("🔄 立即重新結算", help="點擊清除快取，立即計算最新數據"):
+                        get_hot_items_ranking.clear()
+                        st.rerun()
+
+                    # 呼叫函式 (如果是 12 小時內第二次打開，這裡會瞬間完成，不跑資料庫！)
+                    hot_items, img_map_rank = get_hot_items_ranking()
+
                     if not hot_items:
                         st.info("近 30 日內尚無單一商品被下單達 10 件以上。")
                     else:
                         df_hot = pd.DataFrame([{"商品名稱": k, "近30日銷量": v} for k, v in hot_items.items()])
                         df_hot = df_hot.sort_values(by="近30日銷量", ascending=False)
                         
-                        # 🌟 升級：提取前三名並用精美卡片展示
                         top3_df = df_hot.head(3)
-                        st.markdown("##### 🏆 爆款前三名殿堂")
+                        c_title.markdown("##### 🏆 爆款前三名殿堂")
                         
                         cols = st.columns(3)
                         medals = ["🥇 冠軍", "🥈 亞軍", "🥉 季軍"]
-                        colors = ["#d4af37", "#9ca3af", "#b08d57"] # 金、銀、銅專屬色票
+                        colors = ["#d4af37", "#9ca3af", "#b08d57"] 
                         
                         for i, (idx, row) in enumerate(top3_df.iterrows()):
                             name = row["商品名稱"]
@@ -1394,11 +1406,9 @@ elif menu == "商品訊息":
                             img_path = img_map_rank.get(name)
                             
                             with cols[i]:
-                                # 畫出卡片式外觀
                                 with st.container(border=True):
                                     st.markdown(f"<div style='text-align:center; font-size:18px; font-weight:900; color:{colors[i]}; margin-bottom: 10px;'>{medals[i]}</div>", unsafe_allow_html=True)
                                     
-                                    # 👇 🌟 視覺修復：利用隱形網格 [1, 1.5, 1] 將圖片夾在中間，強制縮小並完美置中！
                                     _, img_col, _ = st.columns([1, 1.5, 1])
                                     with img_col:
                                         if img_path:
@@ -1414,9 +1424,8 @@ elif menu == "商品訊息":
                                     st.markdown(f"<div style='text-align:center; margin-top:12px; font-size:14px; font-weight:bold;'>{name}</div>", unsafe_allow_html=True)
                                     st.markdown(f"<div style='text-align:center; color:#e63946; font-size:18px; font-weight:900; margin-top:5px;'>售出 {qty} 件</div>", unsafe_allow_html=True)
                         
-                        st.write("---") # 視覺分隔線
+                        st.write("---") 
                         
-                        # 下方維持顯示完整的數據表格 (含四名以後的所有商品)
                         st.dataframe(
                             df_hot,
                             use_container_width=True,
