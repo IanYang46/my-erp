@@ -685,15 +685,16 @@ menu = st.sidebar.radio(
 )
 # 👆 動態選單替換結束 👆
 
-st.sidebar.divider()
-# 🌟 全域快取手動清除按鈕
-if st.sidebar.button("🔄 強制刷新最新數據", help="若覺得資料未更新，點擊此按鈕可立刻拉取資料庫最新資料", use_container_width=True):
-    get_cached_orders.clear()
-    get_cached_products.clear()
-    get_cached_inventory.clear()
-    st.toast("✅ 已強制拉取最新資料庫數據！")
-    time.sleep(0.5)
-    st.rerun()
+# 🌟 僅限管理員可見的全域快取手動清除按鈕
+if role == "Admin" or st.session_state.get('user') == 'admin':
+    st.sidebar.divider()
+    if st.sidebar.button("🔄 強制刷新最新數據", help="若覺得資料未更新，點擊此按鈕可立刻拉取資料庫最新資料", use_container_width=True):
+        get_cached_orders.clear()
+        get_cached_products.clear()
+        get_cached_inventory.clear()
+        st.toast("✅ 已強制拉取最新資料庫數據！")
+        time.sleep(0.5)
+        st.rerun()
 
 # --- 7. 各大模組骨架預覽 ---
 
@@ -1409,9 +1410,12 @@ elif menu == "商品訊息":
                 with st.expander("🔥 近 30 日熱銷商品排行 (總下單 10 件以上)", expanded=True):
                     # 🌟 加一個手動刷新按鈕在標題旁邊
                     c_title, c_refresh = st.columns([5, 1])
-                    if c_refresh.button("🔄 立即重新結算", help="點擊清除快取，立即計算最新數據"):
-                        get_hot_items_ranking.clear()
-                        st.rerun()
+                    
+                    # 👇 加上權限防護：僅限管理員可見
+                    if role == "Admin" or st.session_state.get('user') == 'admin':
+                        if c_refresh.button("🔄 立即重新結算", help="點擊清除快取，立即計算最新數據"):
+                            get_hot_items_ranking.clear()
+                            st.rerun()
 
                     # 呼叫函式 (如果是 12 小時內第二次打開，這裡會瞬間完成，不跑資料庫！)
                     hot_items, img_map_rank = get_hot_items_ranking()
