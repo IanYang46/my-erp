@@ -685,7 +685,35 @@ menu = st.sidebar.radio(
 )
 # 👆 動態選單替換結束 👆
 
+st.sidebar.divider()
+# 🌟 全域快取手動清除按鈕
+if st.sidebar.button("🔄 強制刷新最新數據", help="若覺得資料未更新，點擊此按鈕可立刻拉取資料庫最新資料", use_container_width=True):
+    get_cached_orders.clear()
+    get_cached_products.clear()
+    get_cached_inventory.clear()
+    st.toast("✅ 已強制拉取最新資料庫數據！")
+    time.sleep(0.5)
+    st.rerun()
+
 # --- 7. 各大模組骨架預覽 ---
+
+# 👇 🌟 全局秒開優化：高速快取核心數據表 👇
+# 設定 ttl=60 代表這些大表每 60 秒才會去資料庫抓一次新資料，期間內所有操作都是瞬間秒開！
+@st.cache_data(ttl=60)
+def get_cached_orders():
+    with get_db() as conn:
+        return pd.read_sql("SELECT * FROM customer_orders ORDER BY 訂單日期 DESC", conn)
+
+@st.cache_data(ttl=60)
+def get_cached_products():
+    with get_db() as conn:
+        return pd.read_sql("SELECT * FROM products ORDER BY 編碼 ASC", conn)
+
+@st.cache_data(ttl=60)
+def get_cached_inventory():
+    with get_db() as conn:
+        return pd.read_sql("SELECT * FROM inventory ORDER BY id DESC", conn)
+# 👆 快取引擎設定結束 👆
 
 if menu == "首頁":
     st.title("🏠 營運儀表板")
@@ -697,8 +725,9 @@ if menu == "首頁":
     today = pd.Timestamp.today().date()
     yesterday = today - pd.Timedelta(days=1)
     
+    # 🌟 呼叫秒開快取
+    df_orders = get_cached_orders()[['訂單日期', '取貨狀態', '包裹應收', '商品成本', '物流運費']].copy()
     with get_db() as conn:
-        df_orders = pd.read_sql("SELECT 訂單日期, 取貨狀態, 包裹應收, 商品成本, 物流運費 FROM customer_orders", conn)
         df_ad = pd.read_sql("SELECT date, spend_twd FROM daily_ad_spend", conn)
 
     # 資料清洗與型別轉換
@@ -1442,8 +1471,8 @@ elif menu == "商品訊息":
                         )
                 # 👆 新增結束 👆
 
-                with get_db() as conn:
-                    df = pd.read_sql("SELECT * FROM products ORDER BY 編碼 ASC", conn)
+                # 🌟 呼叫秒開快取
+                df = get_cached_products().copy()
                 
                 if df.empty:
                     st.info("目前商品庫中沒有任何資料。")
@@ -2401,11 +2430,9 @@ elif menu == "訂單明細":
             time.sleep(1.5)
             st.rerun()
 
-    # 🌟 1. 取得資料庫資料
-    with get_db() as conn:
-        df_orders = pd.read_sql("SELECT * FROM customer_orders ORDER BY 訂單日期 DESC", conn)
-        # 👇 新增這行：撈取商品資料庫來做翻譯比對
-        df_prods = pd.read_sql("SELECT 編碼, 品牌, 名稱 FROM products", conn)
+    # 🌟 1. 取得資料庫資料 (呼叫秒開快取)
+    df_orders = get_cached_orders().copy()
+    df_prods = get_cached_products()[['編碼', '品牌', '名稱']].copy()
 
     # 🌟 終極防呆：處理 PostgreSQL 自動轉小寫問題，若無欄位則強制建立
     if not df_orders.empty:
