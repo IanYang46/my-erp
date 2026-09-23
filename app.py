@@ -700,17 +700,17 @@ if role == "Admin" or st.session_state.get('user') == 'admin':
 
 # 👇 🌟 全局秒開優化：高速快取核心數據表 👇
 # 設定 ttl=60 代表這些大表每 60 秒才會去資料庫抓一次新資料，期間內所有操作都是瞬間秒開！
-@st.cache_data(ttl=60)
+@st.cache_data(ttl=3600)
 def get_cached_orders():
     with get_db() as conn:
         return pd.read_sql("SELECT * FROM customer_orders ORDER BY 訂單日期 DESC", conn)
 
-@st.cache_data(ttl=60)
+@st.cache_data(ttl=3600)
 def get_cached_products():
     with get_db() as conn:
         return pd.read_sql("SELECT * FROM products ORDER BY 編碼 ASC", conn)
 
-@st.cache_data(ttl=60)
+@st.cache_data(ttl=3600)
 def get_cached_inventory():
     with get_db() as conn:
         return pd.read_sql("SELECT * FROM inventory ORDER BY id DESC", conn)
@@ -1350,8 +1350,8 @@ elif menu == "商品訊息":
             if st.session_state['edit_item_code'] is None:
                 
                 # 👇 🌟 新增：近 30 日熱銷排行 (超高速快取版) 👇
-                # 使用 st.cache_data 讓系統把複雜計算的結果存起來，ttl=43200 代表快取保留 12 小時 (43200秒)
-                @st.cache_data(ttl=43200)
+                # 使用 st.cache_data 讓系統把複雜計算的結果存起來，ttl=3600 代表快取保留 1 小時 (3600秒)
+                @st.cache_data(ttl=3600)
                 def get_hot_items_ranking():
                     with get_db() as conn:
                         # 取得 30 天前的日期字串
