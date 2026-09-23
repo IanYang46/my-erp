@@ -685,21 +685,9 @@ menu = st.sidebar.radio(
 )
 # 👆 動態選單替換結束 👆
 
-# 🌟 僅限管理員可見的全域快取手動清除按鈕
-if role == "Admin" or st.session_state.get('user') == 'admin':
-    st.sidebar.divider()
-    if st.sidebar.button("🔄 強制刷新最新數據", help="若覺得資料未更新，點擊此按鈕可立刻拉取資料庫最新資料", use_container_width=True):
-        get_cached_orders.clear()
-        get_cached_products.clear()
-        get_cached_inventory.clear()
-        st.toast("✅ 已強制拉取最新資料庫數據！")
-        time.sleep(0.5)
-        st.rerun()
-
-# --- 7. 各大模組骨架預覽 ---
-
 # 👇 🌟 全局秒開優化：高速快取核心數據表 👇
-# 設定 ttl=60 代表這些大表每 60 秒才會去資料庫抓一次新資料，期間內所有操作都是瞬間秒開！
+# 設定 ttl=3600 代表這些大表每 1 小時才會去資料庫抓一次新資料，期間內所有操作都是瞬間秒開！
+# 💡 必須先定義快取函數，下方的清除按鈕才找得到它們！
 @st.cache_data(ttl=3600)
 def get_cached_orders():
     with get_db() as conn:
@@ -715,6 +703,17 @@ def get_cached_inventory():
     with get_db() as conn:
         return pd.read_sql("SELECT * FROM inventory ORDER BY id DESC", conn)
 # 👆 快取引擎設定結束 👆
+
+# 🌟 僅限管理員可見的全域快取手動清除按鈕
+if role == "Admin" or st.session_state.get('user') == 'admin':
+    st.sidebar.divider()
+    if st.sidebar.button("🔄 強制刷新最新數據", help="若覺得資料未更新，點擊此按鈕可立刻拉取資料庫最新資料", use_container_width=True):
+        get_cached_orders.clear()
+        get_cached_products.clear()
+        get_cached_inventory.clear()
+        st.toast("✅ 已強制拉取最新資料庫數據！")
+        time.sleep(0.5)
+        st.rerun()
 
 if menu == "首頁":
     st.title("🏠 營運儀表板")
