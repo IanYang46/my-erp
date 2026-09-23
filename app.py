@@ -1735,6 +1735,13 @@ elif menu == "商品庫存":
             df_p = get_cached_products()[['圖片路徑', '編碼', '名稱', '類別', '品牌']].copy()
             df_i = get_cached_inventory().copy()
             
+            # 🌟 終極防呆：處理 PostgreSQL 英文自動轉小寫的問題
+            if not df_i.empty:
+                if '單支成本_rmb' in df_i.columns:
+                    df_i = df_i.rename(columns={'單支成本_rmb': '單支成本_RMB'})
+                if '採購金額_rmb' in df_i.columns:
+                    df_i = df_i.rename(columns={'採購金額_rmb': '採購金額_RMB'})
+            
             if not df_i.empty:
                 # 若有選擇特定倉庫，先過濾庫存表
                 if selected_wh != "所有倉庫":
