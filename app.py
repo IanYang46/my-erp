@@ -1731,36 +1731,46 @@ elif menu == "商品庫存":
             selected_wh = c_wh.selectbox("🔍 篩選特定分倉庫存", ["所有倉庫"] + wh_list, key="inv_wh_filter")
             show_type = c_status.radio("依庫存水位篩選", ["顯示所有", "僅顯示有庫存", "僅顯示缺貨"], horizontal=True, key="inv_status_filter")
             
-            with get_db() as conn:
-                query = """
-                SELECT p.圖片路徑, p.編碼, p.名稱, p.類別, p.品牌, 
-                       COALESCE(SUM(i.數量), 0) as 總庫存, 
-                       COALESCE(SUM(i.採購金額_RMB), 0) as "總採購金額_RMB", 
-                       AVG(i.單支成本_RMB) as "平均成本_RMB"
-                FROM products p LEFT JOIN inventory i ON p.編碼 = i.編碼
-                """
-                params = []
+            # 👇 🌟 核心優化：不再向資料庫發送複雜 JOIN，直接從快取拿資料用 Pandas 瞬間運算！
+            df_p = get_cached_products()[['圖片路徑', '編碼', '名稱', '類別', '品牌']].copy()
+            df_i = get_cached_inventory().copy()
+            
+            if not df_i.empty:
+                # 若有選擇特定倉庫，先過濾庫存表
                 if selected_wh != "所有倉庫":
-                    query += " AND i.倉庫位置 = ?"
-                    params.append(selected_wh)
-                query += " GROUP BY p.編碼 ORDER BY p.編碼 ASC"
-                df = pd.read_sql(query, conn, params=params)
+                    df_i = df_i[df_i['倉庫位置'] == selected_wh]
                 
-                wh_query = "SELECT 編碼, 倉庫位置, SUM(數量) as 數量 FROM inventory GROUP BY 編碼, 倉庫位置"
-                df_wh = pd.read_sql(wh_query, conn)
-                if not df_wh.empty:
-                    wh_pivot = df_wh.pivot_table(index='編碼', columns='倉庫位置', values='數量', aggfunc='sum').fillna(0).astype(int)
+                # 計算該商品的總數量與平均成本
+                agg_i = df_i.groupby('編碼').agg(
+                    總庫存=('數量', 'sum'),
+                    總採購金額_RMB=('採購金額_RMB', 'sum'),
+                    平均成本_RMB=('單支成本_RMB', 'mean')
+                ).reset_index()
+                
+                # 將計算結果合併回主商品表
+                df = pd.merge(df_p, agg_i, on='編碼', how='left')
+                
+                # 處理各分倉數量的 Pivot Table
+                if not df_i.empty:
+                    wh_pivot = df_i.pivot_table(index='編碼', columns='倉庫位置', values='數量', aggfunc='sum').fillna(0).astype(int)
                     df = df.merge(wh_pivot, on='編碼', how='left')
                     wh_cols = list(wh_pivot.columns)
                     for c in wh_cols: df[c] = df[c].fillna(0).astype(int)
                 else:
                     wh_cols = []
-            
+            else:
+                df = df_p.copy()
+                df['總庫存'] = 0
+                df['總採購金額_RMB'] = 0.0
+                df['平均成本_RMB'] = 0.0
+                wh_cols = []
+
             # 確保沒有空值導致報錯
-            df["平均成本_RMB"] = df["平均成本_RMB"].fillna(0.0) 
-            df["總庫存金額_RMB"] = df["總採購金額_RMB"]
-            df["總庫存金額_TWD"] = df["總庫存金額_RMB"] * new_rate
-            df["平均成本_TWD"] = df["平均成本_RMB"] * new_rate
+            df['總庫存'] = df['總庫存'].fillna(0).astype(int)
+            df['平均成本_RMB'] = df['平均成本_RMB'].fillna(0.0) 
+            df['總庫存金額_RMB'] = df['總採購金額_RMB'].fillna(0.0)
+            df['總庫存金額_TWD'] = df['總庫存金額_RMB'] * new_rate
+            df['平均成本_TWD'] = df['平均成本_RMB'] * new_rate
             
             def get_image_base64(path):
                 if pd.isna(path) or not path: return None
