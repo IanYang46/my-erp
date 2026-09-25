@@ -360,7 +360,15 @@ def init_db_v7():
             exchange_rate REAL, 
             spend_twd REAL
         )''')
-        # 👆 新增結束 👆
+        
+        # 👇 🌟 新增 11. 系統異動時間戳記表 (用來實現秒開又即時的黑科技) 👇
+        cursor.execute('''CREATE TABLE IF NOT EXISTS system_status (
+            table_name TEXT PRIMARY KEY,
+            last_modified REAL
+        )''')
+        # 確保三張大表都有初始時間戳
+        for t in ['customer_orders', 'products', 'inventory', 'daily_ad_spend']:
+            cursor.execute("INSERT INTO system_status (table_name, last_modified) VALUES (%s, %s) ON CONFLICT (table_name) DO NOTHING", (t, time.time()))
 
         conn.commit()
         
@@ -685,35 +693,41 @@ menu = st.sidebar.radio(
 )
 # 👆 動態選單替換結束 👆
 
-# 👇 🌟 全局秒開優化：高速快取核心數據表 👇
-# 設定 ttl=3600 代表這些大表每 1 小時才會去資料庫抓一次新資料，期間內所有操作都是瞬間秒開！
-# 💡 必須先定義快取函數，下方的清除按鈕才找得到它們！
-@st.cache_data(ttl=3600)
-def get_cached_orders():
-    with get_db() as conn:
-        return pd.read_sql("SELECT * FROM customer_orders ORDER BY 訂單日期 DESC", conn)
+# --- 7. 各大模組骨架預覽 ---
 
-@st.cache_data(ttl=3600)
-def get_cached_products():
+# 👇 🌟 終極秒開 + 絕對即時引擎：Smart Session State 👇
+def get_smart_data(table_name, sql_query):
+    """
+    智能數據引擎：只花 0.001 秒問資料庫有沒有人改過資料。
+    沒人改過 -> 瞬間丟出記憶體裡的資料 (秒開)。
+    有人改過 -> 拉取最新資料並存進記憶體 (絕對即時)。
+    """
+    state_key_df = f"smart_df_{table_name}"
+    state_key_time = f"smart_time_{table_name}"
+    
     with get_db() as conn:
-        return pd.read_sql("SELECT * FROM products ORDER BY 編碼 ASC", conn)
+        # 1. 瞬間查詢資料庫中該表的「最後異動時間」
+        cursor = conn.cursor()
+        cursor.execute("SELECT last_modified FROM system_status WHERE table_name = %s", (table_name,))
+        res = cursor.fetchone()
+        db_last_modified = res[0] if res else time.time()
+        
+        # 2. 檢查記憶體：如果記憶體沒資料，或是記憶體裡的時間比資料庫舊 -> 重新拉資料！
+        if state_key_df not in st.session_state or st.session_state.get(state_key_time, 0) < db_last_modified:
+            df = pd.read_sql(sql_query, conn)
+            st.session_state[state_key_df] = df
+            st.session_state[state_key_time] = db_last_modified
+            return df
+        else:
+            # 3. 如果時間一樣，代表沒人改過資料 -> 瞬間吐出記憶體裡的資料！
+            return st.session_state[state_key_df]
 
-@st.cache_data(ttl=3600)
-def get_cached_inventory():
+def mark_table_changed(table_name):
+    """當我們有新增、修改、刪除資料時，呼叫這個函數，標記該表已經被更動"""
     with get_db() as conn:
-        return pd.read_sql("SELECT * FROM inventory ORDER BY id DESC", conn)
-# 👆 快取引擎設定結束 👆
-
-# 🌟 僅限管理員可見的全域快取手動清除按鈕
-if role == "Admin" or st.session_state.get('user') == 'admin':
-    st.sidebar.divider()
-    if st.sidebar.button("🔄 強制刷新最新數據", help="若覺得資料未更新，點擊此按鈕可立刻拉取資料庫最新資料", use_container_width=True):
-        get_cached_orders.clear()
-        get_cached_products.clear()
-        get_cached_inventory.clear()
-        st.toast("✅ 已強制拉取最新資料庫數據！")
-        time.sleep(0.5)
-        st.rerun()
+        conn.execute("UPDATE system_status SET last_modified = %s WHERE table_name = %s", (time.time(), table_name))
+        conn.commit()
+# 👆 智能引擎設定結束 👆
 
 if menu == "首頁":
     st.title("🏠 營運儀表板")
@@ -725,10 +739,9 @@ if menu == "首頁":
     today = pd.Timestamp.today().date()
     yesterday = today - pd.Timedelta(days=1)
     
-    # 🌟 呼叫秒開快取
-    df_orders = get_cached_orders()[['訂單日期', '取貨狀態', '包裹應收', '商品成本', '物流運費']].copy()
-    with get_db() as conn:
-        df_ad = pd.read_sql("SELECT date, spend_twd FROM daily_ad_spend", conn)
+    # 🌟 呼叫智能引擎 (保證秒開又絕對即時)
+    df_orders = get_smart_data("customer_orders", "SELECT 訂單日期, 取貨狀態, 包裹應收, 商品成本, 物流運費 FROM customer_orders").copy()
+    df_ad = get_smart_data("daily_ad_spend", "SELECT date, spend_twd FROM daily_ad_spend").copy()
 
     # 資料清洗與型別轉換
     if not df_orders.empty:
@@ -1062,6 +1075,9 @@ if menu == "首頁":
                                     spend_usd=EXCLUDED.spend_usd, exchange_rate=EXCLUDED.exchange_rate, spend_twd=EXCLUDED.spend_twd
                                 """, (str(curr_d), daily_usd, input_rate, daily_twd))
                             conn.commit()
+                            
+                        # 👇 🌟 新增：告訴系統廣告費被修改了，下一秒要拿最新資料！
+                        mark_table_changed("daily_ad_spend")
                             
                         st.success(f"✅ 成功分攤！區間 {start_date} ~ {end_date} (共 {days_diff} 天)。每日均分台幣約為 ${daily_twd:,.0f}")
                         time.sleep(1.5)
