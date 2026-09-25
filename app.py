@@ -1525,8 +1525,8 @@ elif menu == "商品訊息":
                                     placeholders = ','.join(['?'] * len(del_list))
                                     conn.execute(f"DELETE FROM products WHERE 編碼 IN ({placeholders})", del_list)
                                     conn.commit()
-                            # 👇 標記資料異動
-                            mark_table_changed("products")
+                                # 👇 標記資料異動 (跟著上面的 with 區塊退回一格)
+                                mark_table_changed("products")
                                 log_product_change(current_operator, "批量刪除", f"移除了 {len(del_list)} 筆商品：{', '.join(del_list)}")
                                 st.success(f"✅ 已成功批量刪除 {len(del_list)} 筆商品！")
                                 time.sleep(1.5)
@@ -1565,8 +1565,8 @@ elif menu == "商品訊息":
                                             with get_db() as conn:
                                                 conn.execute("DELETE FROM products WHERE 編碼=?", (row['編碼'],))
                                                 conn.commit()
-                                    # 👇 標記資料異動
-                                    mark_table_changed("products")
+                                            # 👇 標記資料異動
+                                            mark_table_changed("products")
                                             log_product_change(current_operator, "單筆刪除", f"移除了商品：{row['編碼']} - {row['名稱']}")
                                             st.toast(f"已成功刪除商品：{row['編碼']}！")
                                             time.sleep(1)
@@ -1603,8 +1603,8 @@ elif menu == "商品訊息":
                             with get_db() as conn:
                                 conn.execute("UPDATE products SET 類別=?, 品牌=?, 名稱=?, 備註=?, 圖片路徑=? WHERE 編碼=?", (edit_cat, edit_brand, edit_name, edit_remark, new_path, edit_code))
                                 conn.commit()
-                        # 👇 標記資料異動
-                        mark_table_changed("products")
+                            # 👇 標記資料異動
+                            mark_table_changed("products")
                             
                             log_msg = f"更新了商品 {edit_code} 資料。"
                             if edit_name != target[2]: log_msg += f" 名稱: {target[2]} ➔ {edit_name}。"
@@ -1643,8 +1643,8 @@ elif menu == "商品訊息":
                                 with get_db() as conn:
                                     conn.execute("INSERT INTO products (編碼, 類別, 品牌, 名稱, 備註, 圖片路徑) VALUES (?,?,?,?,?,?)", (code, category, brand, name, remark, path))
                                     conn.commit()
-                            # 👇 標記資料異動
-                            mark_table_changed("products")
+                                # 👇 標記資料異動
+                                mark_table_changed("products")
                                 
                                 log_product_change(current_operator, "新增單筆", f"建檔了新商品：{code} - {name} (品牌: {brand})")
                                 st.success(f"🎉 成功新增商品：【{code}】 {name}！")
@@ -1695,8 +1695,8 @@ elif menu == "商品訊息":
                                 """, (str(row["編碼"]), str(row["類別"]), str(row["品牌"]), str(row["名稱"]), str(row["備註"])))
                             
                             conn.commit()
-                    # 👇 標記資料異動
-                    mark_table_changed("products")
+                        # 👇 標記資料異動
+                        mark_table_changed("products")
                         
                         log_product_change(current_operator, "批量匯入", f"透過 Excel/CSV 檔案批次更新/新增了 {len(df_insert)} 筆商品資料")
                         st.success("✅ 批量商品資料匯入完成！")
