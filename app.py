@@ -1764,9 +1764,9 @@ elif menu == "商品庫存":
             selected_wh = c_wh.selectbox("🔍 篩選特定分倉庫存", ["所有倉庫"] + wh_list, key="inv_wh_filter")
             show_type = c_status.radio("依庫存水位篩選", ["顯示所有", "僅顯示有庫存", "僅顯示缺貨"], horizontal=True, key="inv_status_filter")
             
-            # 👇 🌟 核心優化：不再向資料庫發送複雜 JOIN，直接從快取拿資料用 Pandas 瞬間運算！
-            df_p = get_cached_products()[['圖片路徑', '編碼', '名稱', '類別', '品牌']].copy()
-            df_i = get_cached_inventory().copy()
+            # 👇 🌟 全面升級：改用智能引擎，保證秒開又絕對即時！
+            df_p = get_smart_data("products", "SELECT * FROM products ORDER BY 編碼 ASC")[['圖片路徑', '編碼', '名稱', '類別', '品牌']].copy()
+            df_i = get_smart_data("inventory", "SELECT * FROM inventory ORDER BY id DESC").copy()
             
             # 🌟 終極防呆：處理 PostgreSQL 英文自動轉小寫的問題
             if not df_i.empty:
@@ -1876,6 +1876,8 @@ elif menu == "商品庫存":
                                         today_str = str(pd.Timestamp.today().date())
                                         cursor.execute("INSERT INTO inventory (編碼, 倉庫位置, 數量, 單支成本_RMB, 採購廠商, 採購金額_RMB, 進貨日期) VALUES (?, ?, 0, ?, '系統初始成本設定', 0, ?)", (item_code, default_wh, new_cost, today_str))
                                 conn.commit()
+                                # 👇 標記資料庫異動
+                                mark_table_changed("inventory")
 
                                 # 🌟 新增：一次性完美連動！只有在你按下儲存庫存的這一刻，才去更新歷史訂單成本
                                 rate_val = cursor.execute("SELECT value FROM settings WHERE key='exchange_rate'").fetchone()[0]
@@ -1967,6 +1969,8 @@ elif menu == "商品庫存":
                                     conn.execute("INSERT INTO inventory (編碼, 倉庫位置, 數量, 單支成本_RMB, 採購廠商, 採購金額_RMB, 進貨日期) VALUES (?, ?, ?, ?, ?, ?, ?)",
                                                  (new_inv_code, new_inv_wh, new_inv_qty, new_inv_cost, new_inv_vendor, calc_rmb, today_str))
                                     conn.commit()
+                                # 👇 標記資料庫異動
+                                mark_table_changed("inventory")
                                 log_inventory_change(current_operator, "手動入庫", f"手動建檔：{new_inv_code} 數量 {new_inv_qty}，成本 ¥{new_inv_cost}")
                                 st.success(f"✅ 成功手動入庫！{new_inv_code} 數量 {new_inv_qty} 已加入 {new_inv_wh}。")
                                 time.sleep(1.5)
@@ -2012,6 +2016,8 @@ elif menu == "商品庫存":
                                     with get_db() as conn:
                                         conn.execute("UPDATE inventory SET 編碼=?, 倉庫位置=?, 數量=?, 單支成本_RMB=?, 採購廠商=?, 採購金額_RMB=?, 進貨日期=? WHERE id=?", (edit_code, edit_wh, edit_qty, edit_cost, edit_vendor.strip(), calc_amt_rmb, str(edit_date), select_id))
                                         conn.commit()
+                                    # 👇 標記資料庫異動
+                                    mark_table_changed("inventory")
                                     log_details = f"修改流水號 {select_id}。原資料:[品項:{old_row['編碼']},數量:{old_row['數量']},倉:{old_row['倉庫位置']}] ➡️ 新資料:[品項:{edit_code},數量:{edit_qty},倉:{edit_wh},單價:{edit_cost} RMB]"
                                     log_inventory_change(current_operator, "修正庫存", log_details)
                                     st.success(f"✅ 流水號 【{select_id}】 庫存明細更正成功！")
@@ -2025,6 +2031,8 @@ elif menu == "商品庫存":
                                     with get_db() as conn:
                                         conn.execute("DELETE FROM inventory WHERE id=?", (select_id,))
                                         conn.commit()
+                                    # 👇 標記資料庫異動
+                                    mark_table_changed("inventory")
                                     log_details = f"徹底刪除流水號 {select_id} 紀錄。原內含品項:{old_row['編碼']}, 移除數量:{old_row['數量']} 支, 原倉庫:{old_row['倉庫位置']}, 廠商:{old_row['採購廠商']}"
                                     log_inventory_change(current_operator, "刪除庫存", log_details)
                                     st.success(f"🗑️ 庫存流水號 【{select_id}】 已成功從資料庫中移除！")
@@ -2480,9 +2488,9 @@ elif menu == "訂單明細":
             time.sleep(1.5)
             st.rerun()
 
-    # 🌟 1. 取得資料庫資料 (呼叫秒開快取)
-    df_orders = get_cached_orders().copy()
-    df_prods = get_cached_products()[['編碼', '品牌', '名稱']].copy()
+    # 🌟 1. 取得資料庫資料 (呼叫智能引擎)
+    df_orders = get_smart_data("customer_orders", "SELECT * FROM customer_orders ORDER BY 訂單日期 DESC").copy()
+    df_prods = get_smart_data("products", "SELECT * FROM products ORDER BY 編碼 ASC")[['編碼', '品牌', '名稱']].copy()
 
     # 🌟 終極防呆：處理 PostgreSQL 自動轉小寫問題，若無欄位則強制建立
     if not df_orders.empty:
