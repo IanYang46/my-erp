@@ -1364,75 +1364,80 @@ elif menu == "商品訊息":
                 
             if st.session_state['edit_item_code'] is None:
                 
-                # 👇 🌟 新增：近 30 日熱銷排行 (超高速快取版) 👇
-                # 使用 st.cache_data 讓系統把複雜計算的結果存起來，ttl=3600 代表快取保留 1 小時 (3600秒)
-                @st.cache_data(ttl=3600)
+                # 👇 🌟 新增：近 30 日熱銷排行 (智能引擎版) 👇
                 def get_hot_items_ranking():
+                    state_key_hot = "smart_hot_items"
+                    state_key_img = "smart_img_map"
+                    state_key_time = "smart_time_ranking"
+                    
                     with get_db() as conn:
-                        # 取得 30 天前的日期字串
-                        thirty_days_ago = (pd.Timestamp.today() - pd.Timedelta(days=30)).strftime('%Y-%m-%d')
-                        # 撈取近 30 日所有訂單的品項 (不剔除任何狀態)
-                        df_recent_orders = pd.read_sql("SELECT 品項內容 FROM customer_orders WHERE 訂單日期 >= %s", conn, params=(thirty_days_ago,))
-                        # 多撈出「圖片路徑」，用來渲染前三名的商品圖
-                        df_prods_for_rank = pd.read_sql("SELECT 編碼, 名稱, 圖片路徑 FROM products", conn)
-                    
-                    prod_map_rank = {}
-                    img_map_rank = {}
-                    for _, r in df_prods_for_rank.iterrows():
-                        c = str(r['編碼']).strip()
-                        n = str(r['名稱']).strip() if pd.notna(r['名稱']) else ""
-                        if c:
-                            prod_map_rank[c] = n
-                            if n: 
-                                img_map_rank[n] = r['圖片路徑']
-                                
-                    sorted_codes_rank = sorted(prod_map_rank.keys(), key=len, reverse=True)
+                        cursor = conn.cursor()
+                        # 檢查 orders 和 products 兩張表的最後異動時間 (取最新的一個)
+                        cursor.execute("SELECT MAX(last_modified) FROM system_status WHERE table_name IN ('customer_orders', 'products')")
+                        res = cursor.fetchone()
+                        db_last_modified = res[0] if res and res[0] else time.time()
+                        
+                        # 檢查記憶體是否過期
+                        if state_key_hot not in st.session_state or st.session_state.get(state_key_time, 0) < db_last_modified:
+                            thirty_days_ago = (pd.Timestamp.today() - pd.Timedelta(days=30)).strftime('%Y-%m-%d')
+                            df_recent_orders = pd.read_sql("SELECT 品項內容 FROM customer_orders WHERE 訂單日期 >= %s", conn, params=(thirty_days_ago,))
+                            df_prods_for_rank = pd.read_sql("SELECT 編碼, 名稱, 圖片路徑 FROM products", conn)
+                            
+                            prod_map_rank = {}
+                            img_map_rank = {}
+                            for _, r in df_prods_for_rank.iterrows():
+                                c = str(r['編碼']).strip()
+                                n = str(r['名稱']).strip() if pd.notna(r['名稱']) else ""
+                                if c:
+                                    prod_map_rank[c] = n
+                                    if n: 
+                                        img_map_rank[n] = r['圖片路徑']
+                                        
+                            sorted_codes_rank = sorted(prod_map_rank.keys(), key=len, reverse=True)
 
-                    def translate_rank_items(text):
-                        res = str(text) if pd.notna(text) else ""
-                        if not res or res.strip() in ['nan', 'None']: return ""
-                        for code in sorted_codes_rank:
-                            if code in res:
-                                res = res.replace(code, prod_map_rank[code])
-                        return res
-                    
-                    import re
-                    from collections import defaultdict
-                    sales_counter = defaultdict(int)
-                    
-                    if not df_recent_orders.empty:
-                        for items_str in df_recent_orders['品項內容'].dropna():
-                            translated_str = translate_rank_items(items_str)
-                            parts = re.split(r'[\n、,，]', str(translated_str).replace('•', ''))
-                            for part in parts:
-                                part = part.strip()
-                                if not part: continue
-                                match = re.search(r'(.*?)[\*xX×]\s*(\d+)$', part)
-                                if match:
-                                    item_name = match.group(1).strip()
-                                    qty = int(match.group(2))
-                                else:
-                                    item_name = part
-                                    qty = 1
-                                if item_name:
-                                    sales_counter[item_name] += qty
-                    
-                    # 篩選數量大於等於 10 的商品
-                    hot_items = {k: v for k, v in sales_counter.items() if v >= 10}
-                    return hot_items, img_map_rank
+                            def translate_rank_items(text):
+                                res = str(text) if pd.notna(text) else ""
+                                if not res or res.strip() in ['nan', 'None']: return ""
+                                for code in sorted_codes_rank:
+                                    if code in res:
+                                        res = res.replace(code, prod_map_rank[code])
+                                return res
+                            
+                            import re
+                            from collections import defaultdict
+                            sales_counter = defaultdict(int)
+                            
+                            if not df_recent_orders.empty:
+                                for items_str in df_recent_orders['品項內容'].dropna():
+                                    translated_str = translate_rank_items(items_str)
+                                    parts = re.split(r'[\n、,，]', str(translated_str).replace('•', ''))
+                                    for part in parts:
+                                        part = part.strip()
+                                        if not part: continue
+                                        match = re.search(r'(.*?)[\*xX×]\s*(\d+)$', part)
+                                        if match:
+                                            item_name = match.group(1).strip()
+                                            qty = int(match.group(2))
+                                        else:
+                                            item_name = part
+                                            qty = 1
+                                        if item_name:
+                                            sales_counter[item_name] += qty
+                            
+                            hot_items = {k: v for k, v in sales_counter.items() if v >= 10}
+                            
+                            # 存入 Session State
+                            st.session_state[state_key_hot] = hot_items
+                            st.session_state[state_key_img] = img_map_rank
+                            st.session_state[state_key_time] = db_last_modified
+                            return hot_items, img_map_rank
+                        else:
+                            return st.session_state[state_key_hot], st.session_state[state_key_img]
                 
-                # 在畫面上展開區塊並呼叫快取函式
                 with st.expander("🔥 近 30 日熱銷商品排行 (總下單 10 件以上)", expanded=True):
-                    # 🌟 加一個手動刷新按鈕在標題旁邊
-                    c_title, c_refresh = st.columns([5, 1])
+                    # 💡 移除手動刷新按鈕，因為系統已經全自動了！
+                    st.markdown("##### 🏆 爆款前三名殿堂")
                     
-                    # 👇 加上權限防護：僅限管理員可見
-                    if role == "Admin" or st.session_state.get('user') == 'admin':
-                        if c_refresh.button("🔄 立即重新結算", help="點擊清除快取，立即計算最新數據"):
-                            get_hot_items_ranking.clear()
-                            st.rerun()
-
-                    # 呼叫函式 (如果是 12 小時內第二次打開，這裡會瞬間完成，不跑資料庫！)
                     hot_items, img_map_rank = get_hot_items_ranking()
 
                     if not hot_items:
@@ -1442,7 +1447,6 @@ elif menu == "商品訊息":
                         df_hot = df_hot.sort_values(by="近30日銷量", ascending=False)
                         
                         top3_df = df_hot.head(3)
-                        c_title.markdown("##### 🏆 爆款前三名殿堂")
                         
                         cols = st.columns(3)
                         medals = ["🥇 冠軍", "🥈 亞軍", "🥉 季軍"]
@@ -1490,8 +1494,8 @@ elif menu == "商品訊息":
                         )
                 # 👆 新增結束 👆
 
-                # 🌟 呼叫秒開快取
-                df = get_cached_products().copy()
+                # 🌟 呼叫智能引擎 (保證秒開又絕對即時)
+                df = get_smart_data("products", "SELECT * FROM products ORDER BY 編碼 ASC").copy()
                 
                 if df.empty:
                     st.info("目前商品庫中沒有任何資料。")
@@ -1521,6 +1525,8 @@ elif menu == "商品訊息":
                                     placeholders = ','.join(['?'] * len(del_list))
                                     conn.execute(f"DELETE FROM products WHERE 編碼 IN ({placeholders})", del_list)
                                     conn.commit()
+                            # 👇 標記資料異動
+                            mark_table_changed("products")
                                 log_product_change(current_operator, "批量刪除", f"移除了 {len(del_list)} 筆商品：{', '.join(del_list)}")
                                 st.success(f"✅ 已成功批量刪除 {len(del_list)} 筆商品！")
                                 time.sleep(1.5)
@@ -1559,6 +1565,8 @@ elif menu == "商品訊息":
                                             with get_db() as conn:
                                                 conn.execute("DELETE FROM products WHERE 編碼=?", (row['編碼'],))
                                                 conn.commit()
+                                    # 👇 標記資料異動
+                                    mark_table_changed("products")
                                             log_product_change(current_operator, "單筆刪除", f"移除了商品：{row['編碼']} - {row['名稱']}")
                                             st.toast(f"已成功刪除商品：{row['編碼']}！")
                                             time.sleep(1)
@@ -1595,6 +1603,8 @@ elif menu == "商品訊息":
                             with get_db() as conn:
                                 conn.execute("UPDATE products SET 類別=?, 品牌=?, 名稱=?, 備註=?, 圖片路徑=? WHERE 編碼=?", (edit_cat, edit_brand, edit_name, edit_remark, new_path, edit_code))
                                 conn.commit()
+                        # 👇 標記資料異動
+                        mark_table_changed("products")
                             
                             log_msg = f"更新了商品 {edit_code} 資料。"
                             if edit_name != target[2]: log_msg += f" 名稱: {target[2]} ➔ {edit_name}。"
@@ -1633,6 +1643,8 @@ elif menu == "商品訊息":
                                 with get_db() as conn:
                                     conn.execute("INSERT INTO products (編碼, 類別, 品牌, 名稱, 備註, 圖片路徑) VALUES (?,?,?,?,?,?)", (code, category, brand, name, remark, path))
                                     conn.commit()
+                            # 👇 標記資料異動
+                            mark_table_changed("products")
                                 
                                 log_product_change(current_operator, "新增單筆", f"建檔了新商品：{code} - {name} (品牌: {brand})")
                                 st.success(f"🎉 成功新增商品：【{code}】 {name}！")
@@ -1683,6 +1695,8 @@ elif menu == "商品訊息":
                                 """, (str(row["編碼"]), str(row["類別"]), str(row["品牌"]), str(row["名稱"]), str(row["備註"])))
                             
                             conn.commit()
+                    # 👇 標記資料異動
+                    mark_table_changed("products")
                         
                         log_product_change(current_operator, "批量匯入", f"透過 Excel/CSV 檔案批次更新/新增了 {len(df_insert)} 筆商品資料")
                         st.success("✅ 批量商品資料匯入完成！")
