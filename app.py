@@ -1764,9 +1764,20 @@ elif menu == "商品庫存":
             selected_wh = c_wh.selectbox("🔍 篩選特定分倉庫存", ["所有倉庫"] + wh_list, key="inv_wh_filter")
             show_type = c_status.radio("依庫存水位篩選", ["顯示所有", "僅顯示有庫存", "僅顯示缺貨"], horizontal=True, key="inv_status_filter")
             
-            # 👇 🌟 全面升級：改用智能引擎，保證秒開又絕對即時！
-            df_p = get_smart_data("products", "SELECT * FROM products ORDER BY 編碼 ASC")[['圖片路徑', '編碼', '名稱', '類別', '品牌']].copy()
-            df_i = get_smart_data("inventory", "SELECT * FROM inventory ORDER BY id DESC").copy()
+            # 👇 🌟 全面升級：改用智能引擎，並加上欄位遺失防護與快取強制更新！
+            df_p_raw = get_smart_data("products_v4", "SELECT * FROM products ORDER BY 編碼 ASC").copy()
+            
+            # 確保 df_p 絕對不會因為缺少欄位而報錯
+            prod_req_cols = ['圖片路徑', '編碼', '名稱', '類別', '品牌']
+            if df_p_raw.empty:
+                df_p = pd.DataFrame(columns=prod_req_cols)
+            else:
+                for col in prod_req_cols:
+                    if col not in df_p_raw.columns:
+                        df_p_raw[col] = ''
+                df_p = df_p_raw[prod_req_cols].copy()
+                
+            df_i = get_smart_data("inventory_v2", "SELECT * FROM inventory ORDER BY id DESC").copy()
             
             # 🌟 終極防呆：處理 PostgreSQL 英文自動轉小寫的問題
             if not df_i.empty:
