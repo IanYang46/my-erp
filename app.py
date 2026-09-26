@@ -3120,6 +3120,9 @@ elif menu == "訂單明細":
                                 placeholders = ','.join(['?'] * len(selected_orders))
                                 cursor.execute(f"DELETE FROM customer_orders WHERE 訂單編號 IN ({placeholders})", tuple(selected_orders))
                                 conn.commit()
+                            # 👇 標記資料庫異動
+                            mark_table_changed("customer_orders")
+                            
                             log_system_action("訂單明細", current_operator, "刪除訂單資料", f"刪除了 {len(selected_orders)} 筆訂單")
                             st.success(f"✅ 成功刪除 {len(selected_orders)} 筆訂單！")
                             time.sleep(1); st.rerun()
@@ -3356,6 +3359,9 @@ elif menu == "訂單明細":
                                         new_items, edit_cust_note, edit_merch_note, selected_order
                                     ))
                                     conn.commit()
+                                # 👇 標記資料庫異動
+                                mark_table_changed("customer_orders")
+                                
                                 log_system_action("訂單明細", current_operator, "編輯單筆完整訂單", f"全面更新了訂單 {selected_order} 的詳細資訊與備註")
                                 st.success(f"✅ 訂單 {selected_order} 資訊更新成功！出貨成本結算為 {calc_single_ship_cost:,.0f}，損益為 {calc_single_profit:,.0f}。")
                                 time.sleep(1.5); st.rerun()
@@ -3426,6 +3432,8 @@ elif menu == "訂單明細":
                                     """, (orig_items, orig_cost, reship_fee_rmb, reship_fee_twd, calc_t_ship_cost, calc_t_profit, new_t_note, target_pending_oid))
                                     
                                     conn.commit()
+                                # 👇 標記資料庫異動
+                                mark_table_changed("customer_orders")
                                     
                                 log_system_action("訂單明細", current_operator, "轉單重出", f"將已上架訂單 {selected_order} 重出給 {target_pending_oid}")
                                 st.success(f"✅ 成功將包裹轉配給 {target_pending_oid}！原訂單已標記為「已重出」。")
@@ -3593,6 +3601,9 @@ elif menu == "訂單明細":
                                     ma_items, ma_revenue, ma_cost, ma_shipping, ma_shipping_rmb, ma_ship_cost, ma_profit, ma_status, ma_c_note, ma_m_note
                                 ))
                                 conn.commit()
+                            # 👇 標記資料庫異動
+                            mark_table_changed("customer_orders")
+                            
                             log_system_action("訂單明細", current_operator, "手動新增訂單", f"新增了單筆訂單 {ma_oid}")
                             st.success(f"✅ 訂單 {ma_oid} 新增成功！")
                             time.sleep(1); st.rerun()
@@ -3757,6 +3768,8 @@ elif menu == "訂單明細":
                                                 ))
                                                 success_count += 1
                                             conn.commit()
+                                        # 👇 標記資料庫異動
+                                        mark_table_changed("customer_orders")
                                             
                                         log_system_action("訂單明細", current_operator, "1shop API 同步", f"透過 API 自動同步了 {success_count} 筆訂單")
                                         st.success(f"✅ 大功告成！成功寫入 {success_count} 筆訂單，並且完美解析了商品明細！")
@@ -3926,6 +3939,8 @@ elif menu == "訂單明細":
                                     progress_bar.progress((i + 1) / total_rows, text=f"匯入進度：{i + 1} / {total_rows} 筆 (成功寫入: {count} 筆)")
                                     
                                 conn.commit()
+                            # 👇 標記資料庫異動
+                            mark_table_changed("customer_orders")
                                 
                             log_system_action("訂單明細", current_operator, "匯入訂單資料", f"成功批次合併與匯入了 {count} 筆訂單，並更新了物流單號")
                             st.success(f"✅ 成功匯入並智能合併為 {count} 筆獨立訂單！")
@@ -4043,6 +4058,8 @@ elif menu == "訂單明細":
                                             progress_bar_logi.progress((i + 1) / total_logi_rows, text=f"更新進度：{i + 1} / {total_logi_rows} 筆 (成功比對: {update_count} 筆)")
                                             
                                         conn.commit()
+                                    # 👇 標記資料庫異動
+                                    mark_table_changed("customer_orders")
                                         
                                     log_system_action("訂單明細", current_operator, "批量更新物流", f"比對更新了 {update_count} 筆訂單資訊，匯率設定：{exchange_rate}")
                                     st.success(f"✅ 成功為 {update_count} 筆訂單掛載了最新物流與狀態資訊！(已依匯率 {exchange_rate} 轉換為台幣)")
@@ -4188,6 +4205,8 @@ elif menu == "訂單明細":
                                         progress_bar_track.progress((i + 1) / total_track_rows, text=f"更新進度：{i + 1} / {total_track_rows} 筆 (成功比對並更新: {update_count} 筆訂單)")
                                         
                                     conn.commit()
+                                # 👇 標記資料庫異動
+                                mark_table_changed("customer_orders")
                                     
                                 log_system_action("訂單明細", current_operator, "依物流單號更新", f"比對更新了 {update_count} 筆訂單，匯率設定：{rate}")
                                 st.success(f"✅ 成功依物流單號為 {update_count} 筆訂單更新了運費、狀態與時間！")
