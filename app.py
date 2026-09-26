@@ -2603,10 +2603,13 @@ elif menu == "訂單明細":
         df_orders['品項預覽'] = df_orders['品項翻譯'].apply(lambda x: x.replace('\n', ' ｜ '))
         # 👆 變更結束
         
-        # 確保財務欄位為數值型態 (加上防呆檢查：欄位存在才進行轉換)
-        for col in ['包裹應收', '商品成本', '物流運費', '物流運費_RMB', '出貨成本', '訂單損益']:
-            if col in df_orders.columns:
-                df_orders[col] = pd.to_numeric(df_orders[col], errors='coerce').fillna(0.0)
+        # 🌟 終極修復：確保有資料才做數值轉換！
+        if len(df_orders) > 0:
+            for col in ['包裹應收', '商品成本', '物流運費', '物流運費_RMB', '出貨成本', '訂單損益']:
+                if col in df_orders.columns:
+                    # 使用 list(df_orders[col]) 強制轉為一維列表，避免因索引問題導致 TypeError
+                    df_orders[col] = pd.to_numeric(list(df_orders[col]), errors='coerce')
+                    df_orders[col] = df_orders[col].fillna(0.0)
 
         # 👇 智能重複客偵測邏輯 (只要姓名、電話或信箱其一重複大於1次，就標記)
         name_counts = df_orders[df_orders['姓名'] != '']['姓名'].value_counts()
