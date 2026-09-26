@@ -2510,8 +2510,14 @@ elif menu == "訂單明細":
             st.rerun()
 
     # 🌟 1. 取得資料庫資料 (強制更新快取名稱，打破所有舊的壞快取)
-    df_orders = get_smart_data("customer_orders_v3", "SELECT * FROM customer_orders ORDER BY 訂單日期 DESC").copy()
+    df_orders = get_smart_data("customer_orders_v4", "SELECT * FROM customer_orders ORDER BY 訂單日期 DESC").copy()
     
+    # 👇 🌟 終極修復：必須在骨架防護「之前」把小寫的 rmb 換成大寫，否則會產生兩個一樣的欄位！
+    if '物流運費_rmb' in df_orders.columns:
+        df_orders = df_orders.rename(columns={'物流運費_rmb': '物流運費_RMB'})
+    # 暴力清除任何可能重複的欄位名稱 (防呆保險)
+    df_orders = df_orders.loc[:, ~df_orders.columns.duplicated()].copy()
+
     # 訂單表骨架防護
     required_cols = [
         '訂單編號', '訂單日期', '訂單連結', '姓名', '電話', '門市', '店號',
@@ -2528,7 +2534,7 @@ elif menu == "訂單明細":
                 df_orders[col] = '' if col in ['姓名', '電話', '信箱', '顧客備註', '商家備註', '訂單編號', '品項內容', '物流編號', '取貨狀態', '門市', '店號', '訂單連結'] else 0.0
     
     # 🌟 商品表骨架防護 (強制更新快取名稱)
-    df_prods_raw = get_smart_data("products_v3", "SELECT * FROM products ORDER BY 編碼 ASC").copy()
+    df_prods_raw = get_smart_data("products_v4", "SELECT * FROM products ORDER BY 編碼 ASC").copy()
     prod_req_cols = ['編碼', '品牌', '名稱']
     
     if df_prods_raw.empty:
@@ -2539,12 +2545,6 @@ elif menu == "訂單明細":
             if col not in df_prods_raw.columns:
                 df_prods_raw[col] = ''
         df_prods = df_prods_raw[prod_req_cols].copy()
-
-    # 🌟 防呆：處理 PostgreSQL 自動轉小寫問題
-    if '物流運費_rmb' in df_orders.columns:
-        df_orders = df_orders.rename(columns={'物流運費_rmb': '物流運費_RMB'})
-    if '物流運費_RMB' not in df_orders.columns:
-        df_orders['物流運費_RMB'] = 0.0
 
     # 🌟 2. 資料預處理與重複客偵測
     if not df_orders.empty:
