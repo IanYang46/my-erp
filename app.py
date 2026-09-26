@@ -1494,8 +1494,18 @@ elif menu == "商品訊息":
                         )
                 # 👆 新增結束 👆
 
-                # 🌟 呼叫智能引擎 (保證秒開又絕對即時)
-                df = get_smart_data("products", "SELECT * FROM products ORDER BY 編碼 ASC").copy()
+                # 🌟 呼叫智能引擎 (強制更新快取，打破舊資料)
+                df_raw = get_smart_data("products_v5", "SELECT * FROM products ORDER BY 編碼 ASC").copy()
+                
+                # 👇 🌟 終極防護：確保篩選功能需要的欄位絕對存在！
+                required_prod_cols = ['編碼', '類別', '品牌', '名稱', '備註', '圖片路徑']
+                if df_raw.empty:
+                    df = pd.DataFrame(columns=required_prod_cols)
+                else:
+                    for col in required_prod_cols:
+                        if col not in df_raw.columns:
+                            df_raw[col] = ''
+                    df = df_raw.copy()
                 
                 if df.empty:
                     st.info("目前商品庫中沒有任何資料。")
