@@ -725,7 +725,12 @@ def get_smart_data(table_name, sql_query):
 def mark_table_changed(table_name):
     """當我們有新增、修改、刪除資料時，呼叫這個函數，標記該表已經被更動"""
     with get_db() as conn:
-        conn.execute("UPDATE system_status SET last_modified = %s WHERE table_name = %s", (time.time(), table_name))
+        # 👇 升級：使用 INSERT ON CONFLICT，確保即使是新表也能自動加入時間監控！
+        conn.execute("""
+            INSERT INTO system_status (table_name, last_modified) 
+            VALUES (%s, %s) 
+            ON CONFLICT (table_name) DO UPDATE SET last_modified = EXCLUDED.last_modified
+        """, (table_name, time.time()))
         conn.commit()
 # 👆 智能引擎設定結束 👆
 
@@ -4377,12 +4382,16 @@ elif menu == "財務報表":
             st.markdown("### 📅 系統每日簽收與預估帳單")
             st.caption("以下資料來自系統內部紀錄。如果該單已經核對儲存過，系統會自動帶入『實際結款』。")
             
-            with get_db() as conn:
-                # 🌟 升級 1：移除 '簽收' 限制，並拉出「取貨狀態」與「商家備註」
-                query_c = "SELECT 訂單編號, 物流編號, 包裹應收, 訂單日期, 取貨狀態, 商家備註 FROM customer_orders WHERE 物流編號 IS NOT NULL AND 物流編號 != ''"
-                df_c_all = pd.read_sql(query_c, conn)
-                query_s = "SELECT 物流編號, 結款日期 AS 已存結款日期, 物流結款人民幣 AS 已存實際結款 FROM logistics_settlements"
-                df_s = pd.read_sql(query_s, conn)
+            # 👇 🌟 套用秒開智能引擎與防呆骨架 (完全不用再每次開啟都去要資料了)
+            query_c = "SELECT 訂單編號, 物流編號, 包裹應收, 訂單日期, 取貨狀態, 商家備註 FROM customer_orders WHERE 物流編號 IS NOT NULL AND 物流編號 != ''"
+            df_c_all = get_smart_data("fin_customer_orders_v1", query_c).copy()
+            if df_c_all.empty:
+                df_c_all = pd.DataFrame(columns=['訂單編號', '物流編號', '包裹應收', '訂單日期', '取貨狀態', '商家備註'])
+                
+            query_s = "SELECT 物流編號, 結款日期 AS 已存結款日期, 物流結款人民幣 AS 已存實際結款 FROM logistics_settlements"
+            df_s = get_smart_data("fin_logistics_settlements_v1", query_s).copy()
+            if df_s.empty:
+                df_s = pd.DataFrame(columns=['物流編號', '已存結款日期', '已存實際結款'])
                 
             if df_c_all.empty:
                 st.warning("系統目前沒有具備物流單號的訂單。")
@@ -4579,6 +4588,9 @@ elif menu == "財務報表":
                                                 row['物流簽收金額'], row['物流手續費'], row['物流結款人民幣']
                                             ))
                                         conn.commit()
+                                        
+                                    # 👇 🌟 標記資料庫異動：告訴智能引擎對帳單更新了，下次秒開要拿最新的！
+                                    mark_table_changed("logistics_settlements")
                                         
                                     # 🌟 補上這行寫入日誌：
                                     log_system_action("財務報表", current_operator, "匯入物流對帳", f"上傳並結清了 {len(df_logi)} 筆物流款項，結款日：{settle_date.strftime('%Y-%m-%d')}")
