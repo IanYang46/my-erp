@@ -8,3 +8,4 @@ extra-streamlit-components
 psycopg2-binary
 SQLAlchemy
 requests
+pip install Pillow
