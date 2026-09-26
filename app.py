@@ -2509,18 +2509,10 @@ elif menu == "訂單明細":
             time.sleep(1.5)
             st.rerun()
 
-    # 🌟 1. 取得資料庫資料 (呼叫智能引擎)
-    df_orders = get_smart_data("customer_orders", "SELECT * FROM customer_orders ORDER BY 訂單日期 DESC").copy()
+    # 🌟 1. 取得資料庫資料 (強制更新快取名稱，打破所有舊的壞快取)
+    df_orders = get_smart_data("customer_orders_v3", "SELECT * FROM customer_orders ORDER BY 訂單日期 DESC").copy()
     
-    # 👇 🌟 終極破繭機制：如果記憶體裡的資料是空的，代表卡到了之前的「空殼快取」，我們強制去資料庫再撈一次真正的資料！
-    if df_orders.empty:
-        with get_db() as conn:
-            df_orders = pd.read_sql("SELECT * FROM customer_orders ORDER BY 訂單日期 DESC", conn)
-            # 把撈到的真實資料更新回記憶體，打破空殼詛咒
-            st.session_state["smart_df_customer_orders"] = df_orders
-            st.session_state["smart_time_customer_orders"] = time.time()
-    
-    # 建立標準骨架防護 (確保後續的 .astype 或 .fillna 不會發生 KeyError)
+    # 訂單表骨架防護
     required_cols = [
         '訂單編號', '訂單日期', '訂單連結', '姓名', '電話', '門市', '店號',
         '品項內容', '下單總數', '包裹應收', '商品成本', '物流運費', '物流運費_RMB',
@@ -2528,7 +2520,6 @@ elif menu == "訂單明細":
         '信箱', '顧客備註', '商家備註'
     ]
     
-    # 如果資料庫真的完全沒資料，再給它空骨架；否則溫柔補齊缺少的欄位
     if df_orders.empty:
         df_orders = pd.DataFrame(columns=required_cols)
     else:
@@ -2536,11 +2527,18 @@ elif menu == "訂單明細":
             if col not in df_orders.columns:
                 df_orders[col] = '' if col in ['姓名', '電話', '信箱', '顧客備註', '商家備註', '訂單編號', '品項內容', '物流編號', '取貨狀態', '門市', '店號', '訂單連結'] else 0.0
     
-    df_prods_raw = get_smart_data("products", "SELECT * FROM products ORDER BY 編碼 ASC").copy()
-    if df_prods_raw.empty and len(df_prods_raw.columns) == 0:
-        df_prods = pd.DataFrame(columns=['編碼', '品牌', '名稱'])
+    # 🌟 商品表骨架防護 (強制更新快取名稱)
+    df_prods_raw = get_smart_data("products_v3", "SELECT * FROM products ORDER BY 編碼 ASC").copy()
+    prod_req_cols = ['編碼', '品牌', '名稱']
+    
+    if df_prods_raw.empty:
+        df_prods = pd.DataFrame(columns=prod_req_cols)
     else:
-        df_prods = df_prods_raw[['編碼', '品牌', '名稱']].copy()
+        # 溫柔補齊缺少的欄位，避免 KeyError
+        for col in prod_req_cols:
+            if col not in df_prods_raw.columns:
+                df_prods_raw[col] = ''
+        df_prods = df_prods_raw[prod_req_cols].copy()
 
     # 🌟 防呆：處理 PostgreSQL 自動轉小寫問題
     if '物流運費_rmb' in df_orders.columns:
