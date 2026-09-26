@@ -1823,14 +1823,42 @@ elif menu == "商品庫存":
             df['總庫存金額_TWD'] = df['總庫存金額_RMB'] * new_rate
             df['平均成本_TWD'] = df['平均成本_RMB'] * new_rate
             
-            def get_image_base64(path):
-                if pd.isna(path) or not path: return None
-                # 🌟 如果已經是 Base64 格式，直接回傳給前端畫圖
-                if str(path).startswith('data:image'): return str(path)
-                if os.path.exists(path):
-                    with open(path, "rb") as f: return f"data:image/jpeg;base64,{base64.b64encode(f.read()).decode('utf-8')}"
+            # 👇 🌟 終極修復：兼顧「看圖」與「不塞爆連線」的完美解法！
+            def get_image_thumbnail_base64(path):
+                if pd.isna(path) or not str(path).strip(): 
+                    return None
+                try:
+                    import io
+                    from PIL import Image
+                    
+                    img_data = None
+                    if str(path).startswith('data:image'):
+                        # 處理現有的 Base64 字串
+                        header, encoded = str(path).split(',', 1)
+                        img_data = base64.b64decode(encoded)
+                    elif os.path.exists(path):
+                        # 處理實體圖片檔案
+                        with open(path, "rb") as f:
+                            img_data = f.read()
+                            
+                    if img_data:
+                        # 🚀 啟動壓縮引擎：將原圖縮小到最大 150x150，大幅降低 Websocket 傳輸負擔
+                        img = Image.open(io.BytesIO(img_data))
+                        # 轉換為 RGB 模式，防止 PNG 透明底色轉 JPG 時報錯
+                        if img.mode in ("RGBA", "P"): 
+                            img = img.convert("RGB")
+                            
+                        img.thumbnail((150, 150))
+                        buffered = io.BytesIO()
+                        img.save(buffered, format="JPEG", quality=70)
+                        
+                        return f"data:image/jpeg;base64,{base64.b64encode(buffered.getvalue()).decode('utf-8')}"
+                except Exception as e:
+                    # 萬一發生任何解析錯誤（或沒裝 Pillow），退回不顯示，避免當機
+                    return None
                 return None
-            df['商品圖片'] = df['圖片路徑'].apply(get_image_base64)
+
+            df['商品圖片'] = df['圖片路徑'].apply(get_image_thumbnail_base64)
             
             cols = ['商品圖片', '編碼', '名稱', '類別', '品牌', '總庫存'] + wh_cols + ['平均成本_RMB', '平均成本_TWD', '總庫存金額_RMB', '總庫存金額_TWD']
             filtered_df = df[cols].copy()
@@ -1841,7 +1869,7 @@ elif menu == "商品庫存":
             can_edit_inv = check_perm(role, "商品庫存", "can_edit")
             
             col_cfg = {
-                "商品圖片": st.column_config.ImageColumn("圖片"),
+                "商品圖片": st.column_config.ImageColumn("圖片"),  # 👈 確保這行有設定好
                 "編碼": st.column_config.TextColumn(disabled=True),
                 "名稱": st.column_config.TextColumn(disabled=True),
                 "類別": st.column_config.TextColumn(disabled=True),
@@ -1951,6 +1979,7 @@ elif menu == "商品庫存":
             from io import BytesIO
             output = BytesIO()
             with pd.ExcelWriter(output, engine='openpyxl') as writer:
+                # 👇 確保這裡是 drop(['商品圖片'])
                 filtered_df.drop(columns=['商品圖片']).to_excel(writer, index=False, sheet_name='Inventory')
             
             if check_perm(role, "商品庫存", "can_download"):
