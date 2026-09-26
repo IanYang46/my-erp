@@ -2512,16 +2512,22 @@ elif menu == "訂單明細":
     # 🌟 1. 取得資料庫資料 (呼叫智能引擎)
     df_orders = get_smart_data("customer_orders", "SELECT * FROM customer_orders ORDER BY 訂單日期 DESC").copy()
     
-    # 👇 🌟 終極暴力防呆：不論是不是空表，只要缺欄位，就當場補齊給它！
+    # 👇 🌟 終極安全防呆：明確定義所有可能用到的欄位。如果真的沒有資料，就給一個乾淨的空表架構
     required_cols = [
         '訂單編號', '訂單日期', '訂單連結', '姓名', '電話', '門市', '店號',
         '品項內容', '下單總數', '包裹應收', '商品成本', '物流運費', '物流運費_RMB',
         '出貨成本', '訂單損益', '物流編號', '取貨狀態', '取貨日期',
         '信箱', '顧客備註', '商家備註'
     ]
-    for col in required_cols:
-        if col not in df_orders.columns:
-            df_orders[col] = '' if col in ['姓名', '電話', '信箱', '顧客備註', '商家備註', '訂單編號', '品項內容', '物流編號', '取貨狀態', '門市', '店號', '訂單連結'] else 0.0
+    
+    if df_orders.empty:
+        # 如果是空的，直接給它完美的骨架
+        df_orders = pd.DataFrame(columns=required_cols)
+    else:
+        # 如果有資料，溫柔地把缺少的欄位補上，絕對不覆蓋現有資料
+        for col in required_cols:
+            if col not in df_orders.columns:
+                df_orders[col] = None
     
     df_prods_raw = get_smart_data("products", "SELECT * FROM products ORDER BY 編碼 ASC").copy()
     if df_prods_raw.empty and len(df_prods_raw.columns) == 0:
