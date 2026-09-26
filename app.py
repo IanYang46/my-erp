@@ -2511,14 +2511,27 @@ elif menu == "訂單明細":
 
     # 🌟 1. 取得資料庫資料 (呼叫智能引擎)
     df_orders = get_smart_data("customer_orders", "SELECT * FROM customer_orders ORDER BY 訂單日期 DESC").copy()
-    df_prods = get_smart_data("products", "SELECT 編碼, 名稱 FROM products ORDER BY 編碼 ASC").copy()
+    
+    # 👇 🌟 終極防呆：如果撈下來是空表，強制賦予完整的標準欄位，防止 KeyError 崩潰！
+    if df_orders.empty and len(df_orders.columns) == 0:
+        df_orders = pd.DataFrame(columns=[
+            '訂單編號', '訂單日期', '訂單連結', '姓名', '電話', '門市', '店號',
+            '品項內容', '下單總數', '包裹應收', '商品成本', '物流運費', '物流運費_RMB',
+            '出貨成本', '訂單損益', '物流編號', '取貨狀態', '取貨日期',
+            '信箱', '顧客備註', '商家備註'
+        ])
+    
+    df_prods_raw = get_smart_data("products", "SELECT * FROM products ORDER BY 編碼 ASC").copy()
+    if df_prods_raw.empty and len(df_prods_raw.columns) == 0:
+        df_prods = pd.DataFrame(columns=['編碼', '品牌', '名稱'])
+    else:
+        df_prods = df_prods_raw[['編碼', '品牌', '名稱']].copy()
 
-    # 🌟 終極防呆：處理 PostgreSQL 自動轉小寫問題，若無欄位則強制建立
-    if not df_orders.empty:
-        if '物流運費_rmb' in df_orders.columns:
-            df_orders = df_orders.rename(columns={'物流運費_rmb': '物流運費_RMB'})
-        if '物流運費_RMB' not in df_orders.columns:
-            df_orders['物流運費_RMB'] = 0.0
+    # 🌟 防呆：處理 PostgreSQL 自動轉小寫問題
+    if '物流運費_rmb' in df_orders.columns:
+        df_orders = df_orders.rename(columns={'物流運費_rmb': '物流運費_RMB'})
+    if '物流運費_RMB' not in df_orders.columns:
+        df_orders['物流運費_RMB'] = 0.0
 
     # 🌟 2. 資料預處理與重複客偵測
     if not df_orders.empty:
