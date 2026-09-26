@@ -2511,7 +2511,7 @@ elif menu == "訂單明細":
 
     # 🌟 1. 取得資料庫資料 (呼叫智能引擎)
     df_orders = get_smart_data("customer_orders", "SELECT * FROM customer_orders ORDER BY 訂單日期 DESC").copy()
-    df_prods = get_smart_data("products", "SELECT * FROM products ORDER BY 編碼 ASC")[['編碼', '品牌', '名稱']].copy()
+    df_prods = get_smart_data("products", "SELECT 編碼, 名稱 FROM products ORDER BY 編碼 ASC").copy()
 
     # 🌟 終極防呆：處理 PostgreSQL 自動轉小寫問題，若無欄位則強制建立
     if not df_orders.empty:
