@@ -2548,6 +2548,9 @@ elif menu == "訂單明細":
 
     # 🌟 2. 資料預處理與重複客偵測
     if not df_orders.empty:
+        # 👇 🌟 終極防護：強制重置整張表的索引，徹底杜絕 cannot reindex on an axis with duplicate labels 的崩潰錯誤！
+        df_orders = df_orders.reset_index(drop=True)
+        
         # 防呆補空值
         df_orders['姓名'] = df_orders['姓名'].fillna('').astype(str)
         df_orders['電話'] = df_orders['電話'].fillna('').astype(str)
