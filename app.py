@@ -1925,6 +1925,10 @@ elif menu == "商品庫存":
                                                        (new_twd, new_twd, new_twd, r_oid))
                                 conn.commit()
                                 
+                            # 👇 標記資料庫異動 (如果這裡沒有，請補上這兩行)
+                            mark_table_changed("inventory")
+                            mark_table_changed("customer_orders") # 因為連動修改了訂單成本，所以訂單表也要標記！
+                                
                             log_inventory_change(current_operator, "表格直接修改成本", f"在總覽表批次修改了 {len(changed_rows)} 項商品的單支成本")
                             st.success(f"✅ 成功更新庫存成本，並且已同步刷新所有歷史訂單的利潤！")
                             time.sleep(1.5)
@@ -1969,8 +1973,9 @@ elif menu == "商品庫存":
                                     conn.execute("INSERT INTO inventory (編碼, 倉庫位置, 數量, 單支成本_RMB, 採購廠商, 採購金額_RMB, 進貨日期) VALUES (?, ?, ?, ?, ?, ?, ?)",
                                                  (new_inv_code, new_inv_wh, new_inv_qty, new_inv_cost, new_inv_vendor, calc_rmb, today_str))
                                     conn.commit()
-                                # 👇 標記資料庫異動
+                                # 👇 標記資料庫異動 (如果這裡沒有，請補上)
                                 mark_table_changed("inventory")
+                                
                                 log_inventory_change(current_operator, "手動入庫", f"手動建檔：{new_inv_code} 數量 {new_inv_qty}，成本 ¥{new_inv_cost}")
                                 st.success(f"✅ 成功手動入庫！{new_inv_code} 數量 {new_inv_qty} 已加入 {new_inv_wh}。")
                                 time.sleep(1.5)
@@ -2018,6 +2023,7 @@ elif menu == "商品庫存":
                                         conn.commit()
                                     # 👇 標記資料庫異動
                                     mark_table_changed("inventory")
+                                    
                                     log_details = f"修改流水號 {select_id}。原資料:[品項:{old_row['編碼']},數量:{old_row['數量']},倉:{old_row['倉庫位置']}] ➡️ 新資料:[品項:{edit_code},數量:{edit_qty},倉:{edit_wh},單價:{edit_cost} RMB]"
                                     log_inventory_change(current_operator, "修正庫存", log_details)
                                     st.success(f"✅ 流水號 【{select_id}】 庫存明細更正成功！")
@@ -2033,6 +2039,7 @@ elif menu == "商品庫存":
                                         conn.commit()
                                     # 👇 標記資料庫異動
                                     mark_table_changed("inventory")
+                                    
                                     log_details = f"徹底刪除流水號 {select_id} 紀錄。原內含品項:{old_row['編碼']}, 移除數量:{old_row['數量']} 支, 原倉庫:{old_row['倉庫位置']}, 廠商:{old_row['採購廠商']}"
                                     log_inventory_change(current_operator, "刪除庫存", log_details)
                                     st.success(f"🗑️ 庫存流水號 【{select_id}】 已成功從資料庫中移除！")
