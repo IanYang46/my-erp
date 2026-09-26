@@ -366,8 +366,8 @@ def init_db_v7():
             table_name TEXT PRIMARY KEY,
             last_modified REAL
         )''')
-        # 確保三張大表都有初始時間戳
-        for t in ['customer_orders', 'products', 'inventory', 'daily_ad_spend']:
+        # 確保重要的大表都有初始時間戳
+        for t in ['customer_orders', 'products', 'inventory', 'daily_ad_spend', 'procurement_orders']:
             cursor.execute("INSERT INTO system_status (table_name, last_modified) VALUES (%s, %s) ON CONFLICT (table_name) DO NOTHING", (t, time.time()))
 
         conn.commit()
@@ -2129,8 +2129,9 @@ elif menu == "採購管理":
             st.warning("🔒 您的權限無法新增採購單。")
         else:
             with get_db() as conn:
-                prod_df = pd.read_sql("SELECT 編碼, 名稱, 圖片路徑 FROM products ORDER BY 編碼 ASC", conn)
-                wh_df = pd.read_sql("SELECT name FROM warehouses", conn) 
+                # 🌟 升級為智能引擎，瞬間拉取商品清單供選單使用
+                prod_df = get_smart_data("products", "SELECT 編碼, 名稱, 圖片路徑 FROM products ORDER BY 編碼 ASC").copy()
+                wh_df = pd.read_sql("SELECT name FROM warehouses", conn)
                 
             prod_df['顯示選單'] = prod_df['編碼'] + " | " + prod_df['名稱']
             valid_product_options = prod_df['顯示選單'].tolist()
@@ -2221,6 +2222,8 @@ elif menu == "採購管理":
                                         cursor.execute("INSERT INTO procurement_items (order_id, code, qty, unit_price_rmb, total_price_rmb) VALUES (?, ?, ?, ?, ?)", 
                                                        (order_id, raw_code, int(row['數量']), float(row['人民幣單價']), item_total_rmb))
                                 conn.commit()
+                            # 👇 標記資料庫異動
+                            mark_table_changed("procurement_orders")
                             
                             # 🌟 寫入日誌
                             log_system_action("採購管理", current_operator, "建立採購單", f"單號: {order_id}，廠商: {supplier_input}，共 {total_qty} 件，金額 {total_rmb:,.2f} RMB")
@@ -2234,8 +2237,8 @@ elif menu == "採購管理":
 
     with tabs[1]:
         st.subheader("📋 採購單據維護與點收庫存作業")
-        with get_db() as conn:
-            df_orders = pd.read_sql("SELECT order_id as 採購單號, date as 日期, supplier as 廠商, total_qty as 總數量, total_amount_rmb as 人民幣總額, total_amount_twd as 台幣總額, warehouse as 購入倉庫, staff as 採購人員, status as 狀態 FROM procurement_orders ORDER BY 日期 DESC, order_id DESC", conn)
+        # 🌟 升級為智能引擎，瞬間拉取歷史採購單
+        df_orders = get_smart_data("procurement_orders", "SELECT order_id as 採購單號, date as 日期, supplier as 廠商, total_qty as 總數量, total_amount_rmb as 人民幣總額, total_amount_twd as 台幣總額, warehouse as 購入倉庫, staff as 採購人員, status as 狀態 FROM procurement_orders ORDER BY 日期 DESC, order_id DESC").copy()
             
         if df_orders.empty:
             st.info("目前系統中無任何採購歷史紀錄。")
@@ -2284,6 +2287,9 @@ elif menu == "採購管理":
                                                        (item['編碼'], order_meta['購入倉庫'], item['數量'], item['單價'], order_meta['廠商'], item['總金額'], order_meta['日期']))
                                     cursor.execute("UPDATE procurement_orders SET status = '已入庫' WHERE order_id = ?", (selected_po,))
                                     conn.commit()
+                                # 👇 標記資料庫異動 (採購單狀態變了、庫存也增加了)
+                                mark_table_changed("procurement_orders")
+                                mark_table_changed("inventory")
                                 
                                 # 🌟 寫入日誌
                                 log_system_action("採購管理", current_operator, "點收入庫", f"單號: {selected_po} 已成功驗收，並撥入倉庫 {order_meta['購入倉庫']}")
@@ -2301,6 +2307,9 @@ elif menu == "採購管理":
                                     conn.execute("DELETE FROM procurement_orders WHERE order_id = ?", (selected_po,))
                                     conn.execute("DELETE FROM procurement_items WHERE order_id = ?", (selected_po,))
                                     conn.commit()
+                                # 👇 標記資料庫異動
+                                mark_table_changed("procurement_orders")
+                                
                                 log_system_action("採購管理", current_operator, "刪除採購單", f"刪除了尚未驗收的採購單: {selected_po}")
                                 st.success(f"🗑️ 採購單 {selected_po} 已成功刪除！")
                                 time.sleep(1.5)
@@ -2321,6 +2330,9 @@ elif menu == "採購管理":
                                     conn.execute("DELETE FROM procurement_orders WHERE order_id = ?", (selected_po,))
                                     conn.execute("DELETE FROM procurement_items WHERE order_id = ?", (selected_po,))
                                     conn.commit()
+                                # 👇 標記資料庫異動
+                                mark_table_changed("procurement_orders")
+                                
                                 log_system_action("採購管理", current_operator, "刪除歷史採購單", f"刪除了已入庫的歷史採購單: {selected_po}")
                                 st.success(f"🗑️ 歷史採購單 {selected_po} 已成功刪除！(⚠️ 提醒：這不會影響已經撥入庫存的商品數量)")
                                 time.sleep(2)
@@ -2379,6 +2391,8 @@ elif menu == "採購管理":
                                     cursor.execute("INSERT INTO procurement_items (order_id, code, qty, unit_price_rmb, total_price_rmb) VALUES (?, ?, ?, ?, ?)", 
                                                    (order_id, str(row['商品編碼']), int(row['數量']), float(row['人民幣單價']), item_rmb))
                             conn.commit()
+                        # 👇 標記資料庫異動
+                        mark_table_changed("procurement_orders")
                         
                         # 🌟 寫入日誌
                         log_system_action("採購管理", current_operator, "批次匯入採購單", f"從 Excel/CSV 成功匯入外部單據")
