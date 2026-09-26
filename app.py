@@ -2510,10 +2510,17 @@ elif menu == "訂單明細":
             st.rerun()
 
     # 🌟 1. 取得資料庫資料 (呼叫智能引擎)
-    # 這裡我們恢復使用 SELECT *，讓它能完整吃到所有資料，避免因為 SQL 語法漏寫導致資料不見
     df_orders = get_smart_data("customer_orders", "SELECT * FROM customer_orders ORDER BY 訂單日期 DESC").copy()
     
-    # 建立標準骨架防護
+    # 👇 🌟 終極破繭機制：如果記憶體裡的資料是空的，代表卡到了之前的「空殼快取」，我們強制去資料庫再撈一次真正的資料！
+    if df_orders.empty:
+        with get_db() as conn:
+            df_orders = pd.read_sql("SELECT * FROM customer_orders ORDER BY 訂單日期 DESC", conn)
+            # 把撈到的真實資料更新回記憶體，打破空殼詛咒
+            st.session_state["smart_df_customer_orders"] = df_orders
+            st.session_state["smart_time_customer_orders"] = time.time()
+    
+    # 建立標準骨架防護 (確保後續的 .astype 或 .fillna 不會發生 KeyError)
     required_cols = [
         '訂單編號', '訂單日期', '訂單連結', '姓名', '電話', '門市', '店號',
         '品項內容', '下單總數', '包裹應收', '商品成本', '物流運費', '物流運費_RMB',
@@ -2521,7 +2528,7 @@ elif menu == "訂單明細":
         '信箱', '顧客備註', '商家備註'
     ]
     
-    # 👇 🌟 終極安全防護：如果是空表，直接給乾淨的架構；如果不是空表，只把缺的欄位補上，絕對不洗掉資料！
+    # 如果資料庫真的完全沒資料，再給它空骨架；否則溫柔補齊缺少的欄位
     if df_orders.empty:
         df_orders = pd.DataFrame(columns=required_cols)
     else:
