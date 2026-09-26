@@ -3251,9 +3251,21 @@ elif menu == "訂單明細":
                     edit_cost = edit_cost_rmb * rate  # 自動轉成台幣供後續存檔運算
                     c11.caption(f"🔄 預估台幣成本：**{edit_cost:,.0f}** TWD")
                     
-                    # 🌟 雙重防呆：確保讀取到的 RMB 運費有效，若是空值或 NaN 則預設為 0.0
+                    # 🌟 絕對防禦：不管 raw_rmb 抓到什麼鬼東西（字串、NaN、甚至是 Pandas 的 Series），強制轉成浮點數！
                     raw_rmb = target_order.get('物流運費_RMB', 0.0)
-                    current_shipping_rmb = float(raw_rmb) if pd.notna(raw_rmb) else 0.0
+                    
+                    # 先試圖把 Series 解包成單一數值
+                    if isinstance(raw_rmb, pd.Series):
+                        raw_rmb = raw_rmb.iloc[0] if not raw_rmb.empty else 0.0
+                        
+                    try:
+                        # 處理 NaN、None 或空字串
+                        if pd.isna(raw_rmb) or str(raw_rmb).strip() == '':
+                            current_shipping_rmb = 0.0
+                        else:
+                            current_shipping_rmb = float(raw_rmb)
+                    except (ValueError, TypeError):
+                        current_shipping_rmb = 0.0
                     
                     edit_shipping_rmb = c12.number_input("物流運費 (RMB)", value=current_shipping_rmb, step=1.0)
                     edit_shipping = edit_shipping_rmb * rate  # 換算為台幣供後續運算
