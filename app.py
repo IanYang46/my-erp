@@ -433,6 +433,8 @@ def log_login_event(username):
         conn.execute("INSERT INTO login_logs (username, login_time, ip, location, device) VALUES (?, ?, ?, ?, ?)", 
                      (username, time.strftime('%Y-%m-%d %H:%M:%S'), ip, location, device))
         conn.commit()
+    # 👇 🌟 標記資料庫異動：告訴智能引擎有新登入紀錄了
+    mark_table_changed("login_logs")
 
 # --- 🌟 4. 全新顆粒化權限檢查工具 ---
 def check_perm(role_string, module, action="can_view"):
@@ -4891,9 +4893,9 @@ elif menu == "權限管理":
     with t_login_log:
         st.subheader("📋 員工系統登入審計安全日誌")
         st.write("此處會即時顯示所有使用者的登入軌跡，防範帳號遭盜用或異常跨國登入。")
-        with get_db() as conn:
-            # 取得原始資料
-            df_login_data = pd.read_sql("SELECT username, login_time, ip, location, device FROM login_logs ORDER BY id DESC LIMIT 200", conn)
+        
+        # 👇 🌟 套用秒開智能引擎
+        df_login_data = get_smart_data("admin_login_logs_v1", "SELECT username, login_time, ip, location, device FROM login_logs ORDER BY id DESC LIMIT 200").copy()
             
         if df_login_data.empty:
             st.info("✨ 目前系統尚無任何登入歷程紀錄。")
@@ -4949,8 +4951,9 @@ elif menu == "權限管理":
     with t_audit:
         st.subheader("📜 系統權限變更日誌")
         st.write("此處會即時顯示所有關於「帳號增刪修改」與「模組權限調動」的操作歷程。")
-        with get_db() as conn:
-            df_perm_logs = pd.read_sql("SELECT timestamp as 操作時間, operator as 操作人員, action_type as 動作類別, details as 變動詳情說明 FROM system_logs WHERE module='權限管理' ORDER BY id DESC", conn)
+        
+        # 👇 🌟 套用秒開智能引擎
+        df_perm_logs = get_smart_data("admin_perm_logs_v1", "SELECT timestamp as 操作時間, operator as 操作人員, action_type as 動作類別, details as 變動詳情說明 FROM system_logs WHERE module='權限管理' ORDER BY id DESC").copy()
             
         if df_perm_logs.empty:
             st.caption("✨ 目前尚無權限變更紀錄。")
